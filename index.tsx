@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import definePlugin from '@utils/types';
 import { React, ReactDOM } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
@@ -6,7 +12,7 @@ import {
   DEFAULT_SETTINGS,
   loadSavedSettings,
   persistSettings,
-  pluginSettings,
+  settings,
   SettingsPanel,
 } from './settings';
 import { PluginSettings } from './types';
@@ -392,6 +398,10 @@ export function stopPlugin() {
     const btn = document.getElementById('vencord-ai-header-btn');
     btn?.remove();
 
+    const styles = document.getElementById('vencord-ai-styles');
+    styles?.remove();
+    stylesheetInjected = false;
+
     const dom = getReactDOM();
     if (reactRoot?.unmount) {
       reactRoot.unmount();
@@ -415,7 +425,7 @@ export default definePlugin({
   description:
     'Client-side AI assistant to query 100k+ messages and images across channels & DMs with local (omlx, Ollama) and cloud LLMs.',
   authors: [{ name: 'Raymond', id: 0n }],
-  settings: pluginSettings,
+  settings,
   settingsAboutComponent: () => (
     <SettingsPanel
       settings={currentSettings}

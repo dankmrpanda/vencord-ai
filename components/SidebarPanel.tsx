@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { React } from '@webpack/common';
 import { getCurrentScopeContext } from '../discord/scope';
 import { getCurrentChannelId, getSelectedChannelStore } from '../discord/stores';
@@ -18,8 +24,6 @@ import {
 } from '../types';
 import { ChatMessage } from './ChatMessage';
 import { ScopeIndicator } from './ScopeIndicator';
-
-const { useState, useEffect, useRef } = React;
 
 interface SidebarPanelProps {
   settings: PluginSettings;
@@ -46,23 +50,23 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   onClose,
   onOpenSettings,
 }) => {
-  const [currentScope, setCurrentScope] = useState<CurrentScopeContext | null>(null);
-  const [session, setSession] = useState<ChatSession | null>(null);
-  const [sessionsList, setSessionsList] = useState<ChatSession[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [inputText, setInputText] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [currentScope, setCurrentScope] = React.useState<CurrentScopeContext | null>(null);
+  const [session, setSession] = React.useState<ChatSession | null>(null);
+  const [sessionsList, setSessionsList] = React.useState<ChatSession[]>([]);
+  const [showHistory, setShowHistory] = React.useState(false);
+  const [inputText, setInputText] = React.useState('');
+  const [isGenerating, setIsGenerating] = React.useState(false);
 
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const agentRef = useRef<AIAssistantAgent>(null!);
+  const abortControllerRef = React.useRef<AbortController | null>(null);
+  const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const agentRef = React.useRef<AIAssistantAgent>(null!);
   if (!agentRef.current) {
     agentRef.current = new AIAssistantAgent(settings);
   }
-  const lastChannelIdRef = useRef<string | null>(null);
+  const lastChannelIdRef = React.useRef<string | null>(null);
 
-  useEffect(() => {
+  React.useEffect(() => {
     agentRef.current?.updateSettings(settings);
   }, [settings]);
 
@@ -92,7 +96,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     }
   };
 
-  useEffect(() => {
+  React.useEffect(() => {
     try {
       const initialChId = getCurrentChannelId();
       lastChannelIdRef.current = initialChId;
@@ -128,7 +132,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     }
   }, []);
 
-  useEffect(() => {
+  React.useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: isGenerating ? 'auto' : 'smooth' });
   }, [session?.messages, isGenerating]);
 

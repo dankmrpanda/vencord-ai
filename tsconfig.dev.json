@@ -14,7 +14,12 @@
     "isolatedModules": true,
     "allowSyntheticDefaultImports": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@webpack": ["./test/mocks/vencord.ts"],
+      "@webpack/common": ["./test/mocks/vencord.ts"],
+      "@api/Settings": ["./test/mocks/vencord.ts"],
+      "@utils/types": ["./test/mocks/vencord.ts"],
+      "@utils/constants": ["./test/mocks/vencord.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],

@@ -1,14 +1,18 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { React } from '@webpack/common';
 import { AgentStep } from '../types';
-
-const { useState } = React;
 
 interface ToolCallBadgeProps {
   step: AgentStep;
 }
 
 export const ToolCallBadge: React.FC<ToolCallBadgeProps> = ({ step }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = React.useState(false);
 
   const getToolIcon = () => {
     switch (step.toolName) {

@@ -1,22 +1,17 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+import { findByProps as wpFindByProps, findStore as wpFindStore } from '@webpack';
 import { DiscordChannel, DiscordGuild, DiscordUser } from '../types';
-
-declare const require: any;
-
-let wpFindByProps: any = null;
-let wpFindStore: any = null;
-
-try {
-  if (typeof require !== 'undefined') {
-    const wp = require('@webpack');
-    wpFindByProps = wp?.findByProps;
-    wpFindStore = wp?.findStore;
-  }
-} catch {}
 
 export function findByProps(...props: string[]): any {
   if (typeof wpFindByProps === 'function') {
     try {
-      return wpFindByProps(...props);
+      const res = wpFindByProps(...props);
+      if (res) return res;
     } catch {}
   }
   return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findByProps?.(...props)) ?? null;
@@ -25,7 +20,8 @@ export function findByProps(...props: string[]): any {
 export function findStore(name: string): any {
   if (typeof wpFindStore === 'function') {
     try {
-      return wpFindStore(name);
+      const res = wpFindStore(name);
+      if (res) return res;
     } catch {}
   }
   return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findStore?.(name)) ?? findByProps(name);

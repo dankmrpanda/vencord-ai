@@ -1,10 +1,14 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { AssistantChatMessage } from '../types';
 import { MessagePreview } from './MessagePreview';
 import { ToolCallBadge } from './ToolCallBadge';
-
-const { useState } = React;
 
 interface ChatMessageProps {
   message: AssistantChatMessage;
@@ -87,7 +91,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
 }
 
 const CodeBlock: React.FC<{ code: string; lang: string }> = ({ code, lang }) => {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = React.useState(false);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -196,7 +200,7 @@ function renderMarkdownContent(content: string): React.ReactNode {
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
-  const [copiedMsg, setCopiedMsg] = useState(false);
+  const [copiedMsg, setCopiedMsg] = React.useState(false);
 
   const toolSteps = message.steps?.filter(
     (s) => s.type === 'tool_call' || s.type === 'tool_result' || s.type === 'error'

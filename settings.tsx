@@ -1,9 +1,13 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
 import { React } from '@webpack/common';
 import { PluginSettings, ProviderPreset } from './types';
-
-const { useState } = React;
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
@@ -19,65 +23,60 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   maxSearchIterations: 6,
 };
 
-let vencordSettingsObj: any = null;
-try {
-  if (typeof definePluginSettings === 'function') {
-    vencordSettingsObj = definePluginSettings({
-      providerPreset: {
-        type: OptionType.SELECT,
-        description: 'Provider Preset',
-        options: [
-          { label: 'omlx (Local Apple Silicon / MLX)', value: 'omlx', default: true },
-          { label: 'Ollama (Local)', value: 'ollama' },
-          { label: 'LM Studio (Local)', value: 'lmstudio' },
-          { label: 'OpenAI', value: 'openai' },
-          { label: 'OpenRouter', value: 'openrouter' },
-          { label: 'Groq', value: 'groq' },
-          { label: 'Custom', value: 'custom' },
-        ],
-      },
-      baseUrl: {
-        type: OptionType.STRING,
-        description: 'API Base URL',
-        default: 'http://localhost:8000/v1',
-      },
-      apiKey: {
-        type: OptionType.STRING,
-        description: 'API Key (Leave empty if using local server)',
-        default: '',
-      },
-      model: {
-        type: OptionType.STRING,
-        description: 'Model Identifier',
-        default: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
-      },
-      temperature: {
-        type: OptionType.SLIDER,
-        description: 'Temperature',
-        default: 0.7,
-        markers: [0.0, 0.5, 0.7, 1.0, 1.5],
-      },
-      enableVision: {
-        type: OptionType.BOOLEAN,
-        description: 'Enable Multimodal / Image Inspection',
-        default: true,
-      },
-      maxSearchIterations: {
-        type: OptionType.SLIDER,
-        description: 'Max Search Tool Iterations',
-        default: 6,
-        markers: [1, 2, 4, 6, 8, 10],
-      },
-      systemPrompt: {
-        type: OptionType.STRING,
-        description: 'Custom System Prompt',
-        default: '',
-      },
-    });
-  }
-} catch {}
+export const settings = definePluginSettings({
+  providerPreset: {
+    type: OptionType.SELECT,
+    description: 'Provider Preset',
+    options: [
+      { label: 'omlx (Local Apple Silicon / MLX)', value: 'omlx', default: true },
+      { label: 'Ollama (Local)', value: 'ollama' },
+      { label: 'LM Studio (Local)', value: 'lmstudio' },
+      { label: 'OpenAI', value: 'openai' },
+      { label: 'OpenRouter', value: 'openrouter' },
+      { label: 'Groq', value: 'groq' },
+      { label: 'Custom', value: 'custom' },
+    ],
+  },
+  baseUrl: {
+    type: OptionType.STRING,
+    description: 'API Base URL',
+    default: 'http://localhost:8000/v1',
+  },
+  apiKey: {
+    type: OptionType.STRING,
+    description: 'API Key (Leave empty if using local server)',
+    default: '',
+  },
+  model: {
+    type: OptionType.STRING,
+    description: 'Model Identifier',
+    default: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
+  },
+  temperature: {
+    type: OptionType.SLIDER,
+    description: 'Temperature',
+    default: 0.7,
+    markers: [0.0, 0.5, 0.7, 1.0, 1.5],
+  },
+  enableVision: {
+    type: OptionType.BOOLEAN,
+    description: 'Enable Multimodal / Image Inspection',
+    default: true,
+  },
+  maxSearchIterations: {
+    type: OptionType.SLIDER,
+    description: 'Max Search Tool Iterations',
+    default: 6,
+    markers: [1, 2, 4, 6, 8, 10],
+  },
+  systemPrompt: {
+    type: OptionType.STRING,
+    description: 'Custom System Prompt',
+    default: '',
+  },
+});
 
-export const pluginSettings = vencordSettingsObj;
+export const pluginSettings = settings;
 export const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
 
 export function loadSavedSettings(): PluginSettings {
@@ -85,40 +84,42 @@ export function loadSavedSettings(): PluginSettings {
 
   if (pluginSettings?.store) {
     try {
-      const store = pluginSettings.store;
-      if (store.baseUrl !== undefined) result.baseUrl = store.baseUrl;
-      if (store.apiKey !== undefined) result.apiKey = store.apiKey;
-      if (store.model !== undefined) result.model = store.model;
-      if (store.providerPreset !== undefined) result.providerPreset = store.providerPreset;
-      if (store.temperature !== undefined) result.temperature = store.temperature;
-      if (store.enableVision !== undefined) result.enableVision = store.enableVision;
-      if (store.maxSearchIterations !== undefined) result.maxSearchIterations = store.maxSearchIterations;
-      if (store.systemPrompt !== undefined) result.systemPrompt = store.systemPrompt;
+      const store = pluginSettings.store as any;
+      if (store.baseUrl !== undefined) result.baseUrl = String(store.baseUrl);
+      if (store.apiKey !== undefined) result.apiKey = String(store.apiKey);
+      if (store.model !== undefined) result.model = String(store.model);
+      if (store.providerPreset !== undefined && store.providerPreset !== null) result.providerPreset = store.providerPreset as ProviderPreset;
+      if (store.temperature !== undefined) result.temperature = Number(store.temperature);
+      if (store.enableVision !== undefined) result.enableVision = Boolean(store.enableVision);
+      if (store.maxSearchIterations !== undefined) result.maxSearchIterations = Number(store.maxSearchIterations);
+      if (store.systemPrompt !== undefined) result.systemPrompt = String(store.systemPrompt);
     } catch {}
   }
 
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.baseUrl !== undefined) result.baseUrl = parsed.baseUrl;
-      if (parsed.apiKey !== undefined) result.apiKey = parsed.apiKey;
-      if (parsed.model !== undefined) result.model = parsed.model;
-      if (parsed.providerPreset !== undefined) result.providerPreset = parsed.providerPreset;
-      if (parsed.temperature !== undefined) result.temperature = parsed.temperature;
-      if (parsed.enableVision !== undefined) result.enableVision = parsed.enableVision;
-      if (parsed.maxSearchIterations !== undefined) result.maxSearchIterations = parsed.maxSearchIterations;
-      if (parsed.systemPrompt !== undefined) result.systemPrompt = parsed.systemPrompt;
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.baseUrl !== undefined) result.baseUrl = parsed.baseUrl;
+        if (parsed.apiKey !== undefined) result.apiKey = parsed.apiKey;
+        if (parsed.model !== undefined) result.model = parsed.model;
+        if (parsed.providerPreset !== undefined && parsed.providerPreset !== null) result.providerPreset = parsed.providerPreset as ProviderPreset;
+        if (parsed.temperature !== undefined) result.temperature = parsed.temperature;
+        if (parsed.enableVision !== undefined) result.enableVision = parsed.enableVision;
+        if (parsed.maxSearchIterations !== undefined) result.maxSearchIterations = parsed.maxSearchIterations;
+        if (parsed.systemPrompt !== undefined) result.systemPrompt = parsed.systemPrompt;
+      }
     }
   } catch {}
 
   try {
-    const ds = (window as any).Vencord?.Api?.DataStore?.get?.(SETTINGS_KEY);
+    const ds = (window as any)?.Vencord?.Api?.DataStore?.get?.(SETTINGS_KEY);
     if (ds && typeof ds === 'object') {
       if (ds.baseUrl !== undefined) result.baseUrl = ds.baseUrl;
       if (ds.apiKey !== undefined) result.apiKey = ds.apiKey;
       if (ds.model !== undefined) result.model = ds.model;
-      if (ds.providerPreset !== undefined) result.providerPreset = ds.providerPreset;
+      if (ds.providerPreset !== undefined && ds.providerPreset !== null) result.providerPreset = ds.providerPreset as ProviderPreset;
     }
   } catch {}
 
@@ -195,12 +196,12 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange }) => {
-  const [localSettings, setLocalSettings] = useState<PluginSettings>(() => {
+  const [localSettings, setLocalSettings] = React.useState<PluginSettings>(() => {
     return { ...loadSavedSettings(), ...settings };
   });
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [testStatus, setTestStatus] = useState<string | null>(null);
-  const [isTesting, setIsTesting] = useState(false);
+  const [showApiKey, setShowApiKey] = React.useState(false);
+  const [testStatus, setTestStatus] = React.useState<string | null>(null);
+  const [isTesting, setIsTesting] = React.useState(false);
 
   const updateSetting = (updater: (prev: PluginSettings) => PluginSettings) => {
     setLocalSettings((prev) => {

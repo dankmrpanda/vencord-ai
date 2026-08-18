@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { ChatSession } from '../types';
 
 const DB_NAME = 'VencordAIChatHistory';
@@ -44,7 +50,9 @@ export async function saveSession(session: ChatSession): Promise<void> {
     });
   } catch (err) {
     try {
-      localStorage.setItem(`${LS_PREFIX}${session.id}`, JSON.stringify(session));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(`${LS_PREFIX}${session.id}`, JSON.stringify(session));
+      }
     } catch (lsErr) {
       console.error('[VencordAI] Failed to save session to storage:', lsErr);
     }
@@ -75,17 +83,21 @@ export async function getSessionsForChannel(channelId: string): Promise<ChatSess
 
   // LocalStorage fallback
   const results: ChatSession[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith(LS_PREFIX)) {
-      try {
-        const item: ChatSession = JSON.parse(localStorage.getItem(key) || '{}');
-        if (item.channelId === channelId) {
-          results.push(item);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(LS_PREFIX)) {
+          try {
+            const item: ChatSession = JSON.parse(localStorage.getItem(key) || '{}');
+            if (item.channelId === channelId) {
+              results.push(item);
+            }
+          } catch {}
         }
-      } catch {}
+      }
     }
-  }
+  } catch {}
   results.sort((a, b) => b.updatedAt - a.updatedAt);
   return results;
 }
@@ -103,7 +115,9 @@ export async function deleteSession(sessionId: string): Promise<void> {
   } catch {}
 
   try {
-    localStorage.removeItem(`${LS_PREFIX}${sessionId}`);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(`${LS_PREFIX}${sessionId}`);
+    }
   } catch {}
 }
 

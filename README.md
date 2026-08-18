@@ -117,4 +117,4 @@ vencord-ai/
 ---
 
 ## 📄 License
-MIT
+GPL-3.0-or-later (in accordance with Vencord plugin guidelines)

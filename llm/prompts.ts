@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2025 Vendicated and contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { ToolDefinition } from '../types';
 
 export const DEFAULT_SYSTEM_PROMPT = `You are a helpful Discord AI Assistant embedded directly in the user's Discord client via Vencord.
