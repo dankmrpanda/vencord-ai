@@ -5,6 +5,7 @@ import {
 } from '../discord/messages';
 import { getCurrentScopeContext, isChannelAllowedInScope } from '../discord/scope';
 import { searchDiscordMessages } from '../discord/search';
+import { getChannel } from '../discord/stores';
 import {
   AgentStep,
   AssistantChatMessage,
@@ -51,30 +52,35 @@ export class AIAssistantAgent {
     const citations: CitationItem[] = [];
     const citationMap = new Map<string, CitationItem>();
 
+    const currentScope = getCurrentScopeContext();
+    if (!currentScope) {
+      throw new Error('Could not determine current Discord channel context.');
+    }
+
     const addCitation = (msg: DiscordMessage, channelName?: string) => {
       if (!citationMap.has(msg.id)) {
+        const channel = getChannel(msg.channel_id);
+        const resolvedGuildId =
+          msg.guild_id || channel?.guild_id || (currentScope.isGuild ? currentScope.guildId : undefined);
+        const resolvedChannelName = channelName || channel?.name || currentScope.channelName;
+
         const item: CitationItem = {
           messageId: msg.id,
           channelId: msg.channel_id,
-          guildId: msg.guild_id,
+          guildId: resolvedGuildId,
           authorName: msg.author?.globalName || msg.author?.username || 'User',
           authorAvatar: msg.author?.avatar
             ? `https://cdn.discordapp.com/avatars/${msg.author.id}/${msg.author.avatar}.png`
             : undefined,
           content: msg.content || (msg.attachments?.length ? `[${msg.attachments[0].filename}]` : ''),
           timestamp: msg.timestamp,
-          channelName: channelName || 'channel',
+          channelName: resolvedChannelName || 'channel',
           attachmentUrls: msg.attachments?.map((a) => a.url),
         };
         citationMap.set(msg.id, item);
         callbacks?.onCitationsUpdated?.(Array.from(citationMap.values()));
       }
     };
-
-    const currentScope = getCurrentScopeContext();
-    if (!currentScope) {
-      throw new Error('Could not determine current Discord channel context.');
-    }
 
     // Build LLM message sequence
     const systemPrompt = this.settings.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
@@ -122,15 +128,13 @@ export class AIAssistantAgent {
         {
           onToken: (token) => {
             stepTokens += token;
-            if (!response?.toolCalls) {
-              callbacks?.onToken?.(token);
-            }
+            callbacks?.onToken?.(token);
           },
         },
         signal
       );
 
-      thoughtStep.content = stepTokens || 'Processed context';
+      thoughtStep.content = stepTokens.trim() || 'Processed context';
       callbacks?.onStepUpdated?.(thoughtStep);
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -257,17 +261,20 @@ export class AIAssistantAgent {
       }
 
       case 'search_messages': {
-        const targetChannelId = args.channel_id || currentScope.channelId;
+        const isGuildContext = currentScope.isGuild;
+        const targetChannelId = args.channel_id;
 
-        // Enforce privacy/scope boundary
-        if (!isChannelAllowedInScope(targetChannelId, currentScope)) {
-          return `Error: Access denied. Channel ${targetChannelId} is outside of the permitted scope for this context.`;
+        // If targetChannelId is explicitly specified, enforce privacy/scope boundary
+        if (targetChannelId) {
+          if (!isChannelAllowedInScope(targetChannelId, currentScope)) {
+            return `Error: Access denied. Channel ${targetChannelId} is outside of the permitted scope for this context.`;
+          }
         }
 
         const res = await searchDiscordMessages({
           query: args.query,
-          channelId: targetChannelId,
-          guildId: currentScope.isGuild && !args.channel_id ? currentScope.guildId : undefined,
+          channelId: targetChannelId || (!isGuildContext ? currentScope.channelId : undefined),
+          guildId: isGuildContext ? currentScope.guildId : undefined,
           authorId: args.author_id,
           has: args.has,
         });

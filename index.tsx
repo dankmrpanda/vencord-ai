@@ -9,6 +9,7 @@ let reactRoot: any = null;
 let isSidebarOpen = false;
 let currentSettings: PluginSettings = { ...DEFAULT_SETTINGS };
 let headerPollInterval: any = null;
+let headerInjectionTimeout: any = null;
 
 const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
 
@@ -143,7 +144,7 @@ export function startPlugin() {
     window.addEventListener('keydown', handleKeyDown);
 
     // Initial safe injection attempt after Discord finish mounting
-    setTimeout(injectHeaderButton, 1000);
+    headerInjectionTimeout = setTimeout(injectHeaderButton, 1000);
 
     // Calm interval to re-inject if user navigates channels
     headerPollInterval = setInterval(injectHeaderButton, 2000);
@@ -157,6 +158,10 @@ export function startPlugin() {
 export function stopPlugin() {
   try {
     window.removeEventListener('keydown', handleKeyDown);
+    if (headerInjectionTimeout) {
+      clearTimeout(headerInjectionTimeout);
+      headerInjectionTimeout = null;
+    }
     if (headerPollInterval) {
       clearInterval(headerPollInterval);
       headerPollInterval = null;

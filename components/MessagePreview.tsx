@@ -23,10 +23,17 @@ export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
       <div style={topRowStyle}>
         <div style={authorInfoStyle}>
           {citation.authorAvatar ? (
-            <img src={citation.authorAvatar} alt="" style={avatarStyle} />
+            <img
+              src={citation.authorAvatar}
+              alt=""
+              style={avatarStyle}
+              onError={(e) => {
+                (e.target as HTMLElement).style.display = 'none';
+              }}
+            />
           ) : (
             <div style={defaultAvatarStyle}>
-              {citation.authorName.charAt(0).toUpperCase()}
+              {citation.authorName ? citation.authorName.charAt(0).toUpperCase() : 'U'}
             </div>
           )}
           <span style={authorNameStyle}>{citation.authorName}</span>

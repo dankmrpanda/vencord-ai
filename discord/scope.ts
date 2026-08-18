@@ -74,12 +74,23 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
     if (!channelStore) return [];
 
     const guildChannels: DiscordChannel[] = [];
-    const channels = channelStore.getChannels(guildId);
+    const rawChannels = channelStore.getChannels(guildId);
 
-    if (channels && typeof channels === 'object') {
-      const list = Array.isArray(channels) ? channels : Object.values(channels);
-      for (const item of list as any[]) {
-        const ch: DiscordChannel = item.channel ?? item;
+    if (rawChannels && typeof rawChannels === 'object') {
+      // Flatten potential category bucket maps or nested arrays
+      const rawList = Array.isArray(rawChannels) ? rawChannels : Object.values(rawChannels);
+      const flattenedList: any[] = [];
+
+      for (const entry of rawList) {
+        if (Array.isArray(entry)) {
+          flattenedList.push(...entry);
+        } else {
+          flattenedList.push(entry);
+        }
+      }
+
+      for (const item of flattenedList) {
+        const ch: DiscordChannel = item?.channel ?? item;
         if (!ch || !ch.id) continue;
 
         // Only include text-capable channels
@@ -94,11 +105,15 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
           // Check permission if permStore is available
           let canView = true;
           if (permStore?.can) {
-            // VIEW_CHANNEL is 0x400n or 1024
+            // VIEW_CHANNEL is 0x400n (1024)
             try {
-              canView = permStore.can(0x400n, ch) || permStore.can(1024, ch);
+              canView = Boolean(permStore.can(1024n, ch));
             } catch {
-              canView = true;
+              try {
+                canView = Boolean(permStore.can(1024, ch));
+              } catch {
+                canView = true;
+              }
             }
           }
 

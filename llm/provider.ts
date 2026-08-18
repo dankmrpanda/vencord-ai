@@ -1,3 +1,4 @@
+import { fetchImageAsBase64 } from '../discord/messages';
 import { LLMMessage, LLMToolCall, PluginSettings, ToolDefinition } from '../types';
 
 export interface StreamCallbacks {
@@ -95,13 +96,15 @@ export class OpenAICompatibleClient {
               if (!choice) continue;
 
               const delta = choice.delta;
-              if (delta?.content) {
-                accumulatedContent += delta.content;
-                callbacks?.onToken?.(delta.content);
+              const content = delta?.content ?? choice.message?.content ?? choice.text;
+              if (content) {
+                accumulatedContent += content;
+                callbacks?.onToken?.(content);
               }
 
-              if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
-                for (const tc of delta.tool_calls) {
+              const rawToolCalls = delta?.tool_calls ?? choice.message?.tool_calls;
+              if (rawToolCalls && Array.isArray(rawToolCalls)) {
+                for (const tc of rawToolCalls) {
                   const idx = tc.index ?? 0;
                   const existing = accumulatedToolCalls.get(idx) || {
                     id: tc.id || `call_${idx}`,
@@ -110,7 +113,13 @@ export class OpenAICompatibleClient {
                   };
 
                   if (tc.id) existing.id = tc.id;
-                  if (tc.function?.name) existing.name = tc.function.name;
+                  if (tc.function?.name) {
+                    if (!existing.name) {
+                      existing.name = tc.function.name;
+                    } else if (!existing.name.includes(tc.function.name)) {
+                      existing.name += tc.function.name;
+                    }
+                  }
                   if (tc.function?.arguments) existing.arguments += tc.function.arguments;
 
                   accumulatedToolCalls.set(idx, existing);
@@ -118,16 +127,20 @@ export class OpenAICompatibleClient {
 
                 const currentToolCalls: LLMToolCall[] = Array.from(
                   accumulatedToolCalls.values()
-                ).map((t) => ({
-                  id: t.id,
-                  type: 'function',
-                  function: {
-                    name: t.name,
-                    arguments: t.arguments,
-                  },
-                }));
+                )
+                  .filter((t) => Boolean(t.name))
+                  .map((t) => ({
+                    id: t.id,
+                    type: 'function',
+                    function: {
+                      name: t.name,
+                      arguments: t.arguments,
+                    },
+                  }));
 
-                callbacks?.onToolCallDelta?.(currentToolCalls);
+                if (currentToolCalls.length > 0) {
+                  callbacks?.onToolCallDelta?.(currentToolCalls);
+                }
               }
             } catch (parseErr) {
               // Ignore non-JSON lines or partial frames
@@ -139,14 +152,16 @@ export class OpenAICompatibleClient {
       reader.releaseLock();
     }
 
-    const toolCallsResult: LLMToolCall[] = Array.from(accumulatedToolCalls.values()).map((t) => ({
-      id: t.id,
-      type: 'function',
-      function: {
-        name: t.name,
-        arguments: t.arguments,
-      },
-    }));
+    const toolCallsResult: LLMToolCall[] = Array.from(accumulatedToolCalls.values())
+      .filter((t) => Boolean(t.name))
+      .map((t) => ({
+        id: t.id,
+        type: 'function',
+        function: {
+          name: t.name,
+          arguments: t.arguments,
+        },
+      }));
 
     return {
       content: accumulatedContent,
@@ -172,6 +187,15 @@ export class OpenAICompatibleClient {
       'Authorization': `Bearer ${authKey}`,
     };
 
+    let resolvedImageUrl = imageUrl;
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      try {
+        resolvedImageUrl = await fetchImageAsBase64(imageUrl);
+      } catch (err) {
+        console.warn('[VencordAI] Could not convert image to base64, passing original URL:', err);
+      }
+    }
+
     const payload = {
       model: this.settings.model || 'default',
       messages: [
@@ -179,7 +203,7 @@ export class OpenAICompatibleClient {
           role: 'user',
           content: [
             { type: 'text', text: question || 'Please describe this image and any text or key elements in it.' },
-            { type: 'image_url', image_url: { url: imageUrl } },
+            { type: 'image_url', image_url: { url: resolvedImageUrl } },
           ],
         },
       ],

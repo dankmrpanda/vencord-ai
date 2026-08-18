@@ -35,7 +35,7 @@ export async function saveSession(session: ChatSession): Promise<void> {
 
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const req = store.put(session);
@@ -54,7 +54,7 @@ export async function saveSession(session: ChatSession): Promise<void> {
 export async function getSessionsForChannel(channelId: string): Promise<ChatSession[]> {
   try {
     const db = await openDB();
-    return new Promise((resolve) => {
+    const dbResults = await new Promise<ChatSession[]>((resolve) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
       const index = store.index('channelId');
@@ -68,38 +68,43 @@ export async function getSessionsForChannel(channelId: string): Promise<ChatSess
 
       req.onerror = () => resolve([]);
     });
+    if (dbResults.length > 0) return dbResults;
   } catch (err) {
-    // Fallback to LocalStorage
-    const results: ChatSession[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(LS_PREFIX)) {
-        try {
-          const item: ChatSession = JSON.parse(localStorage.getItem(key) || '{}');
-          if (item.channelId === channelId) {
-            results.push(item);
-          }
-        } catch {}
-      }
-    }
-    results.sort((a, b) => b.updatedAt - a.updatedAt);
-    return results;
+    // IDB error, fallback to LocalStorage
   }
+
+  // LocalStorage fallback
+  const results: ChatSession[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(LS_PREFIX)) {
+      try {
+        const item: ChatSession = JSON.parse(localStorage.getItem(key) || '{}');
+        if (item.channelId === channelId) {
+          results.push(item);
+        }
+      } catch {}
+    }
+  }
+  results.sort((a, b) => b.updatedAt - a.updatedAt);
+  return results;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
   try {
     const db = await openDB();
-    return new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const req = store.delete(sessionId);
       req.onsuccess = () => resolve();
       req.onerror = () => resolve();
     });
-  } catch {
+  } catch {}
+
+  try {
     localStorage.removeItem(`${LS_PREFIX}${sessionId}`);
-  }
+  } catch {}
 }
 
 export function createNewSession(channelId: string, title?: string): ChatSession {

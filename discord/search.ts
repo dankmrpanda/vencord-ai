@@ -79,6 +79,11 @@ export async function searchDiscordMessages(options: SearchOptions): Promise<Sea
     if (http && typeof http.get === 'function') {
       const res = await http.get({ url: fullUrl });
       rawData = res.body ?? res;
+      if (res.status === 202 || rawData?.retry_after) {
+        const retryAfter = rawData?.retry_after ?? 2;
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000 + 500));
+        return searchDiscordMessages(options);
+      }
     } else {
       const response = await fetch(`https://discord.com${fullUrl}`, {
         headers: {
@@ -93,11 +98,24 @@ export async function searchDiscordMessages(options: SearchOptions): Promise<Sea
         return searchDiscordMessages(options);
       }
 
+      if (response.status === 202) {
+        const data = await response.json().catch(() => ({}));
+        const retryAfter = data?.retry_after || Number(response.headers.get('Retry-After')) || 2;
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000 + 500));
+        return searchDiscordMessages(options);
+      }
+
       if (!response.ok) {
         throw new Error(`Discord search failed with status ${response.status}: ${response.statusText}`);
       }
 
       rawData = await response.json();
+
+      if (rawData?.retry_after) {
+        const retryAfter = rawData.retry_after;
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000 + 500));
+        return searchDiscordMessages(options);
+      }
     }
   } catch (err: any) {
     if (err?.status === 429 || err?.body?.retry_after) {

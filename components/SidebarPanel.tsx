@@ -1,6 +1,6 @@
 import { React, useEffect, useRef, useState } from '@webpack/common';
 import { getCurrentScopeContext } from '../discord/scope';
-import { getCurrentChannelId } from '../discord/stores';
+import { getCurrentChannelId, getSelectedChannelStore } from '../discord/stores';
 import { AIAssistantAgent } from '../llm/agent';
 import {
   createNewSession,
@@ -40,14 +40,13 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const agentRef = useRef<AIAssistantAgent>(new AIAssistantAgent(settings));
+  const lastChannelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     agentRef.current.updateSettings(settings);
   }, [settings]);
 
-  // Load scope and active session when mounted or channel changes
-  useEffect(() => {
-    const channelId = getCurrentChannelId();
+  const loadChannelScopeAndSessions = (channelId: string | null) => {
     const scope = getCurrentScopeContext();
     setCurrentScope(scope);
 
@@ -62,6 +61,35 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         }
       });
     }
+  };
+
+  // Track active channel changes dynamically
+  useEffect(() => {
+    const initialChId = getCurrentChannelId();
+    lastChannelIdRef.current = initialChId;
+    loadChannelScopeAndSessions(initialChId);
+
+    const checkChannelChange = () => {
+      const currentChId = getCurrentChannelId();
+      if (currentChId && currentChId !== lastChannelIdRef.current) {
+        lastChannelIdRef.current = currentChId;
+        loadChannelScopeAndSessions(currentChId);
+      }
+    };
+
+    const selStore = getSelectedChannelStore();
+    if (selStore?.addChangeListener) {
+      selStore.addChangeListener(checkChannelChange);
+    }
+
+    const interval = setInterval(checkChannelChange, 1000);
+
+    return () => {
+      if (selStore?.removeChangeListener) {
+        selStore.removeChangeListener(checkChannelChange);
+      }
+      clearInterval(interval);
+    };
   }, []);
 
   // Auto-scroll on new messages
@@ -70,10 +98,10 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   }, [session?.messages]);
 
   const handleNewChat = () => {
-    if (!session) return;
-    const channelId = session.channelId || getCurrentChannelId() || 'global';
+    const channelId = session?.channelId || getCurrentChannelId() || 'global';
     const newSess = createNewSession(channelId, 'New Conversation');
     setSession(newSess);
+    setSessionsList((prev) => [newSess, ...prev.filter((s) => s.id !== newSess.id)]);
     setShowHistory(false);
   };
 
@@ -198,15 +226,23 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
       setSession((prev) => {
         if (!prev) return prev;
         const msgs = [...prev.messages];
-        const last = msgs[msgs.length - 1];
+        const last = { ...msgs[msgs.length - 1] };
         if (last && last.id === assistantMsgId) {
           last.content = result.content;
           last.steps = result.steps;
           last.citations = result.citations;
           last.isStreaming = false;
+          msgs[msgs.length - 1] = last;
         }
-        const savedSession = { ...prev, messages: msgs };
+        const savedSession: ChatSession = { ...prev, messages: msgs, updatedAt: Date.now() };
         saveSession(savedSession);
+        setSessionsList((prevList) => {
+          const exists = prevList.some((s) => s.id === savedSession.id);
+          if (exists) {
+            return prevList.map((s) => (s.id === savedSession.id ? savedSession : s));
+          }
+          return [savedSession, ...prevList];
+        });
         return savedSession;
       });
     } catch (err: any) {
@@ -214,12 +250,15 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         setSession((prev) => {
           if (!prev) return prev;
           const msgs = [...prev.messages];
-          const last = msgs[msgs.length - 1];
+          const last = { ...msgs[msgs.length - 1] };
           if (last && last.id === assistantMsgId) {
             last.content = `⚠️ **Error**: ${err.message || String(err)}`;
             last.isStreaming = false;
+            msgs[msgs.length - 1] = last;
           }
-          return { ...prev, messages: msgs };
+          const savedSession = { ...prev, messages: msgs, updatedAt: Date.now() };
+          saveSession(savedSession);
+          return savedSession;
         });
       }
     } finally {

@@ -74,7 +74,9 @@ export async function fetchRecentMessages(
     }
 
     if (Array.isArray(messages)) {
-      return messages.reverse(); // Chronological order
+      return [...messages].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
     }
     return [];
   } catch (err) {

@@ -31,7 +31,11 @@ export const ScopeIndicator: React.FC<ScopeIndicatorProps> = ({ context }) => {
     <div style={containerStyle}>
       <div style={headerRowStyle}>
         <span style={iconStyle}>{context.isGuild ? '🌐' : context.isDM ? '👤' : '👥'}</span>
-        <span style={channelNameStyle}>#{context.channelName}</span>
+        <span style={channelNameStyle}>
+          {context.isDM
+            ? context.channelName.startsWith('@') ? context.channelName : `@${context.channelName}`
+            : context.channelName.startsWith('#') ? context.channelName : `#${context.channelName}`}
+        </span>
       </div>
       <div style={scopeTextStyle}>
         <span style={badgeStyle}>Scope</span> {scopeDescription}
