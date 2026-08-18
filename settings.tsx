@@ -1,13 +1,13 @@
 import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
-import { React, useEffect, useState } from '@webpack/common';
+import { React, useState } from '@webpack/common';
 import { PluginSettings, ProviderPreset } from './types';
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
   baseUrl: 'http://localhost:8000/v1',
   apiKey: '',
-  model: 'Qwen3.8-27B-8bit',
+  model: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
   temperature: 0.7,
   maxTokens: 2048,
   systemPrompt: '',
@@ -47,7 +47,7 @@ try {
       model: {
         type: OptionType.STRING,
         description: 'Model Identifier',
-        default: 'Qwen3.8-27B-8bit',
+        default: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
       },
       temperature: {
         type: OptionType.SLIDER,
@@ -84,10 +84,10 @@ export function loadSavedSettings(): PluginSettings {
   if (pluginSettings?.store) {
     try {
       const store = pluginSettings.store;
-      if (store.baseUrl) result.baseUrl = store.baseUrl;
+      if (store.baseUrl !== undefined) result.baseUrl = store.baseUrl;
       if (store.apiKey !== undefined) result.apiKey = store.apiKey;
-      if (store.model) result.model = store.model;
-      if (store.providerPreset) result.providerPreset = store.providerPreset;
+      if (store.model !== undefined) result.model = store.model;
+      if (store.providerPreset !== undefined) result.providerPreset = store.providerPreset;
       if (store.temperature !== undefined) result.temperature = store.temperature;
       if (store.enableVision !== undefined) result.enableVision = store.enableVision;
       if (store.maxSearchIterations !== undefined) result.maxSearchIterations = store.maxSearchIterations;
@@ -99,14 +99,24 @@ export function loadSavedSettings(): PluginSettings {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      Object.assign(result, parsed);
+      if (parsed.baseUrl !== undefined) result.baseUrl = parsed.baseUrl;
+      if (parsed.apiKey !== undefined) result.apiKey = parsed.apiKey;
+      if (parsed.model !== undefined) result.model = parsed.model;
+      if (parsed.providerPreset !== undefined) result.providerPreset = parsed.providerPreset;
+      if (parsed.temperature !== undefined) result.temperature = parsed.temperature;
+      if (parsed.enableVision !== undefined) result.enableVision = parsed.enableVision;
+      if (parsed.maxSearchIterations !== undefined) result.maxSearchIterations = parsed.maxSearchIterations;
+      if (parsed.systemPrompt !== undefined) result.systemPrompt = parsed.systemPrompt;
     }
   } catch {}
 
   try {
     const ds = (window as any).Vencord?.Api?.DataStore?.get?.(SETTINGS_KEY);
-    if (ds) {
-      Object.assign(result, ds);
+    if (ds && typeof ds === 'object') {
+      if (ds.baseUrl !== undefined) result.baseUrl = ds.baseUrl;
+      if (ds.apiKey !== undefined) result.apiKey = ds.apiKey;
+      if (ds.model !== undefined) result.model = ds.model;
+      if (ds.providerPreset !== undefined) result.providerPreset = ds.providerPreset;
     }
   } catch {}
 
@@ -136,7 +146,7 @@ const PRESET_CONFIGS: Record<
   omlx: {
     name: 'omlx (Local Apple Silicon / MLX)',
     defaultBaseUrl: 'http://localhost:8000/v1',
-    defaultModel: 'Qwen3.8-27B-8bit',
+    defaultModel: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
     needsKey: false,
   },
   ollama: {
@@ -183,14 +193,12 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange }) => {
-  const [localSettings, setLocalSettings] = useState<PluginSettings>(() => loadSavedSettings());
+  const [localSettings, setLocalSettings] = useState<PluginSettings>(() => {
+    return { ...loadSavedSettings(), ...settings };
+  });
   const [showApiKey, setShowApiKey] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
-
-  useEffect(() => {
-    setLocalSettings(loadSavedSettings());
-  }, [settings]);
 
   const updateSetting = (updater: (prev: PluginSettings) => PluginSettings) => {
     setLocalSettings((prev) => {
@@ -229,7 +237,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: localSettings.model || 'default',
+          model: localSettings.model?.trim() || 'default',
           messages: [{ role: 'user', content: 'Say "connected" if you hear me.' }],
           max_tokens: 10,
         }),
@@ -313,7 +321,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
           style={inputStyle}
           type="text"
           value={localSettings.model}
-          placeholder="e.g. Qwen3.8-27B-8bit, qwen2.5:7b, gpt-4o-mini"
+          placeholder="e.g. mlx-community/Qwen2.5-32B-Instruct-4bit, qwen2.5:7b, gpt-4o-mini"
           onChange={(e) => updateSetting((prev) => ({ ...prev, model: e.target.value }))}
         />
       </div>
