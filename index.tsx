@@ -156,134 +156,141 @@ export function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...
   else console.log(`[VencordAI] ${message}`, ...args);
 }
 
-class PluginErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: any; errorInfo: any }
-> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false, error: null, errorInfo: null };
-  }
+let CachedErrorBoundary: any = null;
 
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, error };
-  }
+function getPluginErrorBoundary(): any {
+  if (CachedErrorBoundary) return CachedErrorBoundary;
 
-  componentDidCatch(error: any, errorInfo: any) {
-    logPlugin('error', 'ErrorBoundary caught error:', error?.stack || error?.message || error);
-    this.setState({ errorInfo });
-  }
+  const BaseComponent: any = React?.Component || class {};
 
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          style={{
-            padding: '20px',
-            color: 'var(--text-normal, #dbdee1)',
-            fontFamily: 'var(--font-primary, sans-serif)',
-            display: 'flex',
-            flexDirection: 'column',
-            height: '100vh',
-            boxSizing: 'border-box',
-            overflowY: 'auto',
-            backgroundColor: 'var(--background-primary, #313338)',
-          }}
-        >
-          <div style={{ fontSize: '36px', textAlign: 'center', marginBottom: '8px' }}>⚠️</div>
+  CachedErrorBoundary = class PluginErrorBoundary extends BaseComponent {
+    state = { hasError: false, error: null as any, errorInfo: null as any };
+
+    static getDerivedStateFromError(error: any) {
+      return { hasError: true, error };
+    }
+
+    componentDidCatch(error: any, errorInfo: any) {
+      logPlugin('error', 'ErrorBoundary caught error:', error?.stack || error?.message || error);
+      this.setState({ errorInfo });
+    }
+
+    render() {
+      const state = this.state as { hasError: boolean; error: any; errorInfo: any };
+      const props = this.props as { children: React.ReactNode };
+
+      if (state.hasError) {
+        return (
           <div
             style={{
-              fontWeight: 700,
-              fontSize: '16px',
-              color: 'var(--header-primary, #f2f3f5)',
-              textAlign: 'center',
-              marginBottom: '8px',
+              padding: '20px',
+              color: 'var(--text-normal, #dbdee1)',
+              fontFamily: 'var(--font-primary, sans-serif)',
+              display: 'flex',
+              flexDirection: 'column',
+              height: '100vh',
+              boxSizing: 'border-box',
+              overflowY: 'auto',
+              backgroundColor: 'var(--background-primary, #313338)',
             }}
           >
-            AI Assistant Render Error
-          </div>
-          <div
-            style={{
-              fontSize: '12px',
-              color: '#f23f43',
-              marginBottom: '12px',
-              wordBreak: 'break-word',
-              backgroundColor: 'var(--background-secondary, #2b2d31)',
-              padding: '10px 12px',
-              borderRadius: '6px',
-              border: '1px solid var(--background-modifier-accent, #3f4147)',
-              fontFamily: 'monospace',
-            }}
-          >
-            {String(this.state.error?.stack || this.state.error?.message || this.state.error || 'Unknown render error')}
-          </div>
-          {this.state.errorInfo?.componentStack && (
+            <div style={{ fontSize: '36px', textAlign: 'center', marginBottom: '8px' }}>⚠️</div>
             <div
               style={{
-                fontSize: '11px',
-                color: 'var(--text-muted, #949ba4)',
-                marginBottom: '12px',
-                backgroundColor: 'var(--background-secondary-alt, #232428)',
-                padding: '8px 10px',
-                borderRadius: '6px',
-                fontFamily: 'monospace',
-                maxHeight: '120px',
-                overflowY: 'auto',
-                whiteSpace: 'pre-wrap',
+                fontWeight: 700,
+                fontSize: '16px',
+                color: 'var(--header-primary, #f2f3f5)',
+                textAlign: 'center',
+                marginBottom: '8px',
               }}
             >
-              {'Component Stack:\n' + this.state.errorInfo.componentStack}
+              AI Assistant Render Error
             </div>
-          )}
-          <button
-            style={{
-              padding: '10px 16px',
-              backgroundColor: 'var(--brand-experiment, #5865f2)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '13px',
-              marginBottom: '16px',
-            }}
-            onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
-          >
-            🔄 Retry Component Render
-          </button>
-          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)', marginBottom: '6px' }}>
-            Recent Plugin Logs:
-          </div>
-          <div
-            style={{
-              flex: 1,
-              backgroundColor: 'var(--background-secondary, #2b2d31)',
-              borderRadius: '6px',
-              padding: '8px 10px',
-              fontSize: '11px',
-              fontFamily: 'monospace',
-              overflowY: 'auto',
-              border: '1px solid var(--background-modifier-accent, #3f4147)',
-            }}
-          >
-            {pluginLogs.map((l, i) => (
+            <div
+              style={{
+                fontSize: '12px',
+                color: '#f23f43',
+                marginBottom: '12px',
+                wordBreak: 'break-word',
+                backgroundColor: 'var(--background-secondary, #2b2d31)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--background-modifier-accent, #3f4147)',
+                fontFamily: 'monospace',
+              }}
+            >
+              {String(state.error?.stack || state.error?.message || state.error || 'Unknown render error')}
+            </div>
+            {state.errorInfo?.componentStack && (
               <div
-                key={i}
                 style={{
-                  color: l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4',
-                  marginBottom: '3px',
-                  wordBreak: 'break-word',
+                  fontSize: '11px',
+                  color: 'var(--text-muted, #949ba4)',
+                  marginBottom: '12px',
+                  backgroundColor: 'var(--background-secondary-alt, #232428)',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  fontFamily: 'monospace',
+                  maxHeight: '120px',
+                  overflowY: 'auto',
+                  whiteSpace: 'pre-wrap',
                 }}
               >
-                {`[${l.time}] ${l.message}`}
+                {'Component Stack:\n' + state.errorInfo.componentStack}
               </div>
-            ))}
+            )}
+            <button
+              style={{
+                padding: '10px 16px',
+                backgroundColor: 'var(--brand-experiment, #5865f2)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                marginBottom: '16px',
+              }}
+              onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
+            >
+              🔄 Retry Component Render
+            </button>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)', marginBottom: '6px' }}>
+              Recent Plugin Logs:
+            </div>
+            <div
+              style={{
+                flex: 1,
+                backgroundColor: 'var(--background-secondary, #2b2d31)',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '11px',
+                fontFamily: 'monospace',
+                overflowY: 'auto',
+                border: '1px solid var(--background-modifier-accent, #3f4147)',
+              }}
+            >
+              {pluginLogs.map((l, i) => (
+                <div
+                  key={i}
+                  style={{
+                    color: l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4',
+                    marginBottom: '3px',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {`[${l.time}] ${l.message}`}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      );
+        );
+      }
+      return props.children;
     }
-    return this.props.children;
-  }
+  };
+
+  return CachedErrorBoundary;
 }
 
 /**
@@ -401,7 +408,8 @@ function renderSidebar() {
         logs={pluginLogs}
       />
     );
-    const element = <PluginErrorBoundary>{panel}</PluginErrorBoundary>;
+    const ErrorBoundary = getPluginErrorBoundary();
+    const element = <ErrorBoundary>{panel}</ErrorBoundary>;
 
     // Attempt 1: If we already have a functional reactRoot, re-render into it
     if (reactRoot?.render) {
