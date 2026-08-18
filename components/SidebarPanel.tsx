@@ -50,8 +50,21 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   onClose,
   onOpenSettings,
 }) => {
-  const [currentScope, setCurrentScope] = React.useState<CurrentScopeContext | null>(null);
-  const [session, setSession] = React.useState<ChatSession | null>(null);
+  const [currentScope, setCurrentScope] = React.useState<CurrentScopeContext | null>(() => {
+    try {
+      return getCurrentScopeContext();
+    } catch {
+      return null;
+    }
+  });
+  const [session, setSession] = React.useState<ChatSession | null>(() => {
+    try {
+      const chId = getCurrentChannelId() || 'global';
+      return createNewSession(chId, 'New Chat');
+    } catch {
+      return createNewSession('global', 'New Chat');
+    }
+  });
   const [sessionsList, setSessionsList] = React.useState<ChatSession[]>([]);
   const [showHistory, setShowHistory] = React.useState(false);
   const [inputText, setInputText] = React.useState('');

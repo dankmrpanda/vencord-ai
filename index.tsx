@@ -21,6 +21,8 @@ let rootContainer: HTMLDivElement | null = null;
 let reactRoot: any = null;
 let isSidebarOpen = false;
 let currentSettings: PluginSettings = { ...DEFAULT_SETTINGS };
+let headerPollInterval: any = null;
+let headerInjectionTimeout: any = null;
 let stylesheetInjected = false;
 
 function injectPluginStyles() {
@@ -36,73 +38,75 @@ function injectPluginStyles() {
       from { transform: translateX(100%); opacity: 0; }
       to { transform: translateX(0); opacity: 1; }
     }
-    @keyframes vencord-ai-fade-in {
-      from { opacity: 0; transform: translateY(-4px); }
-      to { opacity: 1; transform: translateY(0); }
+    @keyframes vencord-ai-tooltip-appear {
+      from {
+        opacity: 0;
+        transform: translate(-50%, -4px);
+      }
+      to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
     }
 
-    #vencord-ai-floating-launcher {
-      position: fixed;
-      top: 10px;
-      right: 220px;
-      height: 28px;
-      padding: 0 9px;
+    #vencord-ai-header-btn {
+      position: relative;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      border-radius: 6px;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      margin: 0 4px;
+      border-radius: 4px;
       cursor: pointer;
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 16px;
       user-select: none;
-      z-index: 99999;
-      background-color: var(--background-secondary-alt, #232428);
-      color: var(--header-primary, #f2f3f5);
-      border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.12));
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-      transition: all 0.15s ease;
-      font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
+      color: var(--interactive-normal, #b5bac1);
+      transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+      flex-shrink: 0;
     }
-    #vencord-ai-floating-launcher:hover {
-      background-color: var(--brand-experiment, #5865f2);
-      color: #ffffff;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 14px rgba(88, 101, 242, 0.45);
+    #vencord-ai-header-btn:hover {
+      color: var(--interactive-hover, #dbdee1);
+      background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
     }
-    #vencord-ai-floating-launcher:active {
-      transform: translateY(0) scale(0.97);
+    #vencord-ai-header-btn:active {
+      color: var(--interactive-active, #ffffff);
+      background-color: var(--background-modifier-active, rgba(255, 255, 255, 0.16));
     }
-    #vencord-ai-floating-launcher[data-tooltip]:hover::before {
+
+    /* Native Discord-style Tooltip matching Image 3 */
+    #vencord-ai-header-btn[data-tooltip]:hover::before {
       content: attr(data-tooltip);
       position: absolute;
-      top: calc(100% + 7px);
-      right: 50%;
-      transform: translateX(50%);
+      top: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
       background-color: var(--background-floating, #111214);
       color: var(--text-normal, #dbdee1);
       padding: 6px 10px;
       border-radius: 5px;
-      font-size: 12px;
-      font-weight: 500;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
       white-space: nowrap;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      box-shadow: var(--elevation-high, 0 8px 16px rgba(0, 0, 0, 0.4));
       z-index: 100001;
       pointer-events: none;
       border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
-      animation: vencord-ai-fade-in 0.12s ease;
+      animation: vencord-ai-tooltip-appear 0.12s ease-out;
     }
-    #vencord-ai-floating-launcher[data-tooltip]:hover::after {
+    #vencord-ai-header-btn[data-tooltip]:hover::after {
       content: '';
       position: absolute;
-      top: calc(100% + 2px);
-      right: 50%;
-      transform: translateX(50%);
+      top: calc(100% + 3px);
+      left: 50%;
+      transform: translateX(-50%);
       border-width: 0 5px 5px 5px;
       border-style: solid;
       border-color: transparent transparent var(--background-floating, #111214) transparent;
       z-index: 100001;
       pointer-events: none;
-      animation: vencord-ai-fade-in 0.12s ease;
+      animation: vencord-ai-tooltip-appear 0.12s ease-out;
     }
 
     #vencord-ai-sidebar-root {
@@ -112,6 +116,8 @@ function injectPluginStyles() {
       bottom: 0;
       width: 400px;
       max-width: 95vw;
+      height: 100vh;
+      box-sizing: border-box;
       z-index: 100000;
       box-shadow: -6px 0 24px rgba(0, 0, 0, 0.55);
       display: flex;
@@ -138,10 +144,110 @@ function injectPluginStyles() {
   stylesheetInjected = true;
 }
 
+let LazyErrorBoundary: any = null;
+function getErrorBoundary() {
+  if (LazyErrorBoundary) return LazyErrorBoundary;
+  const ReactMod = (window as any).React || (window as any).Vencord?.Webpack?.Common?.React || React;
+  if (!ReactMod?.Component) return null;
+
+  LazyErrorBoundary = class extends ReactMod.Component<any, { hasError: boolean; error: any }> {
+    constructor(props: any) {
+      super(props);
+      this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error: any) {
+      return { hasError: true, error };
+    }
+    componentDidCatch(error: any, info: any) {
+      console.error('[VencordAI] Error in SidebarPanel:', error, info);
+    }
+    render() {
+      if (this.state.hasError) {
+        return ReactMod.createElement(
+          'div',
+          {
+            style: {
+              padding: '24px',
+              color: 'var(--text-normal, #dbdee1)',
+              fontFamily: 'inherit',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+              textAlign: 'center',
+              backgroundColor: 'var(--background-primary, #313338)',
+            },
+          },
+          ReactMod.createElement('div', { style: { fontSize: '36px', marginBottom: '12px' } }, '⚠️'),
+          ReactMod.createElement(
+            'div',
+            {
+              style: {
+                fontWeight: 600,
+                fontSize: '15px',
+                color: 'var(--header-primary, #f2f3f5)',
+                marginBottom: '8px',
+              },
+            },
+            'AI Assistant Render Error'
+          ),
+          ReactMod.createElement(
+            'div',
+            {
+              style: {
+                fontSize: '12px',
+                color: 'var(--text-muted, #949ba4)',
+                marginBottom: '16px',
+                maxWidth: '320px',
+                wordBreak: 'break-word',
+                backgroundColor: 'var(--background-secondary, #2b2d31)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--background-modifier-accent, #3f4147)',
+              },
+            },
+            String(this.state.error?.message || this.state.error || 'Unknown error')
+          ),
+          ReactMod.createElement(
+            'button',
+            {
+              style: {
+                padding: '8px 16px',
+                backgroundColor: 'var(--brand-experiment, #5865f2)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '12px',
+              },
+              onClick: () => this.setState({ hasError: false, error: null }),
+            },
+            '🔄 Retry'
+          )
+        );
+      }
+      return this.props.children;
+    }
+  };
+  return LazyErrorBoundary;
+}
+
 function getReactDOM(): any {
   if (typeof window !== 'undefined') {
-    const wp = (window as any).Vencord?.Webpack;
-    if (wp?.Common?.ReactDOM) return wp.Common.ReactDOM;
+    const vcWp = (window as any).Vencord?.Webpack;
+    if (vcWp?.Common?.ReactDOM) return vcWp.Common.ReactDOM;
+    if (vcWp?.findByProps) {
+      try {
+        const cr = vcWp.findByProps('createRoot');
+        if (cr?.createRoot) return cr;
+      } catch {}
+      try {
+        const ren = vcWp.findByProps('render', 'unmountComponentAtNode') || vcWp.findByProps('render');
+        if (ren?.render) return ren;
+      } catch {}
+    }
     if ((window as any).ReactDOM) return (window as any).ReactDOM;
   }
   const createRootMod = findByProps('createRoot');
@@ -159,9 +265,13 @@ function renderSidebar() {
       rootContainer = document.createElement('div');
       rootContainer.id = 'vencord-ai-sidebar-root';
       document.body.appendChild(rootContainer);
+    }
 
-      if (dom?.createRoot) {
+    if (!reactRoot && dom?.createRoot) {
+      try {
         reactRoot = dom.createRoot(rootContainer);
+      } catch (err) {
+        console.error('[VencordAI] Error creating React root:', err);
       }
     }
 
@@ -171,7 +281,9 @@ function renderSidebar() {
     }
 
     rootContainer.style.display = 'flex';
-    const element = (
+
+    const EB = getErrorBoundary();
+    const panel = (
       <SidebarPanel
         settings={currentSettings}
         onClose={() => {
@@ -180,6 +292,7 @@ function renderSidebar() {
         }}
       />
     );
+    const element = EB ? <EB>{panel}</EB> : panel;
 
     if (reactRoot?.render) {
       reactRoot.render(element);
@@ -202,20 +315,28 @@ if (typeof window !== 'undefined') {
   (window as any).toggleVencordAIAssistant = toggleAIAssistant;
 }
 
-function injectLauncherButton() {
+function injectHeaderButton() {
   try {
     injectPluginStyles();
 
-    const existingBtn = document.getElementById('vencord-ai-floating-launcher');
-    if (existingBtn) return;
+    const existingBtn = document.getElementById('vencord-ai-header-btn');
+    if (existingBtn && existingBtn.isConnected) return;
+
+    const toolbars = document.querySelectorAll(
+      'section[class*="title_"] [class*="toolbar_"], [class*="upperContainer_"] [class*="toolbar_"], [class*="toolbar__"]'
+    );
+    if (!toolbars || toolbars.length === 0) return;
+
+    const toolbar = toolbars[0];
+    if (toolbar.querySelector('#vencord-ai-header-btn')) return;
 
     const btn = document.createElement('div');
-    btn.id = 'vencord-ai-floating-launcher';
-    btn.setAttribute('data-tooltip', 'AI Message Assistant (Cmd+Shift+A)');
+    btn.id = 'vencord-ai-header-btn';
+    btn.setAttribute('data-tooltip', 'AI Assistant (Cmd+Shift+A)');
     btn.setAttribute('aria-label', 'AI Message Assistant');
     btn.setAttribute('role', 'button');
     btn.setAttribute('tabindex', '0');
-    btn.innerHTML = '<span>✨</span><span>AI Assistant</span>';
+    btn.innerText = '✨';
 
     const handleClick = (e: Event) => {
       e.preventDefault();
@@ -232,7 +353,7 @@ function injectLauncherButton() {
       }
     });
 
-    document.body.appendChild(btn);
+    toolbar.prepend(btn);
   } catch (err) {
     // Non-fatal
   }
@@ -253,7 +374,8 @@ export function startPlugin() {
     currentSettings = loadSavedSettings();
     window.addEventListener('keydown', handleKeyDown);
 
-    injectLauncherButton();
+    headerInjectionTimeout = setTimeout(injectHeaderButton, 500);
+    headerPollInterval = setInterval(injectHeaderButton, 1000);
 
     console.log('[VencordAI] AI Assistant Plugin started successfully.');
   } catch (err) {
@@ -264,8 +386,16 @@ export function startPlugin() {
 export function stopPlugin() {
   try {
     window.removeEventListener('keydown', handleKeyDown);
+    if (headerInjectionTimeout) {
+      clearTimeout(headerInjectionTimeout);
+      headerInjectionTimeout = null;
+    }
+    if (headerPollInterval) {
+      clearInterval(headerPollInterval);
+      headerPollInterval = null;
+    }
 
-    const btn = document.getElementById('vencord-ai-floating-launcher');
+    const btn = document.getElementById('vencord-ai-header-btn');
     btn?.remove();
 
     const styles = document.getElementById('vencord-ai-styles');
