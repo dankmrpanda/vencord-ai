@@ -7,15 +7,50 @@
 import { DiscordMessage } from '../types';
 import { getAuthToken, getChannel, getHTTP } from './stores';
 
+const DISCORD_EPOCH = 1420070400000n;
+
+/**
+ * Converts a Date, timestamp, or date string into a Discord Snowflake ID
+ */
+export function dateToSnowflake(date: Date | string | number): string {
+  try {
+    const ms = typeof date === 'string' ? new Date(date).getTime() : typeof date === 'number' ? date : date.getTime();
+    if (isNaN(ms)) return '0';
+    const snowflake = (BigInt(ms) - DISCORD_EPOCH) << 22n;
+    return snowflake > 0n ? snowflake.toString() : '0';
+  } catch {
+    return '0';
+  }
+}
+
+/**
+ * Converts a Discord Snowflake ID into a JavaScript Date
+ */
+export function snowflakeToDate(snowflake: string): Date {
+  try {
+    const ms = (BigInt(snowflake) >> 22n) + DISCORD_EPOCH;
+    return new Date(Number(ms));
+  } catch {
+    return new Date();
+  }
+}
+
 export interface SearchOptions {
   query?: string;
   channelId?: string;
   guildId?: string;
   authorId?: string;
-  has?: 'image' | 'sound' | 'video' | 'file' | 'link' | 'embed';
+  has?: 'image' | 'sound' | 'video' | 'file' | 'link' | 'embed' | 'sticker';
   minId?: string;
   maxId?: string;
+  beforeDate?: string | Date;
+  afterDate?: string | Date;
+  duringDate?: string | Date;
+  sortBy?: 'timestamp' | 'relevance';
+  sortOrder?: 'desc' | 'asc';
   offset?: number;
+  pinned?: boolean;
+  mentions?: string;
 }
 
 export interface SearchResponse {
@@ -48,15 +83,46 @@ export async function searchDiscordMessages(
   options: SearchOptions,
   retriesRemaining: number = 3
 ): Promise<SearchResponse> {
+  // Compute effective min_id / max_id from dates if specified
+  let effectiveMinId = options.minId;
+  let effectiveMaxId = options.maxId;
+
+  if (options.duringDate) {
+    const d = new Date(options.duringDate);
+    if (!isNaN(d.getTime())) {
+      const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+      const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+      effectiveMinId = dateToSnowflake(start);
+      effectiveMaxId = dateToSnowflake(end);
+    }
+  } else {
+    if (options.afterDate) {
+      const d = new Date(options.afterDate);
+      if (!isNaN(d.getTime())) {
+        effectiveMinId = dateToSnowflake(d);
+      }
+    }
+    if (options.beforeDate) {
+      const d = new Date(options.beforeDate);
+      if (!isNaN(d.getTime())) {
+        effectiveMaxId = dateToSnowflake(d);
+      }
+    }
+  }
+
   const normalizedKey = JSON.stringify({
     q: options.query?.trim() || '',
     ch: options.channelId || '',
     g: options.guildId || '',
     a: options.authorId || '',
     h: options.has || '',
-    min: options.minId || '',
-    max: options.maxId || '',
+    min: effectiveMinId || '',
+    max: effectiveMaxId || '',
+    sort: options.sortBy || '',
+    ord: options.sortOrder || '',
     off: options.offset || 0,
+    pin: options.pinned || '',
+    men: options.mentions || '',
   });
 
   const cached = searchCache.get(normalizedKey);
@@ -81,9 +147,13 @@ export async function searchDiscordMessages(
   }
   if (options.authorId) queryObj.author_id = options.authorId;
   if (options.has) queryObj.has = options.has;
-  if (options.minId) queryObj.min_id = options.minId;
-  if (options.maxId) queryObj.max_id = options.maxId;
+  if (effectiveMinId) queryObj.min_id = effectiveMinId;
+  if (effectiveMaxId) queryObj.max_id = effectiveMaxId;
+  if (options.sortBy) queryObj.sort_by = options.sortBy;
+  if (options.sortOrder) queryObj.sort_order = options.sortOrder;
   if (options.offset) queryObj.offset = String(options.offset);
+  if (options.pinned !== undefined) queryObj.pinned = String(options.pinned);
+  if (options.mentions) queryObj.mentions = options.mentions;
 
   let relativeEndpoint = '';
   if (guildId) {

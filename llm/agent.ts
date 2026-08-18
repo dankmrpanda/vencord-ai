@@ -89,12 +89,17 @@ export class AIAssistantAgent {
       }
     };
 
-    // Build LLM message sequence
+    // Build LLM message sequence with live date/time context
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowDateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const nowTimeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+
     const systemPrompt = this.settings.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
     const llmMessages: LLMMessage[] = [
       {
         role: 'system',
-        content: `${systemPrompt}\n\n[Active Scope Context]: Channel: #${currentScope.channelName} (${currentScope.channelId}), Type: ${currentScope.isDM ? 'Direct Message' : currentScope.isGroupDM ? 'Group DM' : `Server Guild (${currentScope.guildName || currentScope.guildId})`}`,
+        content: `${systemPrompt}\n\n[Current System Time & Date]: ${nowDateStr}, ${nowTimeStr} (${nowIso})\n[Active Scope Context]: Channel: #${currentScope.channelName} (${currentScope.channelId}), Type: ${currentScope.isDM ? 'Direct Message' : currentScope.isGroupDM ? 'Group DM' : `Server Guild (${currentScope.guildName || currentScope.guildId})`}`,
       },
     ];
 
@@ -279,6 +284,10 @@ export class AIAssistantAgent {
         const targetChannel = targetChannelId ? getChannel(targetChannelId) : null;
         const resolvedGuildId = targetChannel?.guild_id || (isGuildContext ? currentScope.guildId : undefined);
 
+        const duringDate = args.date || args.during_date;
+        const afterDate = args.after_date;
+        const beforeDate = args.before_date;
+
         let res: SearchResponse | null = null;
         let searchError: string | null = null;
 
@@ -289,6 +298,14 @@ export class AIAssistantAgent {
             guildId: resolvedGuildId,
             authorId: args.author_id,
             has: args.has,
+            duringDate,
+            afterDate,
+            beforeDate,
+            sortBy: args.sort_by,
+            sortOrder: args.sort_order,
+            offset: args.offset,
+            pinned: args.pinned,
+            mentions: args.mentions,
           });
         } catch (err: any) {
           searchError = err?.message || String(err);
@@ -297,7 +314,7 @@ export class AIAssistantAgent {
         // Check if server search returned positive results
         if (res && res.messages && res.messages.length > 0) {
           const formattedResults: string[] = [];
-          for (const group of res.messages.slice(0, 10)) {
+          for (const group of res.messages.slice(0, 15)) {
             const hitMsg = Array.isArray(group) ? (group.find((m) => m.hit) || group[0]) : group;
             if (hitMsg) {
               const msgChannel = getChannel(hitMsg.channel_id);
@@ -312,7 +329,7 @@ export class AIAssistantAgent {
         }
 
         // Automatic Local / Recent Channel Messages Fallback:
-        // If server index returned 0 results or failed, scan recent messages in the target/active channel
+        // Scan local channel history using the exact criteria (including date constraints)
         if (targetChannelId) {
           const recent = await fetchRecentMessages(targetChannelId, 50);
           if (recent.length > 0) {
@@ -320,6 +337,9 @@ export class AIAssistantAgent {
               query: args.query,
               has: args.has,
               authorId: args.author_id,
+              duringDate,
+              afterDate,
+              beforeDate,
             });
 
             if (matchedLocal.length > 0) {
@@ -330,16 +350,24 @@ export class AIAssistantAgent {
                 addCitation(msg, resolvedChannelName);
                 formattedResults.push(formatMessageForLLM(msg, resolvedChannelName));
               }
-              return `Found ${matchedLocal.length} matching messages in recent channel context:\n\n${formattedResults.join('\n\n')}`;
+              return `Found ${matchedLocal.length} matching messages in channel history:\n\n${formattedResults.join('\n\n')}`;
             }
           }
         }
 
+        const criteriaDetails: string[] = [];
+        if (args.query) criteriaDetails.push(`Query: "${args.query}"`);
+        if (args.has) criteriaDetails.push(`Has: "${args.has}"`);
+        if (duringDate) criteriaDetails.push(`Date: ${duringDate}`);
+        if (afterDate) criteriaDetails.push(`After: ${afterDate}`);
+        if (beforeDate) criteriaDetails.push(`Before: ${beforeDate}`);
+        if (args.author_id) criteriaDetails.push(`Author ID: ${args.author_id}`);
+
         if (searchError) {
-          return `Search query failed: ${searchError}. No matching messages found in recent channel cache.`;
+          return `Search query failed: ${searchError}. No matching messages found for ${criteriaDetails.join(', ') || 'criteria'} in #${targetChannel?.name || currentScope.channelName}.`;
         }
 
-        return `No messages found matching search criteria (Query: "${args.query || ''}", Has: "${args.has || 'none'}", Channel: #${targetChannel?.name || currentScope.channelName}).`;
+        return `No messages found matching search criteria (${criteriaDetails.join(', ') || 'unspecified criteria'}) in channel #${targetChannel?.name || currentScope.channelName}.`;
       }
 
       case 'fetch_surrounding_messages': {

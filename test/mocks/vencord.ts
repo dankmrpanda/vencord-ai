@@ -72,3 +72,15 @@ export const RestAPI = {
   put: async () => ({ body: {} }),
   del: async () => ({ body: {} }),
 };
+
+export const NavigationRouter = {
+  transitionTo: (_path: string) => {},
+  replaceWith: (_path: string) => {},
+  transitionToGuild: (_guildId: string, _channelId: string, _messageId?: string) => {},
+};
+
+export const FluxDispatcher = {
+  dispatch: (_event: any) => {},
+  subscribe: (_event: string, _handler: any) => {},
+  unsubscribe: (_event: string, _handler: any) => {},
+};

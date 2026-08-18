@@ -10,7 +10,11 @@ import {
   findByProps as wpFindByProps,
   findStore as wpFindStore,
 } from '@webpack';
-import { RestAPI as vcRestAPI } from '@webpack/common';
+import {
+  FluxDispatcher as vcFluxDispatcher,
+  NavigationRouter as vcNavRouter,
+  RestAPI as vcRestAPI,
+} from '@webpack/common';
 import { DiscordChannel, DiscordGuild, DiscordMessage, DiscordUser } from '../types';
 
 export function find(filter: (mod: any) => boolean): any {
@@ -63,7 +67,34 @@ export const getMessageStore = () => findStore('MessageStore') ?? findByProps('g
 export const getRelationshipStore = () => findStore('RelationshipStore') ?? findByProps('getRelationships');
 export const getPermissionStore = () => findStore('PermissionStore') ?? findByProps('can');
 export const getAuthStore = () => findStore('AuthenticationStore') ?? findByProps('getToken', 'getId');
-export const getNavigationUtils = () => findByProps('transitionToGuild', 'transitionTo') ?? findByProps('transitionTo');
+
+export const getNavigationRouter = () => {
+  if (typeof vcNavRouter !== 'undefined' && (vcNavRouter?.transitionTo || vcNavRouter?.transitionToGuild)) {
+    return vcNavRouter;
+  }
+  if (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.Common?.NavigationRouter) {
+    return (window as any).Vencord?.Webpack?.Common?.NavigationRouter;
+  }
+  return findByProps('transitionTo', 'replaceWith') ?? findByProps('transitionToGuild', 'transitionTo') ?? findByProps('transitionTo');
+};
+
+export const getMessageJumpModule = () => {
+  return findByProps('jumpToMessage', 'focusMessage') ?? findByProps('jumpToMessage') ?? findByProps('trackJump');
+};
+
+export const getChannelSelectModule = () => {
+  return findByProps('selectChannel', 'selectPrivateChannel') ?? findByProps('selectChannel');
+};
+
+export const getFluxDispatcher = () => {
+  if (typeof vcFluxDispatcher !== 'undefined' && vcFluxDispatcher?.dispatch) return vcFluxDispatcher;
+  if (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.Common?.FluxDispatcher) {
+    return (window as any).Vencord?.Webpack?.Common?.FluxDispatcher;
+  }
+  return findByProps('dispatch', 'subscribe') ?? findStore('FluxDispatcher');
+};
+
+export const getNavigationUtils = () => getNavigationRouter();
 
 export const getHTTP = () => {
   if (typeof vcRestAPI !== 'undefined' && vcRestAPI?.get) return vcRestAPI;
@@ -166,27 +197,107 @@ export function getAuthToken(): string | null {
 }
 
 /**
- * Navigates Discord client to a specific guild / channel / message
+ * Navigates Discord client directly to a specific guild / channel / message in-app
  */
-export function jumpToMessage(channelId: string, messageId: string, guildId?: string): void {
+export function jumpToMessage(channelId: string, messageId?: string, guildId?: string): void {
+  if (!channelId) return;
+
+  // Auto-resolve guildId if not provided
+  let effectiveGuildId = guildId;
+  if (!effectiveGuildId || effectiveGuildId === '@me') {
+    const ch = getChannel(channelId);
+    if (ch?.guild_id) {
+      effectiveGuildId = ch.guild_id;
+    } else {
+      effectiveGuildId = undefined;
+    }
+  }
+
+  const targetPath = effectiveGuildId
+    ? `/channels/${effectiveGuildId}/${channelId}${messageId ? `/${messageId}` : ''}`
+    : `/channels/@me/${channelId}${messageId ? `/${messageId}` : ''}`;
+
+  console.log(`[VencordAI] In-app navigation to: ${targetPath}`);
+
+  // Method 1: Discord Message Jump Actions (Best: loads surrounding messages and highlights target message)
+  if (messageId) {
+    try {
+      const jumpMod = getMessageJumpModule();
+      if (typeof jumpMod?.jumpToMessage === 'function') {
+        try {
+          jumpMod.jumpToMessage({
+            channelId,
+            messageId,
+            flash: true,
+            isPreload: false,
+          });
+          return;
+        } catch {
+          try {
+            jumpMod.jumpToMessage(channelId, messageId);
+            return;
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.warn('[VencordAI] Message jump module failed, trying router:', err);
+    }
+  }
+
+  // Method 2: Navigation Router (Vencord Webpack Common or Discord Routing)
   try {
-    const nav = getNavigationUtils();
-    if (nav?.transitionToGuild && guildId) {
-      nav.transitionToGuild(guildId, channelId, messageId);
+    const router = getNavigationRouter();
+    if (router?.transitionToGuild && effectiveGuildId) {
+      router.transitionToGuild(effectiveGuildId, channelId, messageId);
       return;
     }
-    if (nav?.transitionTo) {
-      const path = guildId 
-        ? `/channels/${guildId}/${channelId}/${messageId}`
-        : `/channels/@me/${channelId}/${messageId}`;
-      nav.transitionTo(path);
+    if (typeof router?.transitionTo === 'function') {
+      router.transitionTo(targetPath);
       return;
     }
-    const url = guildId 
-      ? `https://discord.com/channels/${guildId}/${channelId}/${messageId}`
-      : `https://discord.com/channels/@me/${channelId}/${messageId}`;
-    window.open(url, '_blank');
+    if (typeof router?.replaceWith === 'function') {
+      router.replaceWith(targetPath);
+      return;
+    }
   } catch (err) {
-    console.error('[VencordAI] Error jumping to message:', err);
+    console.warn('[VencordAI] Navigation router transition failed:', err);
+  }
+
+  // Method 3: Channel Select Module
+  try {
+    const selectMod = getChannelSelectModule();
+    if (typeof selectMod?.selectChannel === 'function') {
+      selectMod.selectChannel({
+        guildId: effectiveGuildId || null,
+        channelId,
+        messageId: messageId || null,
+      });
+      return;
+    }
+  } catch (err) {
+    console.warn('[VencordAI] selectChannel failed:', err);
+  }
+
+  // Method 4: Flux Dispatcher (Direct Discord Redux / Flux store action)
+  try {
+    const dispatcher = getFluxDispatcher();
+    if (dispatcher?.dispatch) {
+      dispatcher.dispatch({
+        type: 'CHANNEL_SELECT',
+        guildId: effectiveGuildId || null,
+        channelId,
+        messageId: messageId || null,
+      });
+      if (messageId) {
+        dispatcher.dispatch({
+          type: 'MESSAGE_FOCUS',
+          channelId,
+          messageId,
+        });
+      }
+      return;
+    }
+  } catch (err) {
+    console.warn('[VencordAI] FluxDispatcher navigation failed:', err);
   }
 }

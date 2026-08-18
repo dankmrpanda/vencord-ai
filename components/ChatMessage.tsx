@@ -17,20 +17,32 @@ interface ChatMessageProps {
 function handleLinkClick(e: React.MouseEvent, href: string) {
   e.preventDefault();
   try {
-    const discordMatch = href.match(/discord\.com\/channels\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+    // Match Discord web URLs: /channels/:guildId/:channelId/:messageId
+    const discordMatch = href.match(/(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i) ||
+      href.match(/^\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i);
     if (discordMatch) {
       const [, guildId, channelId, messageId] = discordMatch;
       jumpToMessage(channelId, messageId, guildId === '@me' ? undefined : guildId);
       return;
     }
 
-    const customMatch = href.match(/discord:\/\/message\/([^\/]+)\/([^\/]+)/);
+    // Match custom URI: discord://message/:channelId/:messageId
+    const customMatch = href.match(/discord:\/\/message\/([^\/\s]+)\/([^\/\s]+)/i);
     if (customMatch) {
       const [, channelId, messageId] = customMatch;
       jumpToMessage(channelId, messageId);
       return;
     }
 
+    // Match custom URI: discord://channels/:guildId/:channelId/:messageId
+    const customChannelMatch = href.match(/discord:\/\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i);
+    if (customChannelMatch) {
+      const [, guildId, channelId, messageId] = customChannelMatch;
+      jumpToMessage(channelId, messageId, guildId === '@me' ? undefined : guildId);
+      return;
+    }
+
+    // Non-Discord external web links
     window.open(href, '_blank', 'noopener,noreferrer');
   } catch {
     window.open(href, '_blank', 'noopener,noreferrer');
@@ -201,6 +213,7 @@ function renderMarkdownContent(content: string): React.ReactNode {
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
   const [copiedMsg, setCopiedMsg] = React.useState(false);
+  const [showCitations, setShowCitations] = React.useState(true);
 
   const toolSteps = message.steps?.filter(
     (s) => s.type === 'tool_call' || s.type === 'tool_result' || s.type === 'error'
@@ -248,12 +261,27 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
 
       {!isUser && message.citations && message.citations.length > 0 && (
         <div style={citationsContainerStyle}>
-          <div style={citationsHeaderStyle}>
-            📌 Referenced Messages ({message.citations.length})
+          <div
+            style={citationsHeaderStyle}
+            onClick={() => setShowCitations(!showCitations)}
+            title={showCitations ? 'Click to hide references' : 'Click to show references'}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>📌</span>
+              <span>Referenced Messages ({message.citations.length})</span>
+            </div>
+            <div style={citationsToggleStyle}>
+              <span style={{ fontSize: '10px' }}>{showCitations ? 'Hide' : 'Show'}</span>
+              <span style={{ fontSize: '9px' }}>{showCitations ? '▲' : '▼'}</span>
+            </div>
           </div>
-          {message.citations.map((c) => (
-            <MessagePreview key={c.messageId} citation={c} />
-          ))}
+          {showCitations && (
+            <div style={citationsListStyle}>
+              {message.citations.map((c) => (
+                <MessagePreview key={c.messageId} citation={c} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -443,7 +471,7 @@ const streamingCursorStyle: React.CSSProperties = {
 
 const citationsContainerStyle: React.CSSProperties = {
   marginTop: '10px',
-  paddingTop: '8px',
+  paddingTop: '6px',
   borderTop: '1px solid var(--background-modifier-accent, #3f4147)',
 };
 
@@ -453,4 +481,28 @@ const citationsHeaderStyle: React.CSSProperties = {
   color: 'var(--header-secondary, #b5bac1)',
   marginBottom: '4px',
   textTransform: 'uppercase',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  cursor: 'pointer',
+  userSelect: 'none',
+  padding: '4px 6px',
+  borderRadius: '4px',
+  backgroundColor: 'var(--background-secondary, rgba(0, 0, 0, 0.15))',
+  transition: 'background-color 0.15s ease, color 0.15s ease',
+};
+
+const citationsToggleStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  color: 'var(--text-muted, #949ba4)',
+  fontWeight: 500,
+};
+
+const citationsListStyle: React.CSSProperties = {
+  marginTop: '4px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
 };

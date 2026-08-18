@@ -5,6 +5,7 @@
  */
 
 import { filterMessagesLocally, formatMessageForLLM } from '../discord/messages';
+import { dateToSnowflake, snowflakeToDate } from '../discord/search';
 import { DiscordMessage } from '../types';
 
 function runSearchTests() {
@@ -108,6 +109,28 @@ function runSearchTests() {
   // Test 8: Empty query with has:link (the exact scenario from the screenshot)
   const emptyQueryLinkMatches = filterMessagesLocally(testMessages, { query: '', has: 'link' });
   console.assert(emptyQueryLinkMatches.length === 1, 'Empty query with has:link should still return link messages');
+
+  // Test 9: Discord jump URL matching
+  const testUrls = [
+    'https://discord.com/channels/123/456/789',
+    'https://ptb.discordapp.com/channels/@me/456/789',
+    'discord://message/456/789',
+    'discord://channels/123/456/789',
+    '/channels/123/456/789',
+  ];
+
+  // Test 10: Snowflake conversion functions
+  const sampleTime = new Date('2023-08-18T12:00:00.000Z').getTime();
+  const snowflake = dateToSnowflake(sampleTime);
+  const recoveredDate = snowflakeToDate(snowflake);
+  console.assert(Math.abs(recoveredDate.getTime() - sampleTime) < 10, 'Snowflake conversion should preserve timestamp accuracy');
+
+  // Test 11: filterMessagesLocally with duringDate
+  const dateMatch = filterMessagesLocally(testMessages, { duringDate: '2025-01-01' });
+  console.assert(dateMatch.length === 4, `Expected all 4 messages on 2025-01-01, got ${dateMatch.length}`);
+
+  const oldDateMatch = filterMessagesLocally(testMessages, { duringDate: '2022-08-18' });
+  console.assert(oldDateMatch.length === 0, 'Past date (2022-08-18) should return 0 matches from 2025 messages');
 
   console.log('✅ All Search & Local Filter Tests Passed Successfully!');
 }

@@ -9,8 +9,11 @@ import { getAuthToken, getHTTP, getLoadedMessages } from './stores';
 
 export interface LocalMessageFilter {
   query?: string;
-  has?: 'image' | 'sound' | 'video' | 'file' | 'link' | 'embed';
+  has?: 'image' | 'sound' | 'video' | 'file' | 'link' | 'embed' | 'sticker';
   authorId?: string;
+  beforeDate?: string | Date;
+  afterDate?: string | Date;
+  duringDate?: string | Date;
 }
 
 /**
@@ -30,6 +33,23 @@ export function filterMessagesLocally(
     // Filter by author ID
     if (filter.authorId && msg.author?.id !== filter.authorId) {
       return false;
+    }
+
+    // Filter by date range
+    if (filter.duringDate) {
+      const targetDate = new Date(filter.duringDate).toISOString().slice(0, 10);
+      const msgDate = new Date(msg.timestamp).toISOString().slice(0, 10);
+      if (targetDate !== msgDate) return false;
+    }
+    if (filter.afterDate) {
+      const afterTime = new Date(filter.afterDate).getTime();
+      const msgTime = new Date(msg.timestamp).getTime();
+      if (msgTime < afterTime) return false;
+    }
+    if (filter.beforeDate) {
+      const beforeTime = new Date(filter.beforeDate).getTime();
+      const msgTime = new Date(msg.timestamp).getTime();
+      if (msgTime > beforeTime) return false;
     }
 
     // Filter by 'has' media type
