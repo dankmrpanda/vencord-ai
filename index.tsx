@@ -5,7 +5,7 @@
  */
 
 import definePlugin from '@utils/types';
-import { React } from '@webpack/common';
+import { React, ReactDOM } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
 import { findByProps } from './discord/stores';
 import {
@@ -235,6 +235,9 @@ function getErrorBoundary() {
 }
 
 function getReactDOM(): any {
+  if (ReactDOM && (typeof (ReactDOM as any).createRoot === 'function' || typeof (ReactDOM as any).render === 'function')) {
+    return ReactDOM;
+  }
   if (typeof window !== 'undefined') {
     const vcWp = (window as any).Vencord?.Webpack;
     if (vcWp?.Common?.ReactDOM) return vcWp.Common.ReactDOM;
@@ -300,6 +303,18 @@ function renderSidebar() {
       dom.render(element, rootContainer);
     } else {
       console.error('[VencordAI] No ReactDOM render method found to mount sidebar');
+      rootContainer.innerHTML = `
+        <div style="padding: 24px; color: var(--text-normal, #dbdee1); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; font-family: var(--font-primary, sans-serif);">
+          <div style="font-size: 36px; margin-bottom: 12px;">⚠️</div>
+          <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px; color: var(--header-primary, #f2f3f5);">AI Assistant Mounting Error</div>
+          <div style="font-size: 12px; color: var(--text-muted, #949ba4); margin-bottom: 16px; max-width: 280px;">Could not initialize the React renderer. Please reload Discord or try again.</div>
+          <button id="vencord-ai-retry-mount-btn" style="padding: 8px 16px; background-color: var(--brand-experiment, #5865f2); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px;">🔄 Retry</button>
+        </div>
+      `;
+      const retryBtn = rootContainer.querySelector('#vencord-ai-retry-mount-btn');
+      retryBtn?.addEventListener('click', () => {
+        renderSidebar();
+      });
     }
   } catch (err) {
     console.error('[VencordAI] Error rendering sidebar:', err);
