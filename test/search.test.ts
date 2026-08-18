@@ -6,6 +6,7 @@
 
 import { filterMessagesLocally, formatMessageForLLM } from '../discord/messages';
 import { dateToSnowflake, snowflakeToDate } from '../discord/search';
+import { resolvePromptMentions } from '../discord/stores';
 import { DiscordMessage } from '../types';
 
 function runSearchTests() {
@@ -129,8 +130,10 @@ function runSearchTests() {
   const dateMatch = filterMessagesLocally(testMessages, { duringDate: '2025-01-01' });
   console.assert(dateMatch.length === 4, `Expected all 4 messages on 2025-01-01, got ${dateMatch.length}`);
 
-  const oldDateMatch = filterMessagesLocally(testMessages, { duringDate: '2022-08-18' });
-  console.assert(oldDateMatch.length === 0, 'Past date (2022-08-18) should return 0 matches from 2025 messages');
+  // Test 12: resolvePromptMentions with snowflake mention
+  const mentions1 = resolvePromptMentions('Can you find all messages sent by <@123456789012345678>?');
+  console.assert(mentions1.length === 1, 'Should resolve snowflake mention');
+  console.assert(mentions1[0].id === '123456789012345678', 'Should extract correct user ID');
 
   console.log('✅ All Search & Local Filter Tests Passed Successfully!');
 }

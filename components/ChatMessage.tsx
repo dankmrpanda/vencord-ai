@@ -213,7 +213,7 @@ function renderMarkdownContent(content: string): React.ReactNode {
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
   const [copiedMsg, setCopiedMsg] = React.useState(false);
-  const [showCitations, setShowCitations] = React.useState(true);
+  const [showCitations, setShowCitations] = React.useState(false);
 
   const toolSteps = message.steps?.filter(
     (s) => s.type === 'tool_call' || s.type === 'tool_result' || s.type === 'error'

@@ -135,6 +135,8 @@ export function getLoadedMessages(channelId: string): DiscordMessage[] {
   }
 }
 
+export const getGuildMemberStore = () => findStore('GuildMemberStore') ?? findByProps('getMember', 'getMembers');
+
 /**
  * Retrieves the current logged-in Discord user
  */
@@ -145,6 +147,160 @@ export function getCurrentUser(): DiscordUser | null {
     console.error('[VencordAI] Error getting current user:', err);
     return null;
   }
+}
+
+/**
+ * Retrieves a user object by ID
+ */
+export function getUser(userId: string): DiscordUser | null {
+  try {
+    return getUserStore()?.getUser?.(userId) ?? null;
+  } catch (err) {
+    console.error(`[VencordAI] Error getting user ${userId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Searches for users/members across the active channel, guild, and cached stores
+ */
+export function searchMentionableUsers(query: string, channelId?: string, guildId?: string): DiscordUser[] {
+  const queryLower = query.trim().toLowerCase();
+  const userMap = new Map<string, DiscordUser>();
+
+  const addUser = (u: any) => {
+    if (!u || !u.id || userMap.has(u.id)) return;
+    const userObj: DiscordUser = {
+      id: u.id,
+      username: u.username || 'User',
+      globalName: u.globalName ?? u.global_name ?? null,
+      avatar: u.avatar || null,
+      bot: Boolean(u.bot),
+    };
+    userMap.set(u.id, userObj);
+  };
+
+  try {
+    // 1. Channel recipients (for DMs / Group DMs)
+    if (channelId) {
+      const ch = getChannel(channelId);
+      if (ch?.recipients && Array.isArray(ch.recipients)) {
+        for (const rId of ch.recipients) {
+          const u = getUser(rId) || { id: rId, username: 'User' };
+          addUser(u);
+        }
+      }
+    }
+
+    // 2. Authors of currently loaded messages in this channel
+    if (channelId) {
+      const loaded = getLoadedMessages(channelId);
+      for (const msg of loaded) {
+        if (msg.author) addUser(msg.author);
+      }
+    }
+
+    // 3. Guild members (if in a server)
+    const effectiveGuildId = guildId || (channelId ? getChannel(channelId)?.guild_id : undefined);
+    if (effectiveGuildId) {
+      const memberStore = getGuildMemberStore();
+      const rawMembers = memberStore?.getMembers?.(effectiveGuildId);
+      if (Array.isArray(rawMembers)) {
+        for (const m of rawMembers) {
+          if (m.userId) {
+            const u = getUser(m.userId) || { id: m.userId, username: m.nick || 'Member' };
+            addUser(u);
+          }
+        }
+      }
+    }
+
+    // 4. Cached users from UserStore
+    const userStore = getUserStore();
+    const allUsers = userStore?.getUsers?.();
+    if (allUsers) {
+      const values = typeof allUsers.values === 'function' ? Array.from(allUsers.values()) : Object.values(allUsers);
+      for (const u of values) {
+        addUser(u);
+      }
+    }
+  } catch (err) {
+    console.warn('[VencordAI] Error gathering mentionable users:', err);
+  }
+
+  // Filter and rank
+  const users = Array.from(userMap.values());
+  if (!queryLower) {
+    return users.slice(0, 8);
+  }
+
+  return users
+    .filter((u) => {
+      const matchUsername = u.username.toLowerCase().includes(queryLower);
+      const matchGlobal = u.globalName?.toLowerCase().includes(queryLower);
+      const matchId = u.id === queryLower;
+      return matchUsername || matchGlobal || matchId;
+    })
+    .sort((a, b) => {
+      const aStarts =
+        a.username.toLowerCase().startsWith(queryLower) ||
+        Boolean(a.globalName?.toLowerCase().startsWith(queryLower));
+      const bStarts =
+        b.username.toLowerCase().startsWith(queryLower) ||
+        Boolean(b.globalName?.toLowerCase().startsWith(queryLower));
+      if (aStarts && !bStarts) return -1;
+      if (!aStarts && bStarts) return 1;
+      return a.username.localeCompare(b.username);
+    })
+    .slice(0, 8);
+}
+
+/**
+ * Resolves user mentions (@username or <@id>) found in a prompt string
+ */
+export function resolvePromptMentions(
+  prompt: string,
+  channelId?: string,
+  guildId?: string
+): DiscordUser[] {
+  if (!prompt || typeof prompt !== 'string') return [];
+
+  const mentionedUsers: DiscordUser[] = [];
+  const seenIds = new Set<string>();
+
+  // 1. Match Discord snowflake mentions: <@1234567890> or <@!1234567890>
+  const idMatches = prompt.matchAll(/<@!?(\d+)>/g);
+  for (const match of idMatches) {
+    const id = match[1];
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      const user = getUser(id) || { id, username: `user_${id}` };
+      mentionedUsers.push(user);
+    }
+  }
+
+  // 2. Match text mentions: @username or @display_name
+  const nameMatches = prompt.matchAll(/@([a-zA-Z0-9_.]+)/g);
+  for (const match of nameMatches) {
+    const nameQuery = match[1].toLowerCase();
+    // Ignore special discord tags like @everyone or @here
+    if (nameQuery === 'everyone' || nameQuery === 'here') continue;
+
+    const matchedUsers = searchMentionableUsers(nameQuery, channelId, guildId);
+    const exactMatch =
+      matchedUsers.find(
+        (u) =>
+          u.username.toLowerCase() === nameQuery ||
+          u.globalName?.toLowerCase() === nameQuery
+      ) || matchedUsers[0];
+
+    if (exactMatch && !seenIds.has(exactMatch.id)) {
+      seenIds.add(exactMatch.id);
+      mentionedUsers.push(exactMatch);
+    }
+  }
+
+  return mentionedUsers;
 }
 
 /**

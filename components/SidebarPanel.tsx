@@ -6,7 +6,7 @@
 
 import { React } from '@webpack/common';
 import { getCurrentScopeContext } from '../discord/scope';
-import { getCurrentChannelId, getSelectedChannelStore } from '../discord/stores';
+import { getCurrentChannelId, getSelectedChannelStore, searchMentionableUsers } from '../discord/stores';
 import { AIAssistantAgent } from '../llm/agent';
 import {
   createNewSession,
@@ -20,6 +20,7 @@ import {
   ChatSession,
   CitationItem,
   CurrentScopeContext,
+  DiscordUser,
   PluginSettings,
 } from '../types';
 import { ChatMessage } from './ChatMessage';
@@ -72,15 +73,27 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const [showDebug, setShowDebug] = React.useState(false);
   const [inputText, setInputText] = React.useState('');
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const [mentionSuggestions, setMentionSuggestions] = React.useState<DiscordUser[]>([]);
+  const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
 
   const abortControllerRef = React.useRef<AbortController | null>(null);
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const isUserScrolledUpRef = React.useRef(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const agentRef = React.useRef<AIAssistantAgent>(null!);
   if (!agentRef.current) {
     agentRef.current = new AIAssistantAgent(settings);
   }
   const lastChannelIdRef = React.useRef<string | null>(null);
+
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    // If the user is scrolled more than 80px above the bottom, consider them "scrolled up"
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isUserScrolledUpRef.current = distanceFromBottom > 80;
+  };
 
   React.useEffect(() => {
     agentRef.current?.updateSettings(settings);
@@ -153,22 +166,33 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   }, []);
 
   React.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: isGenerating ? 'auto' : 'smooth' });
+    // Only auto-scroll if the user hasn't explicitly scrolled up to read earlier messages
+    if (!isUserScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: isGenerating ? 'auto' : 'smooth' });
+    }
   }, [session?.messages, isGenerating]);
 
   const handleNewChat = () => {
     const channelId = session?.channelId || getCurrentChannelId() || 'global';
     const newSess = createNewSession(channelId, 'New Conversation');
+    isUserScrolledUpRef.current = false;
     setSession(newSess);
     setSessionsList((prev) => [newSess, ...prev.filter((s) => s.id !== newSess.id)]);
     setShowHistory(false);
-    setTimeout(() => textareaRef.current?.focus(), 50);
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      textareaRef.current?.focus();
+    }, 50);
   };
 
   const handleSelectSession = (selected: ChatSession) => {
+    isUserScrolledUpRef.current = false;
     setSession(selected);
     setShowHistory(false);
-    setTimeout(() => textareaRef.current?.focus(), 50);
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      textareaRef.current?.focus();
+    }, 50);
   };
 
   const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
@@ -198,6 +222,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const promptToSend = customPrompt || inputText.trim();
     if (!promptToSend || isGenerating || !session) return;
 
+    isUserScrolledUpRef.current = false;
     setInputText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -330,15 +355,79 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     }
   };
 
+  const checkMentionTrigger = (text: string, cursorPosition: number) => {
+    const textBeforeCursor = text.slice(0, cursorPosition);
+    const match = textBeforeCursor.match(/(?:^|\s)@([a-zA-Z0-9_.]*)$/);
+    if (match) {
+      const query = match[1];
+      const results = searchMentionableUsers(query, currentScope?.channelId, currentScope?.guildId);
+      if (results.length > 0) {
+        setMentionSuggestions(results);
+        setMentionSelectedIndex(0);
+        return;
+      }
+    }
+    setMentionSuggestions([]);
+  };
+
+  const insertMention = (user: DiscordUser) => {
+    const cursorPosition = textareaRef.current?.selectionStart ?? inputText.length;
+    const textBeforeCursor = inputText.slice(0, cursorPosition);
+    const textAfterCursor = inputText.slice(cursorPosition);
+    const match = textBeforeCursor.match(/(?:^|\s)@([a-zA-Z0-9_.]*)$/);
+    if (match) {
+      const hasLeadingSpace = match[0].startsWith(' ');
+      const prefix = textBeforeCursor.slice(0, match.index! + (hasLeadingSpace ? 1 : 0));
+      const mentionTag = `@${user.username} `;
+      const newText = prefix + mentionTag + textAfterCursor;
+      setInputText(newText);
+      setMentionSuggestions([]);
+      setTimeout(() => {
+        if (textareaRef.current) {
+          const newPos = (prefix + mentionTag).length;
+          textareaRef.current.selectionStart = newPos;
+          textareaRef.current.selectionEnd = newPos;
+          textareaRef.current.focus();
+        }
+      }, 10);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionSelectedIndex((prev) => (prev + 1) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionSelectedIndex((prev) => (prev - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(mentionSuggestions[mentionSelectedIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionSuggestions([]);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      setMentionSuggestions([]);
       handleSend();
     }
   };
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputText(e.target.value);
+    const val = e.target.value;
+    setInputText(val);
+    checkMentionTrigger(val, e.target.selectionStart || val.length);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
   };
@@ -463,7 +552,11 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
       )}
 
       {/* Message Stream */}
-      <div style={messagesScrollContainerStyle}>
+      <div
+        style={messagesScrollContainerStyle}
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+      >
         {(!session || !session.messages || session.messages.length === 0) ? (
           <div style={emptyStateContainerStyle}>
             <div style={{ fontSize: '32px', marginBottom: '8px' }}>🤖</div>
@@ -511,10 +604,48 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
       {/* Input Box */}
       <div style={inputContainerStyle}>
+        {mentionSuggestions.length > 0 && (
+          <div style={mentionPopupContainerStyle}>
+            <div style={mentionPopupHeaderStyle}>Members matching mention</div>
+            <div style={mentionListStyle}>
+              {mentionSuggestions.map((u, idx) => (
+                <div
+                  key={u.id}
+                  style={idx === mentionSelectedIndex ? mentionItemActiveStyle : mentionItemStyle}
+                  onClick={() => insertMention(u)}
+                  onMouseEnter={() => setMentionSelectedIndex(idx)}
+                >
+                  <div style={mentionAvatarPlaceholderStyle}>
+                    {u.avatar ? (
+                      <img
+                        src={`https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=32`}
+                        alt={u.username}
+                        style={{ width: '100%', height: '100%', borderRadius: '50%' }}
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      u.username.slice(0, 1).toUpperCase()
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span style={mentionGlobalNameStyle}>{u.globalName || u.username}</span>
+                      {u.bot && <span style={botTagStyle}>BOT</span>}
+                    </div>
+                    <span style={mentionUsernameStyle}>@{u.username}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <textarea
           ref={textareaRef}
           style={textareaStyle}
-          placeholder="Ask a question about messages, files, or people..."
+          placeholder="Ask a question about messages, files, or @mention someone..."
           value={inputText}
           onChange={handleTextareaInput}
           onKeyDown={handleKeyDown}
@@ -594,14 +725,22 @@ const activeIconButtonStyle: React.CSSProperties = {
   color: 'var(--interactive-active, #ffffff)',
 };
 
+const textButtonStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: 'var(--text-muted, #949ba4)',
+  fontSize: '12px',
+  cursor: 'pointer',
+};
+
 const historyDrawerStyle: React.CSSProperties = {
   position: 'absolute',
   top: '48px',
   left: 0,
   right: 0,
   bottom: 0,
-  backgroundColor: 'var(--background-secondary, #2b2d31)',
-  zIndex: 150,
+  backgroundColor: 'var(--background-primary, #313338)',
+  zIndex: 10,
   display: 'flex',
   flexDirection: 'column',
 };
@@ -609,27 +748,18 @@ const historyDrawerStyle: React.CSSProperties = {
 const historyHeaderStyle: React.CSSProperties = {
   padding: '12px 14px',
   display: 'flex',
-  justifyContent: 'space-between',
   alignItems: 'center',
-  borderBottom: '1px solid var(--background-modifier-accent, #3f4147)',
+  justifyContent: 'space-between',
   fontWeight: 600,
   fontSize: '13px',
-  color: 'var(--header-primary, #f2f3f5)',
+  color: 'var(--header-secondary, #b5bac1)',
+  borderBottom: '1px solid var(--background-modifier-accent, #3f4147)',
 };
 
 const emptyHistoryTextStyle: React.CSSProperties = {
   padding: '24px',
   textAlign: 'center',
   color: 'var(--text-muted, #949ba4)',
-  fontSize: '12px',
-};
-
-const textButtonStyle: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: 'var(--brand-experiment, #5865f2)',
-  cursor: 'pointer',
-  fontWeight: 600,
   fontSize: '12px',
 };
 
@@ -642,84 +772,87 @@ const historyListStyle: React.CSSProperties = {
 const historyItemStyle: React.CSSProperties = {
   padding: '10px 12px',
   borderRadius: '6px',
-  backgroundColor: 'var(--background-secondary-alt, #232428)',
+  backgroundColor: 'var(--background-secondary, #2b2d31)',
   marginBottom: '6px',
   cursor: 'pointer',
-  position: 'relative',
-  transition: 'border-color 0.15s ease, background-color 0.15s ease',
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  border: '1px solid transparent',
+  transition: 'border-color 0.15s ease',
 };
 
 const activeHistoryItemStyle: React.CSSProperties = {
   ...historyItemStyle,
-  border: '1px solid var(--brand-experiment, #5865f2)',
+  borderColor: 'var(--brand-experiment, #5865f2)',
+  backgroundColor: 'var(--background-secondary-alt, #232428)',
 };
 
 const historyTitleStyle: React.CSSProperties = {
-  fontWeight: 600,
-  fontSize: '12px',
-  color: 'var(--header-primary, #f2f3f5)',
+  fontSize: '13px',
+  fontWeight: 500,
+  color: 'var(--text-normal, #dbdee1)',
+  whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  paddingRight: '28px',
+  maxWidth: '220px',
 };
 
-const historySubStyle: React.CSSProperties = {
-  fontSize: '10px',
+const historyMetaStyle: React.CSSProperties = {
+  fontSize: '11px',
   color: 'var(--text-muted, #949ba4)',
-  marginTop: '3px',
+  marginTop: '2px',
 };
 
 const deleteButtonStyle: React.CSSProperties = {
-  position: 'absolute',
-  right: '8px',
-  top: '10px',
   background: 'none',
   border: 'none',
+  color: 'var(--text-muted, #949ba4)',
   cursor: 'pointer',
-  fontSize: '12px',
-  opacity: 0.7,
   padding: '4px',
-  borderRadius: '4px',
+  fontSize: '12px',
 };
 
 const messagesScrollContainerStyle: React.CSSProperties = {
   flex: 1,
   overflowY: 'auto',
-  padding: '12px',
+  padding: '14px',
   display: 'flex',
   flexDirection: 'column',
+  gap: '12px',
 };
 
 const emptyStateContainerStyle: React.CSSProperties = {
+  flex: 1,
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
-  height: '100%',
   textAlign: 'center',
   padding: '20px',
+  color: 'var(--text-muted, #949ba4)',
 };
 
 const emptyTitleStyle: React.CSSProperties = {
-  fontWeight: 600,
   fontSize: '15px',
+  fontWeight: 600,
   color: 'var(--header-primary, #f2f3f5)',
-  marginBottom: '4px',
+  marginBottom: '6px',
 };
 
 const emptySubtitleStyle: React.CSSProperties = {
   fontSize: '12px',
-  color: 'var(--text-muted, #949ba4)',
   lineHeight: '1.4',
+  maxWidth: '260px',
   marginBottom: '20px',
 };
 
 const quickPromptsContainerStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '8px',
+  gap: '6px',
   width: '100%',
+  maxWidth: '280px',
 };
 
 const quickPromptButtonStyle: React.CSSProperties = {
@@ -751,6 +884,7 @@ const stopButtonStyle: React.CSSProperties = {
 };
 
 const inputContainerStyle: React.CSSProperties = {
+  position: 'relative',
   padding: '10px 12px',
   backgroundColor: 'var(--background-secondary, #2b2d31)',
   borderTop: '1px solid var(--background-modifier-accent, #3f4147)',
@@ -758,6 +892,98 @@ const inputContainerStyle: React.CSSProperties = {
   gap: '8px',
   alignItems: 'flex-end',
   flexShrink: 0,
+};
+
+const mentionPopupContainerStyle: React.CSSProperties = {
+  position: 'absolute',
+  bottom: '100%',
+  left: '12px',
+  right: '12px',
+  marginBottom: '6px',
+  backgroundColor: 'var(--background-secondary-alt, #1e1f22)',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
+  borderRadius: '8px',
+  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+  overflow: 'hidden',
+  zIndex: 1000,
+  maxHeight: '220px',
+  display: 'flex',
+  flexDirection: 'column',
+};
+
+const mentionPopupHeaderStyle: React.CSSProperties = {
+  padding: '6px 10px',
+  fontSize: '10px',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  color: 'var(--text-muted, #949ba4)',
+  backgroundColor: 'var(--background-tertiary, #111214)',
+  borderBottom: '1px solid var(--background-modifier-accent, #3f4147)',
+};
+
+const mentionListStyle: React.CSSProperties = {
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  padding: '4px',
+  gap: '2px',
+};
+
+const mentionItemStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  padding: '5px 8px',
+  borderRadius: '4px',
+  cursor: 'pointer',
+  transition: 'background-color 0.1s ease',
+};
+
+const mentionItemActiveStyle: React.CSSProperties = {
+  ...mentionItemStyle,
+  backgroundColor: 'var(--background-modifier-selected, rgba(255, 255, 255, 0.12))',
+};
+
+const mentionAvatarPlaceholderStyle: React.CSSProperties = {
+  width: '24px',
+  height: '24px',
+  borderRadius: '50%',
+  backgroundColor: 'var(--brand-experiment, #5865f2)',
+  color: '#fff',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: '11px',
+  fontWeight: 600,
+  flexShrink: 0,
+  overflow: 'hidden',
+};
+
+const mentionGlobalNameStyle: React.CSSProperties = {
+  fontSize: '12px',
+  fontWeight: 600,
+  color: 'var(--header-primary, #f2f3f5)',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
+const mentionUsernameStyle: React.CSSProperties = {
+  fontSize: '11px',
+  color: 'var(--text-muted, #949ba4)',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
+const botTagStyle: React.CSSProperties = {
+  backgroundColor: 'var(--brand-experiment, #5865f2)',
+  color: '#fff',
+  fontSize: '8px',
+  fontWeight: 700,
+  padding: '1px 3px',
+  borderRadius: '3px',
+  lineHeight: '1',
 };
 
 const textareaStyle: React.CSSProperties = {

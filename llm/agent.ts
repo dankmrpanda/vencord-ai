@@ -12,7 +12,7 @@ import {
 } from '../discord/messages';
 import { getCurrentScopeContext, isChannelAllowedInScope } from '../discord/scope';
 import { searchDiscordMessages, SearchResponse } from '../discord/search';
-import { getChannel } from '../discord/stores';
+import { getChannel, resolvePromptMentions } from '../discord/stores';
 import {
   AgentStep,
   AssistantChatMessage,
@@ -95,11 +95,22 @@ export class AIAssistantAgent {
     const nowDateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const nowTimeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
 
+    // Resolve any mentioned users in the user's prompt
+    const mentionedUsers = resolvePromptMentions(userPrompt, currentScope.channelId, currentScope.guildId);
+    let mentionContext = '';
+    if (mentionedUsers.length > 0) {
+      const userList = mentionedUsers.map((u) => {
+        const name = u.globalName ? `${u.globalName} (@${u.username})` : `@${u.username}`;
+        return `- ${name} (Discord ID: "${u.id}")${u.bot ? ' [Bot]' : ''}`;
+      });
+      mentionContext = `\n\n[Mentioned User(s) in Prompt Context]:\n${userList.join('\n')}\n*Guidance: The user explicitly mentioned the person/people above. When searching for messages sent by them or discussing them, use their exact author_id (e.g. author_id: "${mentionedUsers[0].id}") or query their username/ID.*`;
+    }
+
     const systemPrompt = this.settings.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
     const llmMessages: LLMMessage[] = [
       {
         role: 'system',
-        content: `${systemPrompt}\n\n[Current System Time & Date]: ${nowDateStr}, ${nowTimeStr} (${nowIso})\n[Active Scope Context]: Channel: #${currentScope.channelName} (${currentScope.channelId}), Type: ${currentScope.isDM ? 'Direct Message' : currentScope.isGroupDM ? 'Group DM' : `Server Guild (${currentScope.guildName || currentScope.guildId})`}`,
+        content: `${systemPrompt}\n\n[Current System Time & Date]: ${nowDateStr}, ${nowTimeStr} (${nowIso})\n[Active Scope Context]: Channel: #${currentScope.channelName} (${currentScope.channelId}), Type: ${currentScope.isDM ? 'Direct Message' : currentScope.isGroupDM ? 'Group DM' : `Server Guild (${currentScope.guildName || currentScope.guildId})`}${mentionContext}`,
       },
     ];
 
