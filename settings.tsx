@@ -69,18 +69,27 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange }) => {
+  const [localSettings, setLocalSettings] = useState<PluginSettings>(settings);
   const [showApiKey, setShowApiKey] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
+  const updateSetting = (updater: (prev: PluginSettings) => PluginSettings) => {
+    setLocalSettings((prev) => {
+      const next = updater(prev);
+      onChange(next);
+      return next;
+    });
+  };
+
   const handlePresetChange = (preset: ProviderPreset) => {
     const config = PRESET_CONFIGS[preset];
-    onChange({
-      ...settings,
+    updateSetting((prev) => ({
+      ...prev,
       providerPreset: preset,
       baseUrl: config.defaultBaseUrl,
       model: config.defaultModel,
-    });
+    }));
   };
 
   const handleTestConnection = async () => {
@@ -88,10 +97,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
     setTestStatus('Testing connection...');
 
     try {
-      let cleanUrl = settings.baseUrl.trim();
+      let cleanUrl = localSettings.baseUrl.trim();
       if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
 
-      const authKey = settings.apiKey?.trim() || 'local-no-auth';
+      const authKey = localSettings.apiKey?.trim() || 'local-no-auth';
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${authKey}`,
@@ -101,7 +110,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: settings.model || 'default',
+          model: localSettings.model || 'default',
           messages: [{ role: 'user', content: 'Say "connected" if you hear me.' }],
           max_tokens: 10,
         }),
@@ -129,7 +138,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <label style={labelStyle}>Provider Preset</label>
         <select
           style={selectStyle}
-          value={settings.providerPreset}
+          value={localSettings.providerPreset}
           onChange={(e) => handlePresetChange(e.target.value as ProviderPreset)}
         >
           {Object.entries(PRESET_CONFIGS).map(([key, conf]) => (
@@ -146,9 +155,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <input
           style={inputStyle}
           type="text"
-          value={settings.baseUrl}
+          value={localSettings.baseUrl}
           placeholder="http://localhost:8000/v1"
-          onChange={(e) => onChange({ ...settings, baseUrl: e.target.value })}
+          onChange={(e) => updateSetting((prev) => ({ ...prev, baseUrl: e.target.value }))}
         />
         <span style={hintStyle}>
           Standard OpenAI-compatible endpoint. Local defaults: omlx (`:8000/v1`), Ollama (`:11434/v1`), LM Studio (`:1234/v1`).
@@ -158,15 +167,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
       {/* API Key */}
       <div style={fieldGroupStyle}>
         <label style={labelStyle}>
-          API Key {PRESET_CONFIGS[settings.providerPreset]?.needsKey && <span style={{ color: 'var(--brand-experiment)' }}>*</span>}
+          API Key {PRESET_CONFIGS[localSettings.providerPreset]?.needsKey && <span style={{ color: 'var(--brand-experiment)' }}>*</span>}
         </label>
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             style={{ ...inputStyle, flex: 1 }}
             type={showApiKey ? 'text' : 'password'}
-            value={settings.apiKey}
-            placeholder="sk-... (Leave empty if using local omlx/Ollama without auth)"
-            onChange={(e) => onChange({ ...settings, apiKey: e.target.value })}
+            value={localSettings.apiKey}
+            placeholder="sk-... (or enter dummy key like 'omlx' / 'local')"
+            onChange={(e) => updateSetting((prev) => ({ ...prev, apiKey: e.target.value }))}
           />
           <button
             style={smallButtonStyle}
@@ -184,9 +193,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <input
           style={inputStyle}
           type="text"
-          value={settings.model}
+          value={localSettings.model}
           placeholder="e.g. qwen2.5:7b, gpt-4o-mini, mlx-community/Qwen2.5-7B-Instruct-4bit"
-          onChange={(e) => onChange({ ...settings, model: e.target.value })}
+          onChange={(e) => updateSetting((prev) => ({ ...prev, model: e.target.value }))}
         />
       </div>
 
@@ -208,15 +217,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
       <div style={fieldGroupStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <label style={labelStyle}>Temperature</label>
-          <span style={valueLabelStyle}>{settings.temperature}</span>
+          <span style={valueLabelStyle}>{localSettings.temperature}</span>
         </div>
         <input
           type="range"
           min="0.0"
           max="1.5"
           step="0.05"
-          value={settings.temperature}
-          onChange={(e) => onChange({ ...settings, temperature: parseFloat(e.target.value) })}
+          value={localSettings.temperature}
+          onChange={(e) => updateSetting((prev) => ({ ...prev, temperature: parseFloat(e.target.value) }))}
           style={rangeStyle}
         />
         <span style={hintStyle}>Lower values (0.2-0.5) are more factual; higher values (0.7-1.0) are more creative.</span>
@@ -226,15 +235,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
       <div style={fieldGroupStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <label style={labelStyle}>Max Search Tool Iterations</label>
-          <span style={valueLabelStyle}>{settings.maxSearchIterations}</span>
+          <span style={valueLabelStyle}>{localSettings.maxSearchIterations}</span>
         </div>
         <input
           type="range"
           min="1"
           max="10"
           step="1"
-          value={settings.maxSearchIterations}
-          onChange={(e) => onChange({ ...settings, maxSearchIterations: parseInt(e.target.value, 10) })}
+          value={localSettings.maxSearchIterations}
+          onChange={(e) => updateSetting((prev) => ({ ...prev, maxSearchIterations: parseInt(e.target.value, 10) }))}
           style={rangeStyle}
         />
         <span style={hintStyle}>Maximum number of search turns the agent can execute per query.</span>
@@ -245,8 +254,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <label style={checkboxLabelStyle}>
           <input
             type="checkbox"
-            checked={settings.enableVision}
-            onChange={(e) => onChange({ ...settings, enableVision: e.target.checked })}
+            checked={localSettings.enableVision}
+            onChange={(e) => updateSetting((prev) => ({ ...prev, enableVision: e.target.checked }))}
           />
           <span>Enable Multimodal / Image Inspection</span>
         </label>
@@ -259,9 +268,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <textarea
           style={textareaStyle}
           rows={3}
-          value={settings.systemPrompt}
+          value={localSettings.systemPrompt}
           placeholder="Leave blank to use the default optimized Discord Assistant prompt."
-          onChange={(e) => onChange({ ...settings, systemPrompt: e.target.value })}
+          onChange={(e) => updateSetting((prev) => ({ ...prev, systemPrompt: e.target.value }))}
         />
       </div>
     </div>
