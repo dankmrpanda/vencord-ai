@@ -30,7 +30,7 @@ Supports locally-hosted models (**omlx** on Apple Silicon, **Ollama**, **LM Stud
 1. Clone or copy this repository into your Vencord `src/userplugins` directory:
    ```bash
    cd /path/to/Vencord/src/userplugins
-   git clone https://github.com/your-username/vencord-ai.git aiAssistant
+   git clone https://github.com/dankmrpanda/vencord-ai.git aiAssistant
    ```
 2. Build Vencord:
    ```bash
