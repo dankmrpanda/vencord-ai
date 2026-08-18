@@ -144,22 +144,35 @@ function injectPluginStyles() {
   stylesheetInjected = true;
 }
 
+const pluginLogs: Array<{ time: string; level: 'info' | 'warn' | 'error'; message: string }> = [];
+
+export function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...args: any[]) {
+  const time = new Date().toLocaleTimeString();
+  const fullMsg = `${message} ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')}`.trim();
+  pluginLogs.push({ time, level, message: fullMsg });
+  if (pluginLogs.length > 60) pluginLogs.shift();
+  if (level === 'error') console.error(`[VencordAI] ${message}`, ...args);
+  else if (level === 'warn') console.warn(`[VencordAI] ${message}`, ...args);
+  else console.log(`[VencordAI] ${message}`, ...args);
+}
+
 let LazyErrorBoundary: any = null;
 function getErrorBoundary() {
   if (LazyErrorBoundary) return LazyErrorBoundary;
   const ReactMod = (window as any).React || (window as any).Vencord?.Webpack?.Common?.React || React;
   if (!ReactMod?.Component) return null;
 
-  LazyErrorBoundary = class extends ReactMod.Component<any, { hasError: boolean; error: any }> {
+  LazyErrorBoundary = class extends ReactMod.Component<any, { hasError: boolean; error: any; errorInfo: any }> {
     constructor(props: any) {
       super(props);
-      this.state = { hasError: false, error: null };
+      this.state = { hasError: false, error: null, errorInfo: null };
     }
     static getDerivedStateFromError(error: any) {
       return { hasError: true, error };
     }
-    componentDidCatch(error: any, info: any) {
-      console.error('[VencordAI] Error in SidebarPanel:', error, info);
+    componentDidCatch(error: any, errorInfo: any) {
+      logPlugin('error', 'ErrorBoundary caught error:', error?.stack || error?.message || error);
+      this.setState({ errorInfo });
     }
     render() {
       if (this.state.hasError) {
@@ -167,26 +180,26 @@ function getErrorBoundary() {
           'div',
           {
             style: {
-              padding: '24px',
+              padding: '20px',
               color: 'var(--text-normal, #dbdee1)',
-              fontFamily: 'inherit',
+              fontFamily: 'var(--font-primary, sans-serif)',
               display: 'flex',
               flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              textAlign: 'center',
+              height: '100vh',
+              boxSizing: 'border-box',
+              overflowY: 'auto',
               backgroundColor: 'var(--background-primary, #313338)',
             },
           },
-          ReactMod.createElement('div', { style: { fontSize: '36px', marginBottom: '12px' } }, '⚠️'),
+          ReactMod.createElement('div', { style: { fontSize: '36px', textAlign: 'center', marginBottom: '8px' } }, '⚠️'),
           ReactMod.createElement(
             'div',
             {
               style: {
-                fontWeight: 600,
-                fontSize: '15px',
+                fontWeight: 700,
+                fontSize: '16px',
                 color: 'var(--header-primary, #f2f3f5)',
+                textAlign: 'center',
                 marginBottom: '8px',
               },
             },
@@ -197,34 +210,88 @@ function getErrorBoundary() {
             {
               style: {
                 fontSize: '12px',
-                color: 'var(--text-muted, #949ba4)',
-                marginBottom: '16px',
-                maxWidth: '320px',
+                color: '#f23f43',
+                marginBottom: '12px',
                 wordBreak: 'break-word',
                 backgroundColor: 'var(--background-secondary, #2b2d31)',
                 padding: '10px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--background-modifier-accent, #3f4147)',
+                fontFamily: 'monospace',
               },
             },
-            String(this.state.error?.message || this.state.error || 'Unknown error')
+            String(this.state.error?.stack || this.state.error?.message || this.state.error || 'Unknown render error')
           ),
+          this.state.errorInfo?.componentStack &&
+            ReactMod.createElement(
+              'div',
+              {
+                style: {
+                  fontSize: '11px',
+                  color: 'var(--text-muted, #949ba4)',
+                  marginBottom: '12px',
+                  backgroundColor: 'var(--background-secondary-alt, #232428)',
+                  padding: '8px 10px',
+                  borderRadius: '6px',
+                  fontFamily: 'monospace',
+                  maxHeight: '120px',
+                  overflowY: 'auto',
+                  whiteSpace: 'pre-wrap',
+                },
+              },
+              'Component Stack:\n' + this.state.errorInfo.componentStack
+            ),
           ReactMod.createElement(
             'button',
             {
               style: {
-                padding: '8px 16px',
+                padding: '10px 16px',
                 backgroundColor: 'var(--brand-experiment, #5865f2)',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
                 fontWeight: 600,
-                fontSize: '12px',
+                fontSize: '13px',
+                marginBottom: '16px',
               },
-              onClick: () => this.setState({ hasError: false, error: null }),
+              onClick: () => this.setState({ hasError: false, error: null, errorInfo: null }),
             },
-            '🔄 Retry'
+            '🔄 Retry Component Render'
+          ),
+          ReactMod.createElement(
+            'div',
+            { style: { fontSize: '12px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)', marginBottom: '6px' } },
+            'Recent Plugin Logs:'
+          ),
+          ReactMod.createElement(
+            'div',
+            {
+              style: {
+                flex: 1,
+                backgroundColor: 'var(--background-secondary, #2b2d31)',
+                borderRadius: '6px',
+                padding: '8px 10px',
+                fontSize: '11px',
+                fontFamily: 'monospace',
+                overflowY: 'auto',
+                border: '1px solid var(--background-modifier-accent, #3f4147)',
+              },
+            },
+            pluginLogs.map((l, i) =>
+              ReactMod.createElement(
+                'div',
+                {
+                  key: i,
+                  style: {
+                    color: l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4',
+                    marginBottom: '3px',
+                    wordBreak: 'break-word',
+                  },
+                },
+                `[${l.time}] ${l.message}`
+              )
+            )
           )
         );
       }
@@ -297,12 +364,15 @@ function getReactDOM(): any {
 
 function renderSidebar() {
   try {
+    logPlugin('info', `renderSidebar invoked. isSidebarOpen = ${isSidebarOpen}`);
     const dom = getReactDOM();
+    logPlugin('info', `getReactDOM resolved: ${dom ? (dom.createRoot || dom.default?.createRoot ? 'createRoot found' : dom.render || dom.default?.render ? 'render found' : 'unknown dom') : 'null'}`);
 
     if (!rootContainer) {
       rootContainer = document.createElement('div');
       rootContainer.id = 'vencord-ai-sidebar-root';
       document.body.appendChild(rootContainer);
+      logPlugin('info', 'Created and appended #vencord-ai-sidebar-root to document.body');
     }
 
     if (!reactRoot && dom) {
@@ -310,8 +380,9 @@ function renderSidebar() {
       if (typeof cr === 'function') {
         try {
           reactRoot = cr(rootContainer);
-        } catch (err) {
-          console.warn('[VencordAI] dom.createRoot failed:', err);
+          logPlugin('info', 'Successfully created React root via dom.createRoot');
+        } catch (err: any) {
+          logPlugin('warn', `dom.createRoot call failed: ${err?.message || err}`);
         }
       }
     }
@@ -331,36 +402,52 @@ function renderSidebar() {
           isSidebarOpen = false;
           renderSidebar();
         }}
+        logs={pluginLogs}
       />
     );
     const element = EB ? <EB>{panel}</EB> : panel;
 
     if (reactRoot?.render) {
       reactRoot.render(element);
+      logPlugin('info', 'Mounted component via reactRoot.render');
       return;
     }
 
     const ren = dom?.render || dom?.default?.render;
     if (typeof ren === 'function') {
       ren(element, rootContainer);
+      logPlugin('info', 'Mounted component via dom.render');
       return;
     }
 
-    console.error('[VencordAI] No ReactDOM render method found to mount sidebar');
+    logPlugin('error', 'No ReactDOM render or createRoot method found');
+    const logsHtml = pluginLogs
+      .map(
+        (l) =>
+          `<div style="color: ${l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4'}; margin-bottom: 3px;">[${l.time}] ${l.message}</div>`
+      )
+      .join('');
+
     rootContainer.innerHTML = `
-      <div style="padding: 24px; color: var(--text-normal, #dbdee1); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; font-family: var(--font-primary, sans-serif);">
-        <div style="font-size: 36px; margin-bottom: 12px;">⚠️</div>
-        <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px; color: var(--header-primary, #f2f3f5);">AI Assistant Mounting Error</div>
-        <div style="font-size: 12px; color: var(--text-muted, #949ba4); margin-bottom: 16px; max-width: 280px;">Could not initialize the React renderer. Please reload Discord or try again.</div>
-        <button id="vencord-ai-retry-mount-btn" style="padding: 8px 16px; background-color: var(--brand-experiment, #5865f2); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px;">🔄 Retry</button>
+      <div style="padding: 20px; color: var(--text-normal, #dbdee1); background-color: var(--background-primary, #313338); height: 100vh; box-sizing: border-box; overflow-y: auto; font-family: var(--font-primary, sans-serif); display: flex; flex-direction: column;">
+        <div style="text-align: center; margin-bottom: 16px;">
+          <div style="font-size: 36px; margin-bottom: 8px;">⚠️</div>
+          <div style="font-weight: 700; font-size: 16px; color: var(--header-primary, #f2f3f5); margin-bottom: 4px;">AI Assistant Mounting Error</div>
+          <div style="font-size: 12px; color: var(--text-danger, #f23f43); margin-bottom: 12px;">Could not initialize the React renderer.</div>
+        </div>
+        <button id="vencord-ai-retry-mount-btn" style="padding: 10px; background-color: var(--brand-experiment, #5865f2); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 13px; margin-bottom: 16px;">🔄 Retry Mount</button>
+        <div style="font-size: 12px; font-weight: 600; color: var(--header-secondary, #b5bac1); margin-bottom: 6px;">Live Diagnostic Logs:</div>
+        <div style="flex: 1; background-color: var(--background-secondary, #2b2d31); border: 1px solid var(--background-modifier-accent, #3f4147); border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; overflow-y: auto; max-height: 400px; white-space: pre-wrap;">
+          ${logsHtml || 'No logs recorded.'}
+        </div>
       </div>
     `;
     const retryBtn = rootContainer.querySelector('#vencord-ai-retry-mount-btn');
     retryBtn?.addEventListener('click', () => {
       renderSidebar();
     });
-  } catch (err) {
-    console.error('[VencordAI] Error rendering sidebar:', err);
+  } catch (err: any) {
+    logPlugin('error', `Fatal error in renderSidebar: ${err?.stack || err?.message || err}`);
   }
 }
 
