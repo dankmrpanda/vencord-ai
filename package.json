@@ -1,0 +1,32 @@
+{
+  "name": "vencord-ai-assistant",
+  "version": "1.0.0",
+  "description": "Client-side AI assistant plugin for Vencord to search and query Discord message history using local and cloud LLMs.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx src/test/scope.test.ts"
+  },
+  "keywords": [
+    "vencord",
+    "vencord-plugin",
+    "discord",
+    "ai",
+    "omlx",
+    "ollama",
+    "llm",
+    "chatbot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}
