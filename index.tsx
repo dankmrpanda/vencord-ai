@@ -138,114 +138,6 @@ function injectPluginStyles() {
   stylesheetInjected = true;
 }
 
-interface ErrorBoundaryProps {
-  children: React.ReactNode;
-  onClose?: () => void;
-}
-
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
-}
-
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: any) {
-    console.error('[VencordAI] Sidebar render error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          style={{
-            padding: '24px',
-            color: 'var(--text-normal, #dbdee1)',
-            fontFamily: 'inherit',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            textAlign: 'center',
-            backgroundColor: 'var(--background-primary, #313338)',
-          }}
-        >
-          <div style={{ fontSize: '36px', marginBottom: '12px' }}>⚠️</div>
-          <div
-            style={{
-              fontWeight: 600,
-              fontSize: '15px',
-              color: 'var(--header-primary, #f2f3f5)',
-              marginBottom: '8px',
-            }}
-          >
-            AI Assistant Render Error
-          </div>
-          <div
-            style={{
-              fontSize: '12px',
-              color: 'var(--text-muted, #949ba4)',
-              marginBottom: '16px',
-              maxWidth: '320px',
-              wordBreak: 'break-word',
-              backgroundColor: 'var(--background-secondary, #2b2d31)',
-              padding: '10px 12px',
-              borderRadius: '6px',
-              border: '1px solid var(--background-modifier-accent, #3f4147)',
-            }}
-          >
-            {this.state.error?.message || String(this.state.error || 'Unknown error occurred')}
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              style={{
-                padding: '8px 16px',
-                backgroundColor: 'var(--brand-experiment, #5865f2)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '12px',
-              }}
-              onClick={() => this.setState({ hasError: false, error: null })}
-            >
-              🔄 Retry
-            </button>
-            {this.props.onClose && (
-              <button
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: 'var(--background-secondary-alt, #232428)',
-                  color: 'var(--text-normal, #dbdee1)',
-                  border: '1px solid var(--background-modifier-accent, #3f4147)',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: '12px',
-                }}
-                onClick={this.props.onClose}
-              >
-                Close
-              </button>
-            )}
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 function getReactDOM(): any {
   if (typeof window !== 'undefined') {
     const wp = (window as any).Vencord?.Webpack;
@@ -280,20 +172,13 @@ function renderSidebar() {
 
     rootContainer.style.display = 'flex';
     const element = (
-      <ErrorBoundary
+      <SidebarPanel
+        settings={currentSettings}
         onClose={() => {
           isSidebarOpen = false;
           renderSidebar();
         }}
-      >
-        <SidebarPanel
-          settings={currentSettings}
-          onClose={() => {
-            isSidebarOpen = false;
-            renderSidebar();
-          }}
-        />
-      </ErrorBoundary>
+      />
     );
 
     if (reactRoot?.render) {
