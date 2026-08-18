@@ -63,3 +63,5 @@ export const ReactDOM = (typeof window !== 'undefined' && (window as any).ReactD
   render: () => {},
   unmountComponentAtNode: () => true,
 };
+
+export const createRoot = ReactDOM.createRoot;

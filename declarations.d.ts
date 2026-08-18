@@ -51,6 +51,7 @@ declare module '@webpack' {
   export function findStore(name: string): any;
   export function findByPropsLazy(...props: string[]): any;
   export function findByCode(...code: string[]): any;
+  export function findByCodeLazy(...code: string[]): any;
 }
 
 declare module '@webpack/common' {
@@ -64,6 +65,10 @@ declare module '@webpack/common' {
   export const createContext: typeof ReactTypes.createContext;
   export const useContext: typeof ReactTypes.useContext;
 
+  export const createRoot: ((container: Element | DocumentFragment) => {
+    render(children: ReactTypes.ReactNode): void;
+    unmount(): void;
+  }) | undefined;
   export const ReactDOM: {
     createRoot?: (container: Element | DocumentFragment) => {
       render(children: ReactTypes.ReactNode): void;

@@ -5,7 +5,7 @@
  */
 
 import definePlugin from '@utils/types';
-import { React, ReactDOM } from '@webpack/common';
+import { createRoot as vcCreateRoot, React } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
 import { find, findByCode, findByProps } from './discord/stores';
 import {
@@ -156,208 +156,218 @@ export function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...
   else console.log(`[VencordAI] ${message}`, ...args);
 }
 
-let LazyErrorBoundary: any = null;
-function getErrorBoundary() {
-  if (LazyErrorBoundary) return LazyErrorBoundary;
-  const ReactMod = (window as any).React || (window as any).Vencord?.Webpack?.Common?.React || React;
-  if (!ReactMod?.Component) return null;
+class PluginErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: any; errorInfo: any }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
 
-  LazyErrorBoundary = class extends ReactMod.Component<any, { hasError: boolean; error: any; errorInfo: any }> {
-    constructor(props: any) {
-      super(props);
-      this.state = { hasError: false, error: null, errorInfo: null };
-    }
-    static getDerivedStateFromError(error: any) {
-      return { hasError: true, error };
-    }
-    componentDidCatch(error: any, errorInfo: any) {
-      logPlugin('error', 'ErrorBoundary caught error:', error?.stack || error?.message || error);
-      this.setState({ errorInfo });
-    }
-    render() {
-      if (this.state.hasError) {
-        return ReactMod.createElement(
-          'div',
-          {
-            style: {
-              padding: '20px',
-              color: 'var(--text-normal, #dbdee1)',
-              fontFamily: 'var(--font-primary, sans-serif)',
-              display: 'flex',
-              flexDirection: 'column',
-              height: '100vh',
-              boxSizing: 'border-box',
-              overflowY: 'auto',
-              backgroundColor: 'var(--background-primary, #313338)',
-            },
-          },
-          ReactMod.createElement('div', { style: { fontSize: '36px', textAlign: 'center', marginBottom: '8px' } }, '⚠️'),
-          ReactMod.createElement(
-            'div',
-            {
-              style: {
-                fontWeight: 700,
-                fontSize: '16px',
-                color: 'var(--header-primary, #f2f3f5)',
-                textAlign: 'center',
-                marginBottom: '8px',
-              },
-            },
-            'AI Assistant Render Error'
-          ),
-          ReactMod.createElement(
-            'div',
-            {
-              style: {
-                fontSize: '12px',
-                color: '#f23f43',
-                marginBottom: '12px',
-                wordBreak: 'break-word',
-                backgroundColor: 'var(--background-secondary, #2b2d31)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--background-modifier-accent, #3f4147)',
-                fontFamily: 'monospace',
-              },
-            },
-            String(this.state.error?.stack || this.state.error?.message || this.state.error || 'Unknown render error')
-          ),
-          this.state.errorInfo?.componentStack &&
-            ReactMod.createElement(
-              'div',
-              {
-                style: {
-                  fontSize: '11px',
-                  color: 'var(--text-muted, #949ba4)',
-                  marginBottom: '12px',
-                  backgroundColor: 'var(--background-secondary-alt, #232428)',
-                  padding: '8px 10px',
-                  borderRadius: '6px',
-                  fontFamily: 'monospace',
-                  maxHeight: '120px',
-                  overflowY: 'auto',
-                  whiteSpace: 'pre-wrap',
-                },
-              },
-              'Component Stack:\n' + this.state.errorInfo.componentStack
-            ),
-          ReactMod.createElement(
-            'button',
-            {
-              style: {
-                padding: '10px 16px',
-                backgroundColor: 'var(--brand-experiment, #5865f2)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '13px',
-                marginBottom: '16px',
-              },
-              onClick: () => this.setState({ hasError: false, error: null, errorInfo: null }),
-            },
-            '🔄 Retry Component Render'
-          ),
-          ReactMod.createElement(
-            'div',
-            { style: { fontSize: '12px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)', marginBottom: '6px' } },
-            'Recent Plugin Logs:'
-          ),
-          ReactMod.createElement(
-            'div',
-            {
-              style: {
-                flex: 1,
-                backgroundColor: 'var(--background-secondary, #2b2d31)',
-                borderRadius: '6px',
-                padding: '8px 10px',
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    logPlugin('error', 'ErrorBoundary caught error:', error?.stack || error?.message || error);
+    this.setState({ errorInfo });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          style={{
+            padding: '20px',
+            color: 'var(--text-normal, #dbdee1)',
+            fontFamily: 'var(--font-primary, sans-serif)',
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100vh',
+            boxSizing: 'border-box',
+            overflowY: 'auto',
+            backgroundColor: 'var(--background-primary, #313338)',
+          }}
+        >
+          <div style={{ fontSize: '36px', textAlign: 'center', marginBottom: '8px' }}>⚠️</div>
+          <div
+            style={{
+              fontWeight: 700,
+              fontSize: '16px',
+              color: 'var(--header-primary, #f2f3f5)',
+              textAlign: 'center',
+              marginBottom: '8px',
+            }}
+          >
+            AI Assistant Render Error
+          </div>
+          <div
+            style={{
+              fontSize: '12px',
+              color: '#f23f43',
+              marginBottom: '12px',
+              wordBreak: 'break-word',
+              backgroundColor: 'var(--background-secondary, #2b2d31)',
+              padding: '10px 12px',
+              borderRadius: '6px',
+              border: '1px solid var(--background-modifier-accent, #3f4147)',
+              fontFamily: 'monospace',
+            }}
+          >
+            {String(this.state.error?.stack || this.state.error?.message || this.state.error || 'Unknown render error')}
+          </div>
+          {this.state.errorInfo?.componentStack && (
+            <div
+              style={{
                 fontSize: '11px',
+                color: 'var(--text-muted, #949ba4)',
+                marginBottom: '12px',
+                backgroundColor: 'var(--background-secondary-alt, #232428)',
+                padding: '8px 10px',
+                borderRadius: '6px',
                 fontFamily: 'monospace',
+                maxHeight: '120px',
                 overflowY: 'auto',
-                border: '1px solid var(--background-modifier-accent, #3f4147)',
-              },
-            },
-            pluginLogs.map((l, i) =>
-              ReactMod.createElement(
-                'div',
-                {
-                  key: i,
-                  style: {
-                    color: l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4',
-                    marginBottom: '3px',
-                    wordBreak: 'break-word',
-                  },
-                },
-                `[${l.time}] ${l.message}`
-              )
-            )
-          )
-        );
-      }
-      return this.props.children;
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {'Component Stack:\n' + this.state.errorInfo.componentStack}
+            </div>
+          )}
+          <button
+            style={{
+              padding: '10px 16px',
+              backgroundColor: 'var(--brand-experiment, #5865f2)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '13px',
+              marginBottom: '16px',
+            }}
+            onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
+          >
+            🔄 Retry Component Render
+          </button>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)', marginBottom: '6px' }}>
+            Recent Plugin Logs:
+          </div>
+          <div
+            style={{
+              flex: 1,
+              backgroundColor: 'var(--background-secondary, #2b2d31)',
+              borderRadius: '6px',
+              padding: '8px 10px',
+              fontSize: '11px',
+              fontFamily: 'monospace',
+              overflowY: 'auto',
+              border: '1px solid var(--background-modifier-accent, #3f4147)',
+            }}
+          >
+            {pluginLogs.map((l, i) => (
+              <div
+                key={i}
+                style={{
+                  color: l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4',
+                  marginBottom: '3px',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {`[${l.time}] ${l.message}`}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
     }
-  };
-  return LazyErrorBoundary;
+    return this.props.children;
+  }
 }
 
-function getReactDOM(): any {
-  if (ReactDOM) {
-    if (typeof (ReactDOM as any).createRoot === 'function' || typeof (ReactDOM as any).render === 'function') {
-      return ReactDOM;
-    }
-    if ((ReactDOM as any).default && (typeof (ReactDOM as any).default.createRoot === 'function' || typeof (ReactDOM as any).default.render === 'function')) {
-      return (ReactDOM as any).default;
-    }
+/**
+ * Finds React 18's createRoot function using Vencord's own resolution pattern.
+ * Vencord source: createRoot = findByCodeLazy("(299));", ".onRecoverableError")
+ */
+function findCreateRoot(): ((container: Element | DocumentFragment) => { render(children: any): void; unmount(): void }) | null {
+  // Method 1: Direct export from @webpack/common
+  if (typeof vcCreateRoot === 'function') {
+    return vcCreateRoot;
   }
 
+  // Method 2: Check window.Vencord.Webpack.Common.createRoot
   if (typeof window !== 'undefined') {
-    const vcWp = (window as any).Vencord?.Webpack;
-    if (vcWp?.Common?.ReactDOM) {
-      const r = vcWp.Common.ReactDOM;
-      if (r.createRoot || r.render || (r.default && (r.default.createRoot || r.default.render))) return r.default || r;
-    }
-    if ((window as any).ReactDOM) return (window as any).ReactDOM;
+    const vcCommon = (window as any).Vencord?.Webpack?.Common;
+    if (typeof vcCommon?.createRoot === 'function') return vcCommon.createRoot;
   }
 
+  // Method 3: Vencord's exact pattern: findByCode("(299));", ".onRecoverableError")
   try {
-    const foundCreateRoot = find((m: any) => {
+    const byCode = findByCode('(299));', '.onRecoverableError') || findByCode('.onRecoverableError');
+    if (typeof byCode === 'function') return byCode;
+    if (typeof byCode?.createRoot === 'function') return byCode.createRoot;
+    if (typeof byCode?.default?.createRoot === 'function') return byCode.default.createRoot;
+    if (typeof byCode?.default === 'function') return byCode.default;
+  } catch {}
+
+  // Method 4: findByProps for the react-dom/client chunk
+  try {
+    const clientMod = findByProps('createRoot', 'hydrateRoot') || findByProps('createRoot');
+    if (typeof clientMod?.createRoot === 'function') return clientMod.createRoot;
+    if (typeof clientMod?.default?.createRoot === 'function') return clientMod.default.createRoot;
+    if (typeof clientMod === 'function') return clientMod;
+  } catch {}
+
+  // Method 5: Global window.ReactDOM
+  if (typeof window !== 'undefined') {
+    const rdom = (window as any).ReactDOM;
+    if (typeof rdom?.createRoot === 'function') return rdom.createRoot;
+  }
+
+  // Method 6: Broad search in Webpack modules
+  try {
+    const found = find((m: any) => {
       if (!m) return false;
-      return typeof m.createRoot === 'function' || (m.default && typeof m.default.createRoot === 'function');
+      return (
+        typeof m.createRoot === 'function' ||
+        typeof m.default?.createRoot === 'function' ||
+        (typeof m === 'function' && m.toString().includes('onRecoverableError'))
+      );
     });
-    if (foundCreateRoot) {
-      return typeof foundCreateRoot.createRoot === 'function' ? foundCreateRoot : (foundCreateRoot.default || foundCreateRoot);
+    if (typeof found?.createRoot === 'function') return found.createRoot;
+    if (typeof found?.default?.createRoot === 'function') return found.default.createRoot;
+    if (typeof found === 'function') return found;
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Gets a legacy ReactDOM module (with render/unmountComponentAtNode/createPortal).
+ * Vencord source: ReactDOM = findByPropsLazy("createPortal")
+ */
+function getLegacyReactDOM(): any {
+  // Method 1: window.ReactDOM
+  if (typeof window !== 'undefined' && (window as any).ReactDOM) {
+    return (window as any).ReactDOM;
+  }
+
+  // Method 2: Vencord Webpack Common ReactDOM
+  if (typeof window !== 'undefined') {
+    const vcRDOM = (window as any).Vencord?.Webpack?.Common?.ReactDOM;
+    if (vcRDOM) {
+      const actual = vcRDOM.default || vcRDOM;
+      if (typeof actual.render === 'function' || typeof actual.createPortal === 'function') return actual;
     }
-  } catch {}
+  }
 
+  // Method 3: findByProps with render + unmountComponentAtNode
   try {
-    const foundRender = find((m: any) => {
-      if (!m) return false;
-      return (typeof m.render === 'function' && typeof m.unmountComponentAtNode === 'function') ||
-             (m.default && typeof m.default.render === 'function' && typeof m.default.unmountComponentAtNode === 'function');
-    });
-    if (foundRender) {
-      return typeof foundRender.render === 'function' ? foundRender : (foundRender.default || foundRender);
-    }
+    const mod = findByProps('render', 'unmountComponentAtNode') || findByProps('createPortal');
+    if (mod?.render) return mod;
+    if (mod?.default?.render) return mod.default;
   } catch {}
-
-  try {
-    const crCode = findByCode('createRoot');
-    if (crCode) return crCode.default?.createRoot ? crCode.default : crCode;
-  } catch {}
-
-  try {
-    const portalCode = findByCode('createPortal');
-    if (portalCode) return portalCode.default?.render || portalCode.default?.createRoot ? portalCode.default : portalCode;
-  } catch {}
-
-  const createRootMod = findByProps('createRoot');
-  if (createRootMod?.createRoot) return createRootMod;
-  if (createRootMod?.default?.createRoot) return createRootMod.default;
-
-  const renderMod = findByProps('render', 'unmountComponentAtNode') || findByProps('render');
-  if (renderMod?.render) return renderMod;
-  if (renderMod?.default?.render) return renderMod.default;
 
   return null;
 }
@@ -381,7 +391,6 @@ function renderSidebar() {
 
     rootContainer.style.display = 'flex';
 
-    const EB = getErrorBoundary();
     const panel = (
       <SidebarPanel
         settings={currentSettings}
@@ -392,9 +401,9 @@ function renderSidebar() {
         logs={pluginLogs}
       />
     );
-    const element = EB ? <EB>{panel}</EB> : panel;
+    const element = <PluginErrorBoundary>{panel}</PluginErrorBoundary>;
 
-    // Attempt 1: Use existing React root
+    // Attempt 1: If we already have a functional reactRoot, re-render into it
     if (reactRoot?.render) {
       try {
         reactRoot.render(element);
@@ -406,93 +415,36 @@ function renderSidebar() {
       }
     }
 
-    // Attempt 2: Try to get ReactDOM and create a new root or use render
-    const dom = getReactDOM();
-    logPlugin('info', `getReactDOM resolved: ${dom ? Object.keys(dom).join(', ') : 'null'}`);
+    // Attempt 2: Try createRoot (React 18+)
+    const createRootFn = findCreateRoot();
+    logPlugin('info', `findCreateRoot resolved: ${createRootFn ? 'found' : 'null'}`);
 
-    // Attempt 2a: Try createRoot (React 18+)
-    if (dom && !reactRoot) {
-      const cr = typeof dom.createRoot === 'function' ? dom.createRoot
-        : typeof dom.default?.createRoot === 'function' ? dom.default.createRoot
-        : null;
-      if (cr) {
-        try {
-          reactRoot = cr(rootContainer);
-          logPlugin('info', 'Successfully created React root via createRoot');
-        } catch (err: any) {
-          logPlugin('warn', `createRoot call failed: ${err?.message || err}`);
-          reactRoot = null;
-        }
-      }
-    }
-
-    if (reactRoot?.render) {
+    if (createRootFn) {
       try {
+        if (!reactRoot) {
+          reactRoot = createRootFn(rootContainer);
+        }
         reactRoot.render(element);
-        logPlugin('info', 'Mounted component via new reactRoot.render');
+        logPlugin('info', 'Mounted component via createRoot');
         return;
       } catch (err: any) {
-        logPlugin('warn', `New reactRoot.render failed: ${err?.message || err}`);
+        logPlugin('warn', `createRoot failed: ${err?.message || err}`);
         reactRoot = null;
       }
     }
 
-    // Attempt 2b: Try legacy ReactDOM.render
-    if (dom) {
-      const ren = typeof dom.render === 'function' ? dom.render
-        : typeof dom.default?.render === 'function' ? dom.default.render
-        : null;
-      if (ren) {
-        try {
-          ren(element, rootContainer);
-          logPlugin('info', 'Mounted component via legacy dom.render');
-          return;
-        } catch (err: any) {
-          logPlugin('warn', `Legacy dom.render failed: ${err?.message || err}`);
-        }
-      }
-    }
+    // Attempt 3: Legacy ReactDOM.render fallback
+    const legacyDom = getLegacyReactDOM();
+    logPlugin('info', `getLegacyReactDOM resolved: ${legacyDom ? 'found' : 'null'}`);
 
-    // Attempt 3: Try Vencord's internal ReactDOM from various sources
-    const fallbackSources = [
-      () => (window as any).Vencord?.Webpack?.Common?.ReactDOM,
-      () => (window as any).ReactDOM,
-      () => {
-        try { return findByProps('createRoot', 'hydrateRoot'); } catch { return null; }
-      },
-      () => {
-        try { return findByProps('render', 'unmountComponentAtNode'); } catch { return null; }
-      },
-    ];
-
-    for (const getFallback of fallbackSources) {
+    if (legacyDom?.render) {
       try {
-        const fallbackDom = getFallback();
-        if (!fallbackDom) continue;
-        const actualDom = fallbackDom.default || fallbackDom;
-
-        if (typeof actualDom.createRoot === 'function') {
-          try {
-            reactRoot = actualDom.createRoot(rootContainer);
-            reactRoot.render(element);
-            logPlugin('info', 'Mounted component via fallback createRoot');
-            return;
-          } catch (err: any) {
-            logPlugin('warn', `Fallback createRoot failed: ${err?.message || err}`);
-            reactRoot = null;
-          }
-        }
-
-        if (typeof actualDom.render === 'function') {
-          try {
-            actualDom.render(element, rootContainer);
-            logPlugin('info', 'Mounted component via fallback render');
-            return;
-          } catch (err: any) {
-            logPlugin('warn', `Fallback render failed: ${err?.message || err}`);
-          }
-        }
-      } catch {}
+        legacyDom.render(element, rootContainer);
+        logPlugin('info', 'Mounted component via legacy ReactDOM.render');
+        return;
+      } catch (err: any) {
+        logPlugin('warn', `Legacy ReactDOM.render failed: ${err?.message || err}`);
+      }
     }
 
     // All React render methods failed — show diagnostic HTML fallback
@@ -520,7 +472,14 @@ function renderSidebar() {
     `;
     const retryBtn = rootContainer.querySelector('#vencord-ai-retry-mount-btn');
     retryBtn?.addEventListener('click', () => {
+      if (reactRoot?.unmount) {
+        try { reactRoot.unmount(); } catch {}
+      }
       reactRoot = null;
+      if (rootContainer) {
+        rootContainer.remove();
+        rootContainer = null;
+      }
       renderSidebar();
     });
   } catch (err: any) {
@@ -624,7 +583,7 @@ export function stopPlugin() {
     styles?.remove();
     stylesheetInjected = false;
 
-    const dom = getReactDOM();
+    const dom = getLegacyReactDOM();
     if (reactRoot?.unmount) {
       reactRoot.unmount();
       reactRoot = null;
