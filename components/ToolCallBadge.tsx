@@ -1,5 +1,7 @@
-import { React, useState } from '@webpack/common';
+import { React } from '@webpack/common';
 import { AgentStep } from '../types';
+
+const { useState } = React;
 
 interface ToolCallBadgeProps {
   step: AgentStep;

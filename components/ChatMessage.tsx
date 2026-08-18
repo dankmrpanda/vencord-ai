@@ -1,8 +1,10 @@
-import { React, useState } from '@webpack/common';
+import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { AssistantChatMessage } from '../types';
 import { MessagePreview } from './MessagePreview';
 import { ToolCallBadge } from './ToolCallBadge';
+
+const { useState } = React;
 
 interface ChatMessageProps {
   message: AssistantChatMessage;

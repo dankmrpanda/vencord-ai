@@ -1,4 +1,4 @@
-import { React, useEffect, useRef, useState } from '@webpack/common';
+import { React } from '@webpack/common';
 import { getCurrentScopeContext } from '../discord/scope';
 import { getCurrentChannelId, getSelectedChannelStore } from '../discord/stores';
 import { AIAssistantAgent } from '../llm/agent';
@@ -18,6 +18,8 @@ import {
 } from '../types';
 import { ChatMessage } from './ChatMessage';
 import { ScopeIndicator } from './ScopeIndicator';
+
+const { useState, useEffect, useRef } = React;
 
 interface SidebarPanelProps {
   settings: PluginSettings;
@@ -54,56 +56,76 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const agentRef = useRef<AIAssistantAgent>(new AIAssistantAgent(settings));
+  const agentRef = useRef<AIAssistantAgent>(null!);
+  if (!agentRef.current) {
+    agentRef.current = new AIAssistantAgent(settings);
+  }
   const lastChannelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    agentRef.current.updateSettings(settings);
+    agentRef.current?.updateSettings(settings);
   }, [settings]);
 
   const loadChannelScopeAndSessions = (channelId: string | null) => {
-    const scope = getCurrentScopeContext();
-    setCurrentScope(scope);
+    try {
+      const scope = getCurrentScopeContext();
+      setCurrentScope(scope);
 
-    if (channelId) {
-      getSessionsForChannel(channelId).then((list) => {
-        setSessionsList(list);
-        if (list.length > 0) {
-          setSession(list[0]);
-        } else {
-          const newSess = createNewSession(channelId, 'New Chat');
+      const targetId = channelId || 'global';
+      getSessionsForChannel(targetId)
+        .then((list) => {
+          setSessionsList(list);
+          if (list.length > 0) {
+            setSession(list[0]);
+          } else {
+            const newSess = createNewSession(targetId, 'New Chat');
+            setSession(newSess);
+          }
+        })
+        .catch((err) => {
+          console.error('[VencordAI] Error loading chat history:', err);
+          const newSess = createNewSession(targetId, 'New Chat');
           setSession(newSess);
-        }
-      });
+        });
+    } catch (err) {
+      console.error('[VencordAI] Error in loadChannelScopeAndSessions:', err);
     }
   };
 
   useEffect(() => {
-    const initialChId = getCurrentChannelId();
-    lastChannelIdRef.current = initialChId;
-    loadChannelScopeAndSessions(initialChId);
+    try {
+      const initialChId = getCurrentChannelId();
+      lastChannelIdRef.current = initialChId;
+      loadChannelScopeAndSessions(initialChId);
 
-    const checkChannelChange = () => {
-      const currentChId = getCurrentChannelId();
-      if (currentChId && currentChId !== lastChannelIdRef.current) {
-        lastChannelIdRef.current = currentChId;
-        loadChannelScopeAndSessions(currentChId);
+      const checkChannelChange = () => {
+        try {
+          const currentChId = getCurrentChannelId();
+          if (currentChId && currentChId !== lastChannelIdRef.current) {
+            lastChannelIdRef.current = currentChId;
+            loadChannelScopeAndSessions(currentChId);
+          }
+        } catch (err) {
+          console.error('[VencordAI] Error on channel change check:', err);
+        }
+      };
+
+      const selStore = getSelectedChannelStore();
+      if (selStore?.addChangeListener) {
+        selStore.addChangeListener(checkChannelChange);
       }
-    };
 
-    const selStore = getSelectedChannelStore();
-    if (selStore?.addChangeListener) {
-      selStore.addChangeListener(checkChannelChange);
+      const interval = setInterval(checkChannelChange, 1000);
+
+      return () => {
+        if (selStore?.removeChangeListener) {
+          selStore.removeChangeListener(checkChannelChange);
+        }
+        clearInterval(interval);
+      };
+    } catch (err) {
+      console.error('[VencordAI] Error setting up channel change listener:', err);
     }
-
-    const interval = setInterval(checkChannelChange, 1000);
-
-    return () => {
-      if (selStore?.removeChangeListener) {
-        selStore.removeChangeListener(checkChannelChange);
-      }
-      clearInterval(interval);
-    };
   }, []);
 
   useEffect(() => {

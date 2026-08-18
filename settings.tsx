@@ -1,7 +1,9 @@
 import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
-import { React, useState } from '@webpack/common';
+import { React } from '@webpack/common';
 import { PluginSettings, ProviderPreset } from './types';
+
+const { useState } = React;
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
