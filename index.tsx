@@ -7,7 +7,7 @@
 import definePlugin from '@utils/types';
 import { React, ReactDOM } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
-import { findByProps } from './discord/stores';
+import { find, findByCode, findByProps } from './discord/stores';
 import {
   DEFAULT_SETTINGS,
   loadSavedSettings,
@@ -235,28 +235,63 @@ function getErrorBoundary() {
 }
 
 function getReactDOM(): any {
-  if (ReactDOM && (typeof (ReactDOM as any).createRoot === 'function' || typeof (ReactDOM as any).render === 'function')) {
-    return ReactDOM;
+  if (ReactDOM) {
+    if (typeof (ReactDOM as any).createRoot === 'function' || typeof (ReactDOM as any).render === 'function') {
+      return ReactDOM;
+    }
+    if ((ReactDOM as any).default && (typeof (ReactDOM as any).default.createRoot === 'function' || typeof (ReactDOM as any).default.render === 'function')) {
+      return (ReactDOM as any).default;
+    }
   }
+
   if (typeof window !== 'undefined') {
     const vcWp = (window as any).Vencord?.Webpack;
-    if (vcWp?.Common?.ReactDOM) return vcWp.Common.ReactDOM;
-    if (vcWp?.findByProps) {
-      try {
-        const cr = vcWp.findByProps('createRoot');
-        if (cr?.createRoot) return cr;
-      } catch {}
-      try {
-        const ren = vcWp.findByProps('render', 'unmountComponentAtNode') || vcWp.findByProps('render');
-        if (ren?.render) return ren;
-      } catch {}
+    if (vcWp?.Common?.ReactDOM) {
+      const r = vcWp.Common.ReactDOM;
+      if (r.createRoot || r.render || (r.default && (r.default.createRoot || r.default.render))) return r.default || r;
     }
     if ((window as any).ReactDOM) return (window as any).ReactDOM;
   }
+
+  try {
+    const foundCreateRoot = find((m: any) => {
+      if (!m) return false;
+      return typeof m.createRoot === 'function' || (m.default && typeof m.default.createRoot === 'function');
+    });
+    if (foundCreateRoot) {
+      return typeof foundCreateRoot.createRoot === 'function' ? foundCreateRoot : (foundCreateRoot.default || foundCreateRoot);
+    }
+  } catch {}
+
+  try {
+    const foundRender = find((m: any) => {
+      if (!m) return false;
+      return (typeof m.render === 'function' && typeof m.unmountComponentAtNode === 'function') ||
+             (m.default && typeof m.default.render === 'function' && typeof m.default.unmountComponentAtNode === 'function');
+    });
+    if (foundRender) {
+      return typeof foundRender.render === 'function' ? foundRender : (foundRender.default || foundRender);
+    }
+  } catch {}
+
+  try {
+    const crCode = findByCode('createRoot');
+    if (crCode) return crCode.default?.createRoot ? crCode.default : crCode;
+  } catch {}
+
+  try {
+    const portalCode = findByCode('createPortal');
+    if (portalCode) return portalCode.default?.render || portalCode.default?.createRoot ? portalCode.default : portalCode;
+  } catch {}
+
   const createRootMod = findByProps('createRoot');
   if (createRootMod?.createRoot) return createRootMod;
+  if (createRootMod?.default?.createRoot) return createRootMod.default;
+
   const renderMod = findByProps('render', 'unmountComponentAtNode') || findByProps('render');
   if (renderMod?.render) return renderMod;
+  if (renderMod?.default?.render) return renderMod.default;
+
   return null;
 }
 
@@ -270,11 +305,14 @@ function renderSidebar() {
       document.body.appendChild(rootContainer);
     }
 
-    if (!reactRoot && dom?.createRoot) {
-      try {
-        reactRoot = dom.createRoot(rootContainer);
-      } catch (err) {
-        console.error('[VencordAI] Error creating React root:', err);
+    if (!reactRoot && dom) {
+      const cr = dom.createRoot || dom.default?.createRoot;
+      if (typeof cr === 'function') {
+        try {
+          reactRoot = cr(rootContainer);
+        } catch (err) {
+          console.warn('[VencordAI] dom.createRoot failed:', err);
+        }
       }
     }
 
@@ -299,23 +337,28 @@ function renderSidebar() {
 
     if (reactRoot?.render) {
       reactRoot.render(element);
-    } else if (dom?.render) {
-      dom.render(element, rootContainer);
-    } else {
-      console.error('[VencordAI] No ReactDOM render method found to mount sidebar');
-      rootContainer.innerHTML = `
-        <div style="padding: 24px; color: var(--text-normal, #dbdee1); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; font-family: var(--font-primary, sans-serif);">
-          <div style="font-size: 36px; margin-bottom: 12px;">⚠️</div>
-          <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px; color: var(--header-primary, #f2f3f5);">AI Assistant Mounting Error</div>
-          <div style="font-size: 12px; color: var(--text-muted, #949ba4); margin-bottom: 16px; max-width: 280px;">Could not initialize the React renderer. Please reload Discord or try again.</div>
-          <button id="vencord-ai-retry-mount-btn" style="padding: 8px 16px; background-color: var(--brand-experiment, #5865f2); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px;">🔄 Retry</button>
-        </div>
-      `;
-      const retryBtn = rootContainer.querySelector('#vencord-ai-retry-mount-btn');
-      retryBtn?.addEventListener('click', () => {
-        renderSidebar();
-      });
+      return;
     }
+
+    const ren = dom?.render || dom?.default?.render;
+    if (typeof ren === 'function') {
+      ren(element, rootContainer);
+      return;
+    }
+
+    console.error('[VencordAI] No ReactDOM render method found to mount sidebar');
+    rootContainer.innerHTML = `
+      <div style="padding: 24px; color: var(--text-normal, #dbdee1); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; font-family: var(--font-primary, sans-serif);">
+        <div style="font-size: 36px; margin-bottom: 12px;">⚠️</div>
+        <div style="font-weight: 600; font-size: 15px; margin-bottom: 8px; color: var(--header-primary, #f2f3f5);">AI Assistant Mounting Error</div>
+        <div style="font-size: 12px; color: var(--text-muted, #949ba4); margin-bottom: 16px; max-width: 280px;">Could not initialize the React renderer. Please reload Discord or try again.</div>
+        <button id="vencord-ai-retry-mount-btn" style="padding: 8px 16px; background-color: var(--brand-experiment, #5865f2); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px;">🔄 Retry</button>
+      </div>
+    `;
+    const retryBtn = rootContainer.querySelector('#vencord-ai-retry-mount-btn');
+    retryBtn?.addEventListener('click', () => {
+      renderSidebar();
+    });
   } catch (err) {
     console.error('[VencordAI] Error rendering sidebar:', err);
   }

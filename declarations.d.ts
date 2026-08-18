@@ -46,10 +46,11 @@ declare module '@utils/constants' {
 }
 
 declare module '@webpack' {
+  export function find(filter: (mod: any) => boolean): any;
   export function findByProps(...props: string[]): any;
   export function findStore(name: string): any;
   export function findByPropsLazy(...props: string[]): any;
-  export function find(...args: any[]): any;
+  export function findByCode(...code: string[]): any;
 }
 
 declare module '@webpack/common' {

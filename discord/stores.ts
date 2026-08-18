@@ -4,8 +4,33 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { findByProps as wpFindByProps, findStore as wpFindStore } from '@webpack';
+import {
+  find as wpFind,
+  findByCode as wpFindByCode,
+  findByProps as wpFindByProps,
+  findStore as wpFindStore,
+} from '@webpack';
 import { DiscordChannel, DiscordGuild, DiscordUser } from '../types';
+
+export function find(filter: (mod: any) => boolean): any {
+  if (typeof wpFind === 'function') {
+    try {
+      const res = wpFind(filter);
+      if (res) return res;
+    } catch {}
+  }
+  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.find?.(filter)) ?? null;
+}
+
+export function findByCode(...code: string[]): any {
+  if (typeof wpFindByCode === 'function') {
+    try {
+      const res = wpFindByCode(...code);
+      if (res) return res;
+    } catch {}
+  }
+  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findByCode?.(...code)) ?? null;
+}
 
 export function findByProps(...props: string[]): any {
   if (typeof wpFindByProps === 'function') {
