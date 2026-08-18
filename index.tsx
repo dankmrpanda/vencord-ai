@@ -2,7 +2,13 @@ import definePlugin from '@utils/types';
 import { React, ReactDOM } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
 import { findByProps } from './discord/stores';
-import { DEFAULT_SETTINGS, SettingsPanel } from './settings';
+import {
+  DEFAULT_SETTINGS,
+  loadSavedSettings,
+  persistSettings,
+  pluginSettings,
+  SettingsPanel,
+} from './settings';
 import { PluginSettings } from './types';
 
 let rootContainer: HTMLDivElement | null = null;
@@ -11,28 +17,83 @@ let isSidebarOpen = false;
 let currentSettings: PluginSettings = { ...DEFAULT_SETTINGS };
 let headerPollInterval: any = null;
 let headerInjectionTimeout: any = null;
+let tooltipStyleInjected = false;
 
-const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
-
-function loadSavedSettings(): PluginSettings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+function injectTooltipStyles() {
+  if (tooltipStyleInjected || document.getElementById('vencord-ai-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'vencord-ai-styles';
+  style.textContent = `
+    #vencord-ai-header-btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      margin: 0 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 17px;
+      user-select: none;
+      color: var(--interactive-normal, #b5bac1);
+      transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
     }
-  } catch (err) {
-    console.error('[VencordAI] Error loading settings:', err);
-  }
-  return { ...DEFAULT_SETTINGS };
-}
-
-function persistSettings(newSettings: PluginSettings) {
-  currentSettings = newSettings;
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
-  } catch (err) {
-    console.error('[VencordAI] Error persisting settings:', err);
-  }
+    #vencord-ai-header-btn:hover {
+      color: var(--interactive-hover, #dbdee1);
+      background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.07));
+      transform: scale(1.1);
+    }
+    #vencord-ai-header-btn:active {
+      color: var(--interactive-active, #ffffff);
+      background-color: var(--background-modifier-active, rgba(255, 255, 255, 0.14));
+      transform: scale(0.95);
+    }
+    #vencord-ai-header-btn[data-tooltip]:hover::before {
+      content: attr(data-tooltip);
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 50%;
+      transform: translateX(50%);
+      background-color: var(--background-floating, #111214);
+      color: var(--text-normal, #dbdee1);
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      z-index: 100000;
+      pointer-events: none;
+      border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+    }
+    #vencord-ai-header-btn[data-tooltip]:hover::after {
+      content: '';
+      position: absolute;
+      top: calc(100% + 2px);
+      right: 50%;
+      transform: translateX(50%);
+      border-width: 0 5px 6px 5px;
+      border-style: solid;
+      border-color: transparent transparent var(--background-floating, #111214) transparent;
+      z-index: 100000;
+      pointer-events: none;
+    }
+    #vencord-ai-sidebar-root {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 380px;
+      z-index: 10000;
+      box-shadow: -4px 0 20px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+      pointer-events: auto;
+    }
+  `;
+  document.head.appendChild(style);
+  tooltipStyleInjected = true;
 }
 
 function getReactDOM(): any {
@@ -54,15 +115,8 @@ function renderSidebar() {
     if (!rootContainer) {
       rootContainer = document.createElement('div');
       rootContainer.id = 'vencord-ai-sidebar-root';
-      rootContainer.style.position = 'fixed';
-      rootContainer.style.right = '0';
-      rootContainer.style.top = '0';
-      rootContainer.style.bottom = '0';
-      rootContainer.style.width = '380px';
-      rootContainer.style.zIndex = '9999';
-      rootContainer.style.boxShadow = '-4px 0 16px rgba(0, 0, 0, 0.4)';
-      rootContainer.style.display = 'flex';
-      document.body.appendChild(rootContainer);
+      const targetParent = document.getElementById('app-mount') || document.body;
+      targetParent.appendChild(rootContainer);
 
       if (dom?.createRoot) {
         reactRoot = dom.createRoot(rootContainer);
@@ -102,11 +156,18 @@ export function toggleAIAssistant() {
   renderSidebar();
 }
 
+// Attach to window for easy debugging from console
+if (typeof window !== 'undefined') {
+  (window as any).toggleVencordAIAssistant = toggleAIAssistant;
+}
+
 /**
- * Safe top bar header button injection (runs on a calm timer, non-blocking)
+ * Safe top bar header button injection
  */
 function injectHeaderButton() {
   try {
+    injectTooltipStyles();
+
     const existingBtn = document.getElementById('vencord-ai-header-btn');
     if (existingBtn) return;
 
@@ -120,41 +181,26 @@ function injectHeaderButton() {
 
     const btn = document.createElement('div');
     btn.id = 'vencord-ai-header-btn';
-    btn.title = 'AI Message Assistant (Cmd+Shift+A)';
+    btn.setAttribute('data-tooltip', 'AI Message Assistant (Cmd+Shift+A)');
     btn.setAttribute('aria-label', 'AI Message Assistant');
     btn.setAttribute('role', 'button');
     btn.setAttribute('tabindex', '0');
-    btn.style.cursor = 'pointer';
-    btn.style.display = 'flex';
-    btn.style.alignItems = 'center';
-    btn.style.justifyContent = 'center';
-    btn.style.margin = '0 6px';
-    btn.style.fontSize = '18px';
-    btn.style.lineHeight = '1';
-    btn.style.opacity = '0.85';
-    btn.style.userSelect = 'none';
-    btn.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
     btn.innerText = '✨';
 
-    btn.onmouseenter = () => {
-      btn.style.opacity = '1';
-      btn.style.transform = 'scale(1.15)';
-    };
-    btn.onmouseleave = () => {
-      btn.style.opacity = '0.85';
-      btn.style.transform = 'scale(1)';
-    };
-    btn.onclick = (e) => {
+    const handleClick = (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
       toggleAIAssistant();
     };
-    btn.onkeydown = (e) => {
+
+    btn.addEventListener('click', handleClick);
+    btn.addEventListener('mousedown', (e) => e.stopPropagation());
+    btn.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         toggleAIAssistant();
       }
-    };
+    });
 
     toolbar.prepend(btn);
   } catch (err) {
@@ -174,10 +220,7 @@ export function startPlugin() {
     currentSettings = loadSavedSettings();
     window.addEventListener('keydown', handleKeyDown);
 
-    // Initial safe injection attempt after Discord finish mounting
     headerInjectionTimeout = setTimeout(injectHeaderButton, 1000);
-
-    // Calm interval to re-inject if user navigates channels
     headerPollInterval = setInterval(injectHeaderButton, 2000);
 
     console.log('[VencordAI] AI Assistant Plugin started successfully.');
@@ -224,11 +267,13 @@ export default definePlugin({
   description:
     'Client-side AI assistant to query 100k+ messages and images across channels & DMs with local (omlx, Ollama) and cloud LLMs.',
   authors: [{ name: 'Raymond', id: 0n }],
+  settings: pluginSettings,
   settingsAboutComponent: () => (
     <SettingsPanel
       settings={currentSettings}
       onChange={(newSettings) => {
         persistSettings(newSettings);
+        currentSettings = newSettings;
         renderSidebar();
       }}
     />

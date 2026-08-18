@@ -1,11 +1,13 @@
-import { React, useState } from '@webpack/common';
+import { definePluginSettings } from '@api/Settings';
+import { OptionType } from '@utils/types';
+import { React, useEffect, useState } from '@webpack/common';
 import { PluginSettings, ProviderPreset } from './types';
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
   baseUrl: 'http://localhost:8000/v1',
   apiKey: '',
-  model: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+  model: 'Qwen3.8-27B-8bit',
   temperature: 0.7,
   maxTokens: 2048,
   systemPrompt: '',
@@ -15,6 +17,118 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   maxSearchIterations: 6,
 };
 
+let vencordSettingsObj: any = null;
+try {
+  if (typeof definePluginSettings === 'function') {
+    vencordSettingsObj = definePluginSettings({
+      providerPreset: {
+        type: OptionType.SELECT,
+        description: 'Provider Preset',
+        options: [
+          { label: 'omlx (Local Apple Silicon / MLX)', value: 'omlx', default: true },
+          { label: 'Ollama (Local)', value: 'ollama' },
+          { label: 'LM Studio (Local)', value: 'lmstudio' },
+          { label: 'OpenAI', value: 'openai' },
+          { label: 'OpenRouter', value: 'openrouter' },
+          { label: 'Groq', value: 'groq' },
+          { label: 'Custom', value: 'custom' },
+        ],
+      },
+      baseUrl: {
+        type: OptionType.STRING,
+        description: 'API Base URL',
+        default: 'http://localhost:8000/v1',
+      },
+      apiKey: {
+        type: OptionType.STRING,
+        description: 'API Key (Leave empty if using local server)',
+        default: '',
+      },
+      model: {
+        type: OptionType.STRING,
+        description: 'Model Identifier',
+        default: 'Qwen3.8-27B-8bit',
+      },
+      temperature: {
+        type: OptionType.SLIDER,
+        description: 'Temperature',
+        default: 0.7,
+        markers: [0.0, 0.5, 0.7, 1.0, 1.5],
+      },
+      enableVision: {
+        type: OptionType.BOOLEAN,
+        description: 'Enable Multimodal / Image Inspection',
+        default: true,
+      },
+      maxSearchIterations: {
+        type: OptionType.SLIDER,
+        description: 'Max Search Tool Iterations',
+        default: 6,
+        markers: [1, 2, 4, 6, 8, 10],
+      },
+      systemPrompt: {
+        type: OptionType.STRING,
+        description: 'Custom System Prompt',
+        default: '',
+      },
+    });
+  }
+} catch {}
+
+export const pluginSettings = vencordSettingsObj;
+export const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
+
+export function loadSavedSettings(): PluginSettings {
+  const result: PluginSettings = { ...DEFAULT_SETTINGS };
+
+  if (pluginSettings?.store) {
+    try {
+      const store = pluginSettings.store;
+      if (store.baseUrl) result.baseUrl = store.baseUrl;
+      if (store.apiKey !== undefined) result.apiKey = store.apiKey;
+      if (store.model) result.model = store.model;
+      if (store.providerPreset) result.providerPreset = store.providerPreset;
+      if (store.temperature !== undefined) result.temperature = store.temperature;
+      if (store.enableVision !== undefined) result.enableVision = store.enableVision;
+      if (store.maxSearchIterations !== undefined) result.maxSearchIterations = store.maxSearchIterations;
+      if (store.systemPrompt !== undefined) result.systemPrompt = store.systemPrompt;
+    } catch {}
+  }
+
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      Object.assign(result, parsed);
+    }
+  } catch {}
+
+  try {
+    const ds = (window as any).Vencord?.Api?.DataStore?.get?.(SETTINGS_KEY);
+    if (ds) {
+      Object.assign(result, ds);
+    }
+  } catch {}
+
+  return result;
+}
+
+export function persistSettings(newSettings: PluginSettings): void {
+  if (pluginSettings?.store) {
+    try {
+      Object.assign(pluginSettings.store, newSettings);
+    } catch {}
+  }
+
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
+  } catch {}
+
+  try {
+    (window as any).Vencord?.Api?.DataStore?.set?.(SETTINGS_KEY, newSettings);
+  } catch {}
+}
+
 const PRESET_CONFIGS: Record<
   ProviderPreset,
   { name: string; defaultBaseUrl: string; defaultModel: string; needsKey: boolean }
@@ -22,7 +136,7 @@ const PRESET_CONFIGS: Record<
   omlx: {
     name: 'omlx (Local Apple Silicon / MLX)',
     defaultBaseUrl: 'http://localhost:8000/v1',
-    defaultModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+    defaultModel: 'Qwen3.8-27B-8bit',
     needsKey: false,
   },
   ollama: {
@@ -69,14 +183,19 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange }) => {
-  const [localSettings, setLocalSettings] = useState<PluginSettings>(settings);
+  const [localSettings, setLocalSettings] = useState<PluginSettings>(() => loadSavedSettings());
   const [showApiKey, setShowApiKey] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
+  useEffect(() => {
+    setLocalSettings(loadSavedSettings());
+  }, [settings]);
+
   const updateSetting = (updater: (prev: PluginSettings) => PluginSettings) => {
     setLocalSettings((prev) => {
       const next = updater(prev);
+      persistSettings(next);
       onChange(next);
       return next;
     });
@@ -118,7 +237,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
 
       if (!response.ok) {
         const text = await response.text().catch(() => response.statusText);
-        setTestStatus(`❌ Failed (${response.status}): ${text.slice(0, 100)}`);
+        setTestStatus(`❌ Failed (${response.status}): ${text.slice(0, 120)}`);
       } else {
         setTestStatus('✅ Connection successful!');
       }
@@ -174,7 +293,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
             style={{ ...inputStyle, flex: 1 }}
             type={showApiKey ? 'text' : 'password'}
             value={localSettings.apiKey}
-            placeholder="sk-... (or enter dummy key like 'omlx' / 'local')"
+            placeholder="sk-... (Leave empty if using local omlx/Ollama without auth)"
             onChange={(e) => updateSetting((prev) => ({ ...prev, apiKey: e.target.value }))}
           />
           <button
@@ -194,7 +313,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
           style={inputStyle}
           type="text"
           value={localSettings.model}
-          placeholder="e.g. qwen2.5:7b, gpt-4o-mini, mlx-community/Qwen2.5-7B-Instruct-4bit"
+          placeholder="e.g. Qwen3.8-27B-8bit, qwen2.5:7b, gpt-4o-mini"
           onChange={(e) => updateSetting((prev) => ({ ...prev, model: e.target.value }))}
         />
       </div>

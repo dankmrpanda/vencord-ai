@@ -1,3 +1,11 @@
+declare module '@api/Settings' {
+  export function definePluginSettings<T extends Record<string, any>>(options: T): {
+    options: T;
+    store: { [K in keyof T]: T[K]['default'] extends infer D ? (D extends undefined ? any : D) : any };
+    useSettingsState(): { [K in keyof T]: T[K]['default'] extends infer D ? (D extends undefined ? any : D) : any };
+  };
+}
+
 declare module '@utils/types' {
   export interface PluginAuthor {
     name: string;
@@ -7,6 +15,7 @@ declare module '@utils/types' {
     name: string;
     description: string;
     authors: PluginAuthor[];
+    settings?: any;
     options?: Record<string, any>;
     settingsAboutComponent?: React.ComponentType<any>;
     start?: () => void;
