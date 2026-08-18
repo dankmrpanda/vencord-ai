@@ -27,18 +27,20 @@ export const ScopeIndicator: React.FC<ScopeIndicatorProps> = ({ context }) => {
     scopeDescription = 'Current Group DM';
   }
 
+  const rawName = context.channelName || 'channel';
+  const displayName = context.isDM
+    ? rawName.startsWith('@') ? rawName : `@${rawName}`
+    : rawName.startsWith('#') ? rawName : `#${rawName}`;
+
   return (
-    <div style={containerStyle}>
+    <div style={containerStyle} title={`Active Context: ${displayName} (${scopeDescription})`}>
       <div style={headerRowStyle}>
         <span style={iconStyle}>{context.isGuild ? '🌐' : context.isDM ? '👤' : '👥'}</span>
-        <span style={channelNameStyle}>
-          {context.isDM
-            ? context.channelName.startsWith('@') ? context.channelName : `@${context.channelName}`
-            : context.channelName.startsWith('#') ? context.channelName : `#${context.channelName}`}
-        </span>
+        <span style={channelNameStyle}>{displayName}</span>
       </div>
       <div style={scopeTextStyle}>
-        <span style={badgeStyle}>Scope</span> {scopeDescription}
+        <span style={badgeStyle}>Scope</span>
+        <span style={scopeDescStyle}>{scopeDescription}</span>
       </div>
     </div>
   );
@@ -53,6 +55,7 @@ const containerStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: '4px',
+  flexShrink: 0,
 };
 
 const headerRowStyle: React.CSSProperties = {
@@ -62,7 +65,7 @@ const headerRowStyle: React.CSSProperties = {
 };
 
 const iconStyle: React.CSSProperties = {
-  fontSize: '14px',
+  fontSize: '13px',
 };
 
 const channelNameStyle: React.CSSProperties = {
@@ -71,6 +74,7 @@ const channelNameStyle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+  fontSize: '13px',
 };
 
 const scopeTextStyle: React.CSSProperties = {
@@ -80,12 +84,19 @@ const scopeTextStyle: React.CSSProperties = {
   fontSize: '11px',
 };
 
+const scopeDescStyle: React.CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
 const badgeStyle: React.CSSProperties = {
   backgroundColor: 'var(--brand-experiment, #5865f2)',
   color: '#ffffff',
   padding: '1px 5px',
   borderRadius: '4px',
   fontWeight: 600,
-  fontSize: '10px',
+  fontSize: '9px',
   textTransform: 'uppercase',
+  flexShrink: 0,
 };

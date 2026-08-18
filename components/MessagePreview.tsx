@@ -18,8 +18,13 @@ export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
     minute: '2-digit',
   });
 
+  const handleImageClick = (e: React.MouseEvent, url: string) => {
+    e.stopPropagation();
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
-    <div style={cardStyle} onClick={handleJump} title="Click to jump to this message in Discord">
+    <div style={cardStyle} onClick={handleJump} title="Click to jump to message in Discord">
       <div style={topRowStyle}>
         <div style={authorInfoStyle}>
           {citation.authorAvatar ? (
@@ -39,7 +44,14 @@ export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
           <span style={authorNameStyle}>{citation.authorName}</span>
           <span style={timestampStyle}>{formattedDate}</span>
         </div>
-        <button style={jumpButtonStyle} onClick={(e) => { e.stopPropagation(); handleJump(); }}>
+        <button
+          style={jumpButtonStyle}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleJump();
+          }}
+          title="Jump to message"
+        >
           Jump ↗
         </button>
       </div>
@@ -56,6 +68,8 @@ export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
               src={url}
               alt="attachment"
               style={attachmentThumbStyle}
+              title="Click to view full image"
+              onClick={(e) => handleImageClick(e, url)}
               onError={(e) => ((e.target as HTMLElement).style.display = 'none')}
             />
           ))}
@@ -68,12 +82,12 @@ export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
 const cardStyle: React.CSSProperties = {
   backgroundColor: 'var(--background-secondary, #2b2d31)',
   borderRadius: '6px',
-  border: '1px solid var(--background-tertiary, #1e1f22)',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
   padding: '8px 10px',
   margin: '6px 0',
   fontSize: '12px',
   cursor: 'pointer',
-  transition: 'background-color 0.15s ease, border-color 0.15s ease',
+  transition: 'background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease',
 };
 
 const topRowStyle: React.CSSProperties = {
@@ -95,6 +109,7 @@ const avatarStyle: React.CSSProperties = {
   height: '18px',
   borderRadius: '50%',
   objectFit: 'cover',
+  flexShrink: 0,
 };
 
 const defaultAvatarStyle: React.CSSProperties = {
@@ -108,6 +123,7 @@ const defaultAvatarStyle: React.CSSProperties = {
   justifyContent: 'center',
   fontSize: '10px',
   fontWeight: 'bold',
+  flexShrink: 0,
 };
 
 const authorNameStyle: React.CSSProperties = {
@@ -159,4 +175,6 @@ const attachmentThumbStyle: React.CSSProperties = {
   maxHeight: '60px',
   borderRadius: '4px',
   objectFit: 'cover',
+  cursor: 'zoom-in',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
 };

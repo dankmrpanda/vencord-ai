@@ -25,6 +25,20 @@ interface SidebarPanelProps {
   onOpenSettings?: () => void;
 }
 
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   settings,
   onClose,
@@ -39,6 +53,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const agentRef = useRef<AIAssistantAgent>(new AIAssistantAgent(settings));
   const lastChannelIdRef = useRef<string | null>(null);
 
@@ -63,7 +78,6 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     }
   };
 
-  // Track active channel changes dynamically
   useEffect(() => {
     const initialChId = getCurrentChannelId();
     lastChannelIdRef.current = initialChId;
@@ -92,10 +106,9 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     };
   }, []);
 
-  // Auto-scroll on new messages
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [session?.messages]);
+    messagesEndRef.current?.scrollIntoView({ behavior: isGenerating ? 'auto' : 'smooth' });
+  }, [session?.messages, isGenerating]);
 
   const handleNewChat = () => {
     const channelId = session?.channelId || getCurrentChannelId() || 'global';
@@ -103,11 +116,13 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     setSession(newSess);
     setSessionsList((prev) => [newSess, ...prev.filter((s) => s.id !== newSess.id)]);
     setShowHistory(false);
+    setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
   const handleSelectSession = (selected: ChatSession) => {
     setSession(selected);
     setShowHistory(false);
+    setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
   const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
@@ -138,6 +153,9 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     if (!promptToSend || isGenerating || !session) return;
 
     setInputText('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
     setIsGenerating(true);
 
     const userMessage: AssistantChatMessage = {
@@ -222,7 +240,6 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         controller.signal
       );
 
-      // Finalize message
       setSession((prev) => {
         if (!prev) return prev;
         const msgs = [...prev.messages];
@@ -274,6 +291,12 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     }
   };
 
+  const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputText(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  };
+
   return (
     <div style={panelContainerStyle}>
       {/* Panel Top Header */}
@@ -284,7 +307,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         </div>
         <div style={headerActionsStyle}>
           <button
-            style={iconButtonStyle}
+            style={showHistory ? activeIconButtonStyle : iconButtonStyle}
             onClick={() => setShowHistory(!showHistory)}
             title="Chat History"
           >
@@ -298,7 +321,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
               ⚙️
             </button>
           )}
-          <button style={iconButtonStyle} onClick={onClose} title="Close Assistant">
+          <button style={iconButtonStyle} onClick={onClose} title="Close Assistant (Esc)">
             ✕
           </button>
         </div>
@@ -317,25 +340,30 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             </button>
           </div>
           <div style={historyListStyle}>
-            {sessionsList.map((s) => (
-              <div
-                key={s.id}
-                style={s.id === session?.id ? activeHistoryItemStyle : historyItemStyle}
-                onClick={() => handleSelectSession(s)}
-              >
-                <div style={historyTitleStyle}>{s.title}</div>
-                <div style={historySubStyle}>
-                  {new Date(s.updatedAt).toLocaleDateString()} · {s.messages.length} msgs
-                </div>
-                <button
-                  style={deleteButtonStyle}
-                  onClick={(e) => handleDeleteSession(e, s.id)}
-                  title="Delete Chat"
+            {sessionsList.length === 0 ? (
+              <div style={emptyHistoryTextStyle}>No saved chats for this channel.</div>
+            ) : (
+              sessionsList.map((s) => (
+                <div
+                  key={s.id}
+                  style={s.id === session?.id ? activeHistoryItemStyle : historyItemStyle}
+                  onClick={() => handleSelectSession(s)}
+                  title={s.title}
                 >
-                  🗑️
-                </button>
-              </div>
-            ))}
+                  <div style={historyTitleStyle}>{s.title || 'Untitled Chat'}</div>
+                  <div style={historySubStyle}>
+                    {formatRelativeTime(s.updatedAt)} · {s.messages.length} msgs
+                  </div>
+                  <button
+                    style={deleteButtonStyle}
+                    onClick={(e) => handleDeleteSession(e, s.id)}
+                    title="Delete Chat"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -390,18 +418,20 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
       {/* Input Box */}
       <div style={inputContainerStyle}>
         <textarea
+          ref={textareaRef}
           style={textareaStyle}
           placeholder="Ask a question about messages, files, or people..."
           value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
+          onChange={handleTextareaInput}
           onKeyDown={handleKeyDown}
-          rows={2}
+          rows={1}
           disabled={isGenerating}
         />
         <button
           style={inputText.trim() && !isGenerating ? activeSendButtonStyle : disabledSendButtonStyle}
           onClick={() => handleSend()}
           disabled={!inputText.trim() || isGenerating}
+          title="Send message (Enter)"
         >
           ➔
         </button>
@@ -411,14 +441,13 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 };
 
 const panelContainerStyle: React.CSSProperties = {
-  width: '380px',
+  width: '100%',
   height: '100%',
   backgroundColor: 'var(--background-primary, #313338)',
   borderLeft: '1px solid var(--background-modifier-accent, #3f4147)',
   display: 'flex',
   flexDirection: 'column',
   position: 'relative',
-  zIndex: 100,
   userSelect: 'text',
 };
 
@@ -430,6 +459,7 @@ const panelHeaderStyle: React.CSSProperties = {
   justifyContent: 'space-between',
   backgroundColor: 'var(--background-secondary, #2b2d31)',
   borderBottom: '1px solid var(--background-modifier-accent, #3f4147)',
+  flexShrink: 0,
 };
 
 const headerTitleGroupStyle: React.CSSProperties = {
@@ -461,6 +491,13 @@ const iconButtonStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   fontSize: '14px',
+  transition: 'background-color 0.15s ease, color 0.15s ease',
+};
+
+const activeIconButtonStyle: React.CSSProperties = {
+  ...iconButtonStyle,
+  backgroundColor: 'var(--background-modifier-selected, rgba(255, 255, 255, 0.12))',
+  color: 'var(--interactive-active, #ffffff)',
 };
 
 const historyDrawerStyle: React.CSSProperties = {
@@ -486,6 +523,13 @@ const historyHeaderStyle: React.CSSProperties = {
   color: 'var(--header-primary, #f2f3f5)',
 };
 
+const emptyHistoryTextStyle: React.CSSProperties = {
+  padding: '24px',
+  textAlign: 'center',
+  color: 'var(--text-muted, #949ba4)',
+  fontSize: '12px',
+};
+
 const textButtonStyle: React.CSSProperties = {
   background: 'none',
   border: 'none',
@@ -508,6 +552,7 @@ const historyItemStyle: React.CSSProperties = {
   marginBottom: '6px',
   cursor: 'pointer',
   position: 'relative',
+  transition: 'border-color 0.15s ease, background-color 0.15s ease',
 };
 
 const activeHistoryItemStyle: React.CSSProperties = {
@@ -522,24 +567,26 @@ const historyTitleStyle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-  paddingRight: '24px',
+  paddingRight: '28px',
 };
 
 const historySubStyle: React.CSSProperties = {
   fontSize: '10px',
   color: 'var(--text-muted, #949ba4)',
-  marginTop: '2px',
+  marginTop: '3px',
 };
 
 const deleteButtonStyle: React.CSSProperties = {
   position: 'absolute',
   right: '8px',
-  top: '12px',
+  top: '10px',
   background: 'none',
   border: 'none',
   cursor: 'pointer',
   fontSize: '12px',
   opacity: 0.7,
+  padding: '4px',
+  borderRadius: '4px',
 };
 
 const messagesScrollContainerStyle: React.CSSProperties = {
@@ -599,7 +646,7 @@ const stopButtonContainerStyle: React.CSSProperties = {
 };
 
 const stopButtonStyle: React.CSSProperties = {
-  padding: '4px 12px',
+  padding: '4px 14px',
   backgroundColor: 'var(--button-danger-background, #da373c)',
   color: '#fff',
   border: 'none',
@@ -616,6 +663,7 @@ const inputContainerStyle: React.CSSProperties = {
   display: 'flex',
   gap: '8px',
   alignItems: 'flex-end',
+  flexShrink: 0,
 };
 
 const textareaStyle: React.CSSProperties = {
@@ -626,9 +674,11 @@ const textareaStyle: React.CSSProperties = {
   padding: '8px 10px',
   color: 'var(--text-normal, #dbdee1)',
   fontSize: '13px',
+  lineHeight: '1.4',
   resize: 'none',
   fontFamily: 'inherit',
   outline: 'none',
+  maxHeight: '120px',
 };
 
 const sendButtonStyle: React.CSSProperties = {
@@ -641,6 +691,7 @@ const sendButtonStyle: React.CSSProperties = {
   justifyContent: 'center',
   fontSize: '16px',
   cursor: 'pointer',
+  flexShrink: 0,
 };
 
 const activeSendButtonStyle: React.CSSProperties = {

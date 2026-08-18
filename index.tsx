@@ -17,13 +17,26 @@ let isSidebarOpen = false;
 let currentSettings: PluginSettings = { ...DEFAULT_SETTINGS };
 let headerPollInterval: any = null;
 let headerInjectionTimeout: any = null;
-let tooltipStyleInjected = false;
+let stylesheetInjected = false;
 
-function injectTooltipStyles() {
-  if (tooltipStyleInjected || document.getElementById('vencord-ai-styles')) return;
+function injectPluginStyles() {
+  if (stylesheetInjected || document.getElementById('vencord-ai-styles')) return;
   const style = document.createElement('style');
   style.id = 'vencord-ai-styles';
   style.textContent = `
+    @keyframes vencord-ai-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    @keyframes vencord-ai-slide-in {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes vencord-ai-fade-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     #vencord-ai-header-btn {
       position: relative;
       display: inline-flex;
@@ -31,22 +44,22 @@ function injectTooltipStyles() {
       justify-content: center;
       width: 28px;
       height: 28px;
-      margin: 0 4px;
+      margin: 0 3px;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 17px;
+      font-size: 16px;
       user-select: none;
       color: var(--interactive-normal, #b5bac1);
       transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
     }
     #vencord-ai-header-btn:hover {
       color: var(--interactive-hover, #dbdee1);
-      background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.07));
+      background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
       transform: scale(1.1);
     }
     #vencord-ai-header-btn:active {
       color: var(--interactive-active, #ffffff);
-      background-color: var(--background-modifier-active, rgba(255, 255, 255, 0.14));
+      background-color: var(--background-modifier-active, rgba(255, 255, 255, 0.16));
       transform: scale(0.95);
     }
     #vencord-ai-header-btn[data-tooltip]:hover::before {
@@ -62,10 +75,11 @@ function injectTooltipStyles() {
       font-size: 12px;
       font-weight: 500;
       white-space: nowrap;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-      z-index: 100000;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      z-index: 100001;
       pointer-events: none;
       border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+      animation: vencord-ai-fade-in 0.12s ease;
     }
     #vencord-ai-header-btn[data-tooltip]:hover::after {
       content: '';
@@ -76,24 +90,42 @@ function injectTooltipStyles() {
       border-width: 0 5px 6px 5px;
       border-style: solid;
       border-color: transparent transparent var(--background-floating, #111214) transparent;
-      z-index: 100000;
+      z-index: 100001;
       pointer-events: none;
+      animation: vencord-ai-fade-in 0.12s ease;
     }
+
     #vencord-ai-sidebar-root {
       position: fixed;
       top: 0;
       right: 0;
       bottom: 0;
-      width: 380px;
-      z-index: 10000;
-      box-shadow: -4px 0 20px rgba(0, 0, 0, 0.45);
+      width: 400px;
+      max-width: 95vw;
+      z-index: 100000;
+      box-shadow: -6px 0 24px rgba(0, 0, 0, 0.55);
       display: flex;
       flex-direction: column;
       pointer-events: auto;
+      animation: vencord-ai-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      background-color: var(--background-primary, #313338);
+      font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
+    }
+
+    #vencord-ai-sidebar-root ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    #vencord-ai-sidebar-root ::-webkit-scrollbar-thumb {
+      background-color: var(--background-tertiary, #1e1f22);
+      border-radius: 3px;
+    }
+    #vencord-ai-sidebar-root ::-webkit-scrollbar-thumb:hover {
+      background-color: var(--background-modifier-hover, #3f4147);
     }
   `;
   document.head.appendChild(style);
-  tooltipStyleInjected = true;
+  stylesheetInjected = true;
 }
 
 function getReactDOM(): any {
@@ -156,17 +188,13 @@ export function toggleAIAssistant() {
   renderSidebar();
 }
 
-// Attach to window for easy debugging from console
 if (typeof window !== 'undefined') {
   (window as any).toggleVencordAIAssistant = toggleAIAssistant;
 }
 
-/**
- * Safe top bar header button injection
- */
 function injectHeaderButton() {
   try {
-    injectTooltipStyles();
+    injectPluginStyles();
 
     const existingBtn = document.getElementById('vencord-ai-header-btn');
     if (existingBtn) return;
@@ -210,6 +238,9 @@ function injectHeaderButton() {
 
 function handleKeyDown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+    e.preventDefault();
+    toggleAIAssistant();
+  } else if (e.key === 'Escape' && isSidebarOpen) {
     e.preventDefault();
     toggleAIAssistant();
   }
