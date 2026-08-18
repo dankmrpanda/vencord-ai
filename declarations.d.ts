@@ -7,17 +7,34 @@ declare module '@utils/types' {
     name: string;
     description: string;
     authors: PluginAuthor[];
-    settings?: any;
+    options?: Record<string, any>;
+    settingsAboutComponent?: React.ComponentType<any>;
     start?: () => void;
     stop?: () => void;
     patches?: any[];
     [key: string]: any;
   }
   export default function definePlugin<T extends PluginDefinition>(plugin: T): T;
+  export enum OptionType {
+    STRING = 0,
+    NUMBER = 1,
+    BOOLEAN = 2,
+    SELECT = 3,
+    COLOR = 4,
+    COMPONENT = 5,
+    SLIDER = 6,
+  }
 }
 
 declare module '@utils/constants' {
   export const Devs: Record<string, { name: string; id?: bigint | string }>;
+}
+
+declare module '@webpack' {
+  export function findByProps(...props: string[]): any;
+  export function findStore(name: string): any;
+  export function findByPropsLazy(...props: string[]): any;
+  export function find(...args: any[]): any;
 }
 
 declare module '@webpack/common' {

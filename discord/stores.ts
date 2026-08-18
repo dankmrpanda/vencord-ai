@@ -1,45 +1,34 @@
 import { DiscordChannel, DiscordGuild, DiscordUser } from '../types';
 
-declare global {
-  interface Window {
-    Vencord?: {
-      Webpack?: {
-        findByProps: (...props: string[]) => any;
-        findByPropsLazy?: (...props: string[]) => any;
-        findStore: (name: string) => any;
-        Common?: {
-          React: typeof import('react');
-          ReactDOM: typeof import('react-dom');
-          FluxDispatcher: any;
-          NavigationRouter?: any;
-          RestAPI?: any;
-        };
-      };
-      Plugins?: {
-        plugins: Record<string, any>;
-      };
-      Api?: any;
-    };
-  }
-}
+declare const require: any;
 
-/**
- * Safe accessor for Vencord Webpack finder
- */
-export function getWebpack(): any {
-  return window.Vencord?.Webpack ?? null;
-}
+let wpFindByProps: any = null;
+let wpFindStore: any = null;
+
+try {
+  if (typeof require !== 'undefined') {
+    const wp = require('@webpack');
+    wpFindByProps = wp?.findByProps;
+    wpFindStore = wp?.findStore;
+  }
+} catch {}
 
 export function findByProps(...props: string[]): any {
-  const wp = getWebpack();
-  if (!wp) return null;
-  return wp.findByProps(...props);
+  if (typeof wpFindByProps === 'function') {
+    try {
+      return wpFindByProps(...props);
+    } catch {}
+  }
+  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findByProps?.(...props)) ?? null;
 }
 
 export function findStore(name: string): any {
-  const wp = getWebpack();
-  if (!wp) return null;
-  return wp.findStore?.(name) ?? wp.findByProps?.(name);
+  if (typeof wpFindStore === 'function') {
+    try {
+      return wpFindStore(name);
+    } catch {}
+  }
+  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findStore?.(name)) ?? findByProps(name);
 }
 
 // Lazy Store Getters
@@ -132,7 +121,6 @@ export function jumpToMessage(channelId: string, messageId: string, guildId?: st
       nav.transitionTo(path);
       return;
     }
-    // Fallback: window.location
     const url = guildId 
       ? `https://discord.com/channels/${guildId}/${channelId}/${messageId}`
       : `https://discord.com/channels/@me/${channelId}/${messageId}`;
