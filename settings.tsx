@@ -91,10 +91,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
       let cleanUrl = settings.baseUrl.trim();
       if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
 
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (settings.apiKey?.trim()) {
-        headers['Authorization'] = `Bearer ${settings.apiKey.trim()}`;
-      }
+      const authKey = settings.apiKey?.trim() || 'local-no-auth';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authKey}`,
+      };
 
       const response = await fetch(`${cleanUrl}/chat/completions`, {
         method: 'POST',

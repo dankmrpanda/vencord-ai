@@ -31,13 +31,11 @@ export class OpenAICompatibleClient {
     }
     const url = `${cleanBaseUrl}/chat/completions`;
 
+    const authKey = this.settings.apiKey?.trim() || 'local-no-auth';
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authKey}`,
     };
-
-    if (this.settings.apiKey && this.settings.apiKey.trim().length > 0) {
-      headers['Authorization'] = `Bearer ${this.settings.apiKey.trim()}`;
-    }
 
     const payload: Record<string, any> = {
       model: this.settings.model || 'default',
@@ -168,10 +166,11 @@ export class OpenAICompatibleClient {
     if (cleanBaseUrl.endsWith('/')) cleanBaseUrl = cleanBaseUrl.slice(0, -1);
     const url = `${cleanBaseUrl}/chat/completions`;
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.settings.apiKey?.trim()) {
-      headers['Authorization'] = `Bearer ${this.settings.apiKey.trim()}`;
-    }
+    const authKey = this.settings.apiKey?.trim() || 'local-no-auth';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authKey}`,
+    };
 
     const payload = {
       model: this.settings.model || 'default',
