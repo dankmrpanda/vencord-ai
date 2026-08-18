@@ -1,4 +1,4 @@
-import React from 'react';
+import { React } from '@webpack/common';
 import { CurrentScopeContext } from '../types';
 
 interface ScopeIndicatorProps {

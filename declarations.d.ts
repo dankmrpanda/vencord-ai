@@ -21,8 +21,24 @@ declare module '@utils/constants' {
 }
 
 declare module '@webpack/common' {
-  export const React: typeof import('react');
-  export const ReactDOM: typeof import('react-dom');
+  import * as ReactTypes from 'react';
+  export const React: typeof ReactTypes;
+  export const useState: typeof ReactTypes.useState;
+  export const useEffect: typeof ReactTypes.useEffect;
+  export const useRef: typeof ReactTypes.useRef;
+  export const useMemo: typeof ReactTypes.useMemo;
+  export const useCallback: typeof ReactTypes.useCallback;
+  export const createContext: typeof ReactTypes.createContext;
+  export const useContext: typeof ReactTypes.useContext;
+
+  export const ReactDOM: {
+    createRoot?: (container: Element | DocumentFragment) => {
+      render(children: ReactTypes.ReactNode): void;
+      unmount(): void;
+    };
+    render?: (element: ReactTypes.ReactNode, container: Element | null) => any;
+    unmountComponentAtNode?: (container: Element) => boolean;
+  };
   export const FluxDispatcher: any;
   export const NavigationRouter: any;
   export const RestAPI: any;

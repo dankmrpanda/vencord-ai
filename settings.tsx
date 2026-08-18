@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { React, useState } from '@webpack/common';
 import { PluginSettings, ProviderPreset } from './types';
 
 export const DEFAULT_SETTINGS: PluginSettings = {

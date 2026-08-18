@@ -1,4 +1,4 @@
-import React from 'react';
+import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { CitationItem } from '../types';
 

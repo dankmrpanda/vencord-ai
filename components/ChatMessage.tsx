@@ -1,4 +1,4 @@
-import React from 'react';
+import { React } from '@webpack/common';
 import { AssistantChatMessage } from '../types';
 import { MessagePreview } from './MessagePreview';
 import { ToolCallBadge } from './ToolCallBadge';

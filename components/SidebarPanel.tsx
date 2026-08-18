@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { React, useEffect, useRef, useState } from '@webpack/common';
 import { getCurrentScopeContext } from '../discord/scope';
 import { getCurrentChannelId } from '../discord/stores';
 import { AIAssistantAgent } from '../llm/agent';

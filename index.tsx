@@ -1,6 +1,5 @@
 import definePlugin from '@utils/types';
-import React from 'react';
-import ReactDOM from 'react-dom/client';
+import { React, ReactDOM } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
 import { DEFAULT_SETTINGS, SettingsPanel } from './settings';
 import { PluginSettings } from './types';
@@ -45,7 +44,9 @@ function renderSidebar() {
     rootContainer.style.zIndex = '9999';
     rootContainer.style.display = 'flex';
     document.body.appendChild(rootContainer);
-    reactRoot = ReactDOM.createRoot(rootContainer);
+    if (ReactDOM?.createRoot) {
+      reactRoot = ReactDOM.createRoot(rootContainer);
+    }
   }
 
   if (!isSidebarOpen) {
@@ -54,7 +55,7 @@ function renderSidebar() {
   }
 
   rootContainer.style.display = 'flex';
-  reactRoot.render(
+  const element = (
     <SidebarPanel
       settings={currentSettings}
       onClose={() => {
@@ -63,6 +64,12 @@ function renderSidebar() {
       }}
     />
   );
+
+  if (reactRoot?.render) {
+    reactRoot.render(element);
+  } else if (ReactDOM?.render) {
+    ReactDOM.render(element, rootContainer);
+  }
 }
 
 export function toggleAIAssistant() {
@@ -146,9 +153,11 @@ export function stopPlugin() {
   const btn = document.getElementById('vencord-ai-header-btn');
   btn?.remove();
 
-  if (reactRoot) {
+  if (reactRoot?.unmount) {
     reactRoot.unmount();
     reactRoot = null;
+  } else if (ReactDOM?.unmountComponentAtNode && rootContainer) {
+    ReactDOM.unmountComponentAtNode(rootContainer);
   }
 
   rootContainer?.remove();
