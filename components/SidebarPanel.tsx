@@ -534,7 +534,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                   title={s.title}
                 >
                   <div style={historyTitleStyle}>{s.title || 'Untitled Chat'}</div>
-                  <div style={historySubStyle}>
+                  <div style={historyMetaStyle}>
                     {formatRelativeTime(s.updatedAt)} · {s.messages.length} msgs
                   </div>
                   <button

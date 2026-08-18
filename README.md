@@ -1,5 +1,8 @@
 # Vencord AI Message Assistant Plugin 🤖✨
 
+> [!TIP]
+> **LLM Context**: If you are an AI assistant or developer agent working on this codebase, please refer to [context.md](file:///Users/raymond/Documents/projects/vencord-ai/context.md) to quickly understand the project structure, architecture, and boundaries.
+
 A powerful client-side AI assistant plugin for **Vencord**, **Vesktop**, and **Equicord** that allows you to ask questions about your Discord chat history (supporting **100k+ messages**), find attachments/images, and analyze conversations across channels and DMs.
 
 Supports locally-hosted models (**omlx** on Apple Silicon, **Ollama**, **LM Studio**, **vLLM**) as well as cloud providers (**OpenAI**, **OpenRouter**, **Groq**).
@@ -111,7 +114,24 @@ vencord-ai/
 │   └── ScopeIndicator.tsx # Visual scope boundary badge
 ├── package.json
 ├── tsconfig.json
+├── context.md             # Developer context & architecture guide for LLMs
 └── README.md
+```
+
+---
+
+## 🧪 Development
+
+### Typecheck & Build
+Validate TypeScript compilation:
+```bash
+npm run typecheck
+```
+
+### Run Tests
+Execute the unit tests verifying scoping and message searching logic:
+```bash
+npm run test
 ```
 
 ---
