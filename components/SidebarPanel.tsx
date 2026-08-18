@@ -116,14 +116,18 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
       const selStore = getSelectedChannelStore();
       if (selStore?.addChangeListener) {
-        selStore.addChangeListener(checkChannelChange);
+        try {
+          selStore.addChangeListener(checkChannelChange);
+        } catch {}
       }
 
       const interval = setInterval(checkChannelChange, 1000);
 
       return () => {
         if (selStore?.removeChangeListener) {
-          selStore.removeChangeListener(checkChannelChange);
+          try {
+            selStore.removeChangeListener(checkChannelChange);
+          } catch {}
         }
         clearInterval(interval);
       };

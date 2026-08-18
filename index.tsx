@@ -5,7 +5,7 @@
  */
 
 import definePlugin from '@utils/types';
-import { React, ReactDOM } from '@webpack/common';
+import { React } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
 import { findByProps } from './discord/stores';
 import {
@@ -21,8 +21,6 @@ let rootContainer: HTMLDivElement | null = null;
 let reactRoot: any = null;
 let isSidebarOpen = false;
 let currentSettings: PluginSettings = { ...DEFAULT_SETTINGS };
-let headerPollInterval: any = null;
-let headerInjectionTimeout: any = null;
 let stylesheetInjected = false;
 
 function injectPluginStyles() {
@@ -43,35 +41,41 @@ function injectPluginStyles() {
       to { opacity: 1; transform: translateY(0); }
     }
 
-    #vencord-ai-header-btn {
-      position: relative;
+    #vencord-ai-floating-launcher {
+      position: fixed;
+      top: 10px;
+      right: 220px;
+      height: 28px;
+      padding: 0 9px;
       display: inline-flex;
       align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      margin: 0 3px;
-      border-radius: 4px;
+      gap: 5px;
+      border-radius: 6px;
       cursor: pointer;
-      font-size: 16px;
+      font-size: 12px;
+      font-weight: 600;
       user-select: none;
-      color: var(--interactive-normal, #b5bac1);
-      transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+      z-index: 99999;
+      background-color: var(--background-secondary-alt, #232428);
+      color: var(--header-primary, #f2f3f5);
+      border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.12));
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+      transition: all 0.15s ease;
+      font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
     }
-    #vencord-ai-header-btn:hover {
-      color: var(--interactive-hover, #dbdee1);
-      background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
-      transform: scale(1.1);
+    #vencord-ai-floating-launcher:hover {
+      background-color: var(--brand-experiment, #5865f2);
+      color: #ffffff;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(88, 101, 242, 0.45);
     }
-    #vencord-ai-header-btn:active {
-      color: var(--interactive-active, #ffffff);
-      background-color: var(--background-modifier-active, rgba(255, 255, 255, 0.16));
-      transform: scale(0.95);
+    #vencord-ai-floating-launcher:active {
+      transform: translateY(0) scale(0.97);
     }
-    #vencord-ai-header-btn[data-tooltip]:hover::before {
+    #vencord-ai-floating-launcher[data-tooltip]:hover::before {
       content: attr(data-tooltip);
       position: absolute;
-      top: calc(100% + 8px);
+      top: calc(100% + 7px);
       right: 50%;
       transform: translateX(50%);
       background-color: var(--background-floating, #111214);
@@ -87,13 +91,13 @@ function injectPluginStyles() {
       border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
       animation: vencord-ai-fade-in 0.12s ease;
     }
-    #vencord-ai-header-btn[data-tooltip]:hover::after {
+    #vencord-ai-floating-launcher[data-tooltip]:hover::after {
       content: '';
       position: absolute;
       top: calc(100% + 2px);
       right: 50%;
       transform: translateX(50%);
-      border-width: 0 5px 6px 5px;
+      border-width: 0 5px 5px 5px;
       border-style: solid;
       border-color: transparent transparent var(--background-floating, #111214) transparent;
       z-index: 100001;
@@ -243,17 +247,16 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 }
 
 function getReactDOM(): any {
-  if (ReactDOM && (typeof (ReactDOM as any).createRoot === 'function' || typeof (ReactDOM as any).render === 'function')) {
-    return ReactDOM;
+  if (typeof window !== 'undefined') {
+    const wp = (window as any).Vencord?.Webpack;
+    if (wp?.Common?.ReactDOM) return wp.Common.ReactDOM;
+    if ((window as any).ReactDOM) return (window as any).ReactDOM;
   }
-  const wp = (window as any).Vencord?.Webpack;
-  if (wp?.Common?.ReactDOM) return wp.Common.ReactDOM;
   const createRootMod = findByProps('createRoot');
   if (createRootMod?.createRoot) return createRootMod;
   const renderMod = findByProps('render', 'unmountComponentAtNode') || findByProps('render');
   if (renderMod?.render) return renderMod;
-  if ((window as any).ReactDOM) return (window as any).ReactDOM;
-  return ReactDOM;
+  return null;
 }
 
 function renderSidebar() {
@@ -263,8 +266,7 @@ function renderSidebar() {
     if (!rootContainer) {
       rootContainer = document.createElement('div');
       rootContainer.id = 'vencord-ai-sidebar-root';
-      const targetParent = document.getElementById('app-mount') || document.body;
-      targetParent.appendChild(rootContainer);
+      document.body.appendChild(rootContainer);
 
       if (dom?.createRoot) {
         reactRoot = dom.createRoot(rootContainer);
@@ -315,28 +317,20 @@ if (typeof window !== 'undefined') {
   (window as any).toggleVencordAIAssistant = toggleAIAssistant;
 }
 
-function injectHeaderButton() {
+function injectLauncherButton() {
   try {
     injectPluginStyles();
 
-    const existingBtn = document.getElementById('vencord-ai-header-btn');
+    const existingBtn = document.getElementById('vencord-ai-floating-launcher');
     if (existingBtn) return;
 
-    const toolbars = document.querySelectorAll(
-      'section[class*="title_"] [class*="toolbar_"], [class*="upperContainer_"] [class*="toolbar_"], [class*="toolbar__"]'
-    );
-    if (!toolbars || toolbars.length === 0) return;
-
-    const toolbar = toolbars[0];
-    if (toolbar.querySelector('#vencord-ai-header-btn')) return;
-
     const btn = document.createElement('div');
-    btn.id = 'vencord-ai-header-btn';
+    btn.id = 'vencord-ai-floating-launcher';
     btn.setAttribute('data-tooltip', 'AI Message Assistant (Cmd+Shift+A)');
     btn.setAttribute('aria-label', 'AI Message Assistant');
     btn.setAttribute('role', 'button');
     btn.setAttribute('tabindex', '0');
-    btn.innerText = '✨';
+    btn.innerHTML = '<span>✨</span><span>AI Assistant</span>';
 
     const handleClick = (e: Event) => {
       e.preventDefault();
@@ -353,7 +347,7 @@ function injectHeaderButton() {
       }
     });
 
-    toolbar.prepend(btn);
+    document.body.appendChild(btn);
   } catch (err) {
     // Non-fatal
   }
@@ -374,8 +368,7 @@ export function startPlugin() {
     currentSettings = loadSavedSettings();
     window.addEventListener('keydown', handleKeyDown);
 
-    headerInjectionTimeout = setTimeout(injectHeaderButton, 1000);
-    headerPollInterval = setInterval(injectHeaderButton, 2000);
+    injectLauncherButton();
 
     console.log('[VencordAI] AI Assistant Plugin started successfully.');
   } catch (err) {
@@ -386,16 +379,8 @@ export function startPlugin() {
 export function stopPlugin() {
   try {
     window.removeEventListener('keydown', handleKeyDown);
-    if (headerInjectionTimeout) {
-      clearTimeout(headerInjectionTimeout);
-      headerInjectionTimeout = null;
-    }
-    if (headerPollInterval) {
-      clearInterval(headerPollInterval);
-      headerPollInterval = null;
-    }
 
-    const btn = document.getElementById('vencord-ai-header-btn');
+    const btn = document.getElementById('vencord-ai-floating-launcher');
     btn?.remove();
 
     const styles = document.getElementById('vencord-ai-styles');
@@ -424,7 +409,7 @@ export default definePlugin({
   name: 'AIAssistant',
   description:
     'Client-side AI assistant to query 100k+ messages and images across channels & DMs with local (omlx, Ollama) and cloud LLMs.',
-  authors: [{ name: 'Raymond', id: 0n }],
+  authors: [{ name: 'Raymond' }],
   settings,
   settingsAboutComponent: () => (
     <SettingsPanel

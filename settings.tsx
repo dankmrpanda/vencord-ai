@@ -27,6 +27,7 @@ export const settings = definePluginSettings({
   providerPreset: {
     type: OptionType.SELECT,
     description: 'Provider Preset',
+    default: 'omlx',
     options: [
       { label: 'omlx (Local Apple Silicon / MLX)', value: 'omlx', default: true },
       { label: 'Ollama (Local)', value: 'ollama' },
