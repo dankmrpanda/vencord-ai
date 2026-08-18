@@ -1,6 +1,7 @@
 import definePlugin from '@utils/types';
 import { React, ReactDOM } from '@webpack/common';
 import { SidebarPanel } from './components/SidebarPanel';
+import { findByProps } from './discord/stores';
 import { DEFAULT_SETTINGS, SettingsPanel } from './settings';
 import { PluginSettings } from './types';
 
@@ -34,8 +35,22 @@ function persistSettings(newSettings: PluginSettings) {
   }
 }
 
+function getReactDOM(): any {
+  if (ReactDOM && (typeof ReactDOM.createRoot === 'function' || typeof ReactDOM.render === 'function')) {
+    return ReactDOM;
+  }
+  const wp = (window as any).Vencord?.Webpack;
+  if (wp?.Common?.ReactDOM) return wp.Common.ReactDOM;
+  const found = findByProps('createRoot', 'render') || findByProps('render', 'unmountComponentAtNode');
+  if (found) return found;
+  if ((window as any).ReactDOM) return (window as any).ReactDOM;
+  return ReactDOM;
+}
+
 function renderSidebar() {
   try {
+    const dom = getReactDOM();
+
     if (!rootContainer) {
       rootContainer = document.createElement('div');
       rootContainer.id = 'vencord-ai-sidebar-root';
@@ -43,11 +58,14 @@ function renderSidebar() {
       rootContainer.style.right = '0';
       rootContainer.style.top = '0';
       rootContainer.style.bottom = '0';
+      rootContainer.style.width = '380px';
       rootContainer.style.zIndex = '9999';
+      rootContainer.style.boxShadow = '-4px 0 16px rgba(0, 0, 0, 0.4)';
       rootContainer.style.display = 'flex';
       document.body.appendChild(rootContainer);
-      if (ReactDOM?.createRoot) {
-        reactRoot = ReactDOM.createRoot(rootContainer);
+
+      if (dom?.createRoot) {
+        reactRoot = dom.createRoot(rootContainer);
       }
     }
 
@@ -69,8 +87,10 @@ function renderSidebar() {
 
     if (reactRoot?.render) {
       reactRoot.render(element);
-    } else if (ReactDOM?.render) {
-      ReactDOM.render(element, rootContainer);
+    } else if (dom?.render) {
+      dom.render(element, rootContainer);
+    } else {
+      console.error('[VencordAI] No ReactDOM render method found to mount sidebar');
     }
   } catch (err) {
     console.error('[VencordAI] Error rendering sidebar:', err);
@@ -100,7 +120,10 @@ function injectHeaderButton() {
 
     const btn = document.createElement('div');
     btn.id = 'vencord-ai-header-btn';
-    btn.title = 'Open AI Message Assistant (Ctrl+Shift+A / Cmd+Shift+A)';
+    btn.title = 'AI Message Assistant (Cmd+Shift+A)';
+    btn.setAttribute('aria-label', 'AI Message Assistant');
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('tabindex', '0');
     btn.style.cursor = 'pointer';
     btn.style.display = 'flex';
     btn.style.alignItems = 'center';
@@ -109,20 +132,28 @@ function injectHeaderButton() {
     btn.style.fontSize = '18px';
     btn.style.lineHeight = '1';
     btn.style.opacity = '0.85';
+    btn.style.userSelect = 'none';
     btn.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
     btn.innerText = '✨';
 
     btn.onmouseenter = () => {
       btn.style.opacity = '1';
-      btn.style.transform = 'scale(1.1)';
+      btn.style.transform = 'scale(1.15)';
     };
     btn.onmouseleave = () => {
       btn.style.opacity = '0.85';
       btn.style.transform = 'scale(1)';
     };
     btn.onclick = (e) => {
+      e.preventDefault();
       e.stopPropagation();
       toggleAIAssistant();
+    };
+    btn.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleAIAssistant();
+      }
     };
 
     toolbar.prepend(btn);
@@ -170,11 +201,12 @@ export function stopPlugin() {
     const btn = document.getElementById('vencord-ai-header-btn');
     btn?.remove();
 
+    const dom = getReactDOM();
     if (reactRoot?.unmount) {
       reactRoot.unmount();
       reactRoot = null;
-    } else if (ReactDOM?.unmountComponentAtNode && rootContainer) {
-      ReactDOM.unmountComponentAtNode(rootContainer);
+    } else if (dom?.unmountComponentAtNode && rootContainer) {
+      dom.unmountComponentAtNode(rootContainer);
     }
 
     rootContainer?.remove();

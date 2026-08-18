@@ -342,7 +342,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
       {/* Message Stream */}
       <div style={messagesScrollContainerStyle}>
-        {session?.messages.length === 0 ? (
+        {(!session || !session.messages || session.messages.length === 0) ? (
           <div style={emptyStateContainerStyle}>
             <div style={{ fontSize: '32px', marginBottom: '8px' }}>🤖</div>
             <div style={emptyTitleStyle}>Ask anything about your messages!</div>
@@ -373,7 +373,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             </div>
           </div>
         ) : (
-          session?.messages.map((m) => <ChatMessage key={m.id} message={m} />)
+          session.messages.map((m) => <ChatMessage key={m.id} message={m} />)
         )}
         <div ref={messagesEndRef} />
       </div>
