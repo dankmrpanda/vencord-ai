@@ -88,27 +88,27 @@ Click **⚡ Test Connection** in the settings panel to verify your endpoint.
 
 ```
 vencord-ai/
-├── src/
-│   ├── index.tsx              # Plugin registration, header bar icon, keybinds
-│   ├── types.ts               # Discord & AI Assistant TypeScript types
-│   ├── settings.tsx           # Settings panel & provider presets
-│   ├── discord/
-│   │   ├── stores.ts          # Discord Webpack store finders & token access
-│   │   ├── scope.ts           # Privacy boundaries & mutual GDM filters
-│   │   ├── search.ts          # Rate-limited server-side message search API
-│   │   └── messages.ts        # Surrounding message context & attachment helpers
-│   ├── llm/
-│   │   ├── provider.ts        # OpenAI-compatible streaming client
-│   │   ├── agent.ts           # ReAct tool-calling agent loop
-│   │   └── prompts.ts         # System instructions & function definitions
-│   ├── storage/
-│   │   └── chatHistory.ts     # Persistent IndexedDB multi-session store
-│   └── components/
-│       ├── SidebarPanel.tsx   # Dockable assistant drawer
-│       ├── ChatMessage.tsx    # Message bubble with steps & citations
-│       ├── ToolCallBadge.tsx  # Tool execution accordion
-│       ├── MessagePreview.tsx # Message citation card with jump button
-│       └── ScopeIndicator.tsx # Visual scope boundary badge
+├── index.tsx              # Plugin entry point (definePlugin, header bar icon, keybinds)
+├── types.ts               # Discord & AI Assistant TypeScript types
+├── settings.tsx           # Settings panel & provider presets
+├── declarations.d.ts      # Vencord module type declarations
+├── discord/
+│   ├── stores.ts          # Discord Webpack store finders & token access
+│   ├── scope.ts           # Privacy boundaries & mutual GDM filters
+│   ├── search.ts          # Rate-limited server-side message search API
+│   └── messages.ts        # Surrounding message context & attachment helpers
+├── llm/
+│   ├── provider.ts        # OpenAI-compatible streaming client
+│   ├── agent.ts           # ReAct tool-calling agent loop
+│   └── prompts.ts         # System instructions & function definitions
+├── storage/
+│   └── chatHistory.ts     # Persistent IndexedDB multi-session store
+├── components/
+│   ├── SidebarPanel.tsx   # Dockable assistant drawer
+│   ├── ChatMessage.tsx    # Message bubble with steps & citations
+│   ├── ToolCallBadge.tsx  # Tool execution accordion
+│   ├── MessagePreview.tsx # Message citation card with jump button
+│   └── ScopeIndicator.tsx # Visual scope boundary badge
 ├── package.json
 ├── tsconfig.json
 └── README.md

@@ -1,3 +1,4 @@
+import definePlugin from '@utils/types';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { SidebarPanel } from './components/SidebarPanel';
@@ -157,8 +158,7 @@ export function stopPlugin() {
   console.log('[VencordAI] AI Assistant Plugin stopped.');
 }
 
-// Export Vencord Plugin Definition
-const pluginDefinition = {
+export default definePlugin({
   name: 'AIAssistant',
   description:
     'Client-side AI assistant to query 100k+ messages and images across channels & DMs with local (omlx, Ollama) and cloud LLMs.',
@@ -176,10 +176,4 @@ const pluginDefinition = {
   },
   start: startPlugin,
   stop: stopPlugin,
-};
-
-// Check for Vencord definePlugin helper or export directly
-declare const definePlugin: any;
-export default typeof definePlugin !== 'undefined'
-  ? definePlugin(pluginDefinition)
-  : pluginDefinition;
+});

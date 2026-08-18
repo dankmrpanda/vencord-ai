@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "tsx src/test/scope.test.ts"
+    "test": "npx tsx test/scope.test.ts"
   },
   "keywords": [
     "vencord",
