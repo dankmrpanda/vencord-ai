@@ -4,8 +4,8 @@
   "description": "Client-side AI assistant plugin for Vencord to search and query Discord message history using local and cloud LLMs.",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc --project tsconfig.dev.json --noEmit",
+    "typecheck": "tsc --project tsconfig.dev.json --noEmit",
     "test": "npx tsx test/scope.test.ts"
   },
   "keywords": [
