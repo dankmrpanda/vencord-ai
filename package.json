@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc --project tsconfig.dev.json --noEmit",
     "typecheck": "tsc --project tsconfig.dev.json --noEmit",
-    "test": "npx tsx --tsconfig tsconfig.dev.json test/scope.test.ts"
+    "test": "npx tsx --tsconfig tsconfig.dev.json test/scope.test.ts && npx tsx --tsconfig tsconfig.dev.json test/search.test.ts"
   },
   "keywords": [
     "vencord",

@@ -7,10 +7,11 @@
 import {
   fetchRecentMessages,
   fetchSurroundingMessages,
+  filterMessagesLocally,
   formatMessageForLLM,
 } from '../discord/messages';
 import { getCurrentScopeContext, isChannelAllowedInScope } from '../discord/scope';
-import { searchDiscordMessages } from '../discord/search';
+import { searchDiscordMessages, SearchResponse } from '../discord/search';
 import { getChannel } from '../discord/stores';
 import {
   AgentStep,
@@ -268,37 +269,77 @@ export class AIAssistantAgent {
 
       case 'search_messages': {
         const isGuildContext = currentScope.isGuild;
-        const targetChannelId = args.channel_id;
+        const targetChannelId = args.channel_id || currentScope.channelId;
 
-        // If targetChannelId is explicitly specified, enforce privacy/scope boundary
+        // If targetChannelId is specified, enforce privacy/scope boundary
+        if (targetChannelId && !isChannelAllowedInScope(targetChannelId, currentScope)) {
+          return `Error: Access denied. Channel ${targetChannelId} is outside of the permitted scope for this context.`;
+        }
+
+        const targetChannel = targetChannelId ? getChannel(targetChannelId) : null;
+        const resolvedGuildId = targetChannel?.guild_id || (isGuildContext ? currentScope.guildId : undefined);
+
+        let res: SearchResponse | null = null;
+        let searchError: string | null = null;
+
+        try {
+          res = await searchDiscordMessages({
+            query: args.query,
+            channelId: targetChannelId,
+            guildId: resolvedGuildId,
+            authorId: args.author_id,
+            has: args.has,
+          });
+        } catch (err: any) {
+          searchError = err?.message || String(err);
+        }
+
+        // Check if server search returned positive results
+        if (res && res.messages && res.messages.length > 0) {
+          const formattedResults: string[] = [];
+          for (const group of res.messages.slice(0, 10)) {
+            const hitMsg = Array.isArray(group) ? (group.find((m) => m.hit) || group[0]) : group;
+            if (hitMsg) {
+              const msgChannel = getChannel(hitMsg.channel_id);
+              const resolvedChannelName = msgChannel?.name || currentScope.channelName;
+              addCitation(hitMsg, resolvedChannelName);
+              formattedResults.push(formatMessageForLLM(hitMsg, resolvedChannelName));
+            }
+          }
+          if (formattedResults.length > 0) {
+            return `Found ${res.totalResults} matching messages (Discord Search Index):\n\n${formattedResults.join('\n\n')}`;
+          }
+        }
+
+        // Automatic Local / Recent Channel Messages Fallback:
+        // If server index returned 0 results or failed, scan recent messages in the target/active channel
         if (targetChannelId) {
-          if (!isChannelAllowedInScope(targetChannelId, currentScope)) {
-            return `Error: Access denied. Channel ${targetChannelId} is outside of the permitted scope for this context.`;
+          const recent = await fetchRecentMessages(targetChannelId, 50);
+          if (recent.length > 0) {
+            const matchedLocal = filterMessagesLocally(recent, {
+              query: args.query,
+              has: args.has,
+              authorId: args.author_id,
+            });
+
+            if (matchedLocal.length > 0) {
+              const formattedResults: string[] = [];
+              for (const msg of matchedLocal.slice(-10)) {
+                const msgChannel = getChannel(msg.channel_id);
+                const resolvedChannelName = msgChannel?.name || currentScope.channelName;
+                addCitation(msg, resolvedChannelName);
+                formattedResults.push(formatMessageForLLM(msg, resolvedChannelName));
+              }
+              return `Found ${matchedLocal.length} matching messages in recent channel context:\n\n${formattedResults.join('\n\n')}`;
+            }
           }
         }
 
-        const res = await searchDiscordMessages({
-          query: args.query,
-          channelId: targetChannelId || (!isGuildContext ? currentScope.channelId : undefined),
-          guildId: isGuildContext ? currentScope.guildId : undefined,
-          authorId: args.author_id,
-          has: args.has,
-        });
-
-        if (!res.messages || res.messages.length === 0) {
-          return `No messages found matching search criteria (Query: "${args.query || ''}", Total indexed: ${res.documentsIndexed ?? 'unknown'}).`;
+        if (searchError) {
+          return `Search query failed: ${searchError}. No matching messages found in recent channel cache.`;
         }
 
-        const formattedResults: string[] = [];
-        for (const group of res.messages.slice(0, 10)) {
-          const hitMsg = group.find((m) => m.hit) || group[0];
-          if (hitMsg) {
-            addCitation(hitMsg, currentScope.channelName);
-            formattedResults.push(formatMessageForLLM(hitMsg, currentScope.channelName));
-          }
-        }
-
-        return `Found ${res.totalResults} matching messages. Top results:\n\n${formattedResults.join('\n\n')}`;
+        return `No messages found matching search criteria (Query: "${args.query || ''}", Has: "${args.has || 'none'}", Channel: #${targetChannel?.name || currentScope.channelName}).`;
       }
 
       case 'fetch_surrounding_messages': {

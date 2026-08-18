@@ -10,7 +10,8 @@ import {
   findByProps as wpFindByProps,
   findStore as wpFindStore,
 } from '@webpack';
-import { DiscordChannel, DiscordGuild, DiscordUser } from '../types';
+import { RestAPI as vcRestAPI } from '@webpack/common';
+import { DiscordChannel, DiscordGuild, DiscordMessage, DiscordUser } from '../types';
 
 export function find(filter: (mod: any) => boolean): any {
   if (typeof wpFind === 'function') {
@@ -58,11 +59,50 @@ export const getSelectedGuildStore = () => findStore('SelectedGuildStore') ?? fi
 export const getChannelStore = () => findStore('ChannelStore') ?? findByProps('getChannel', 'getDMFromUserId');
 export const getGuildStore = () => findStore('GuildStore') ?? findByProps('getGuild', 'getGuilds');
 export const getUserStore = () => findStore('UserStore') ?? findByProps('getCurrentUser', 'getUser');
+export const getMessageStore = () => findStore('MessageStore') ?? findByProps('getMessages', 'getMessage');
 export const getRelationshipStore = () => findStore('RelationshipStore') ?? findByProps('getRelationships');
 export const getPermissionStore = () => findStore('PermissionStore') ?? findByProps('can');
 export const getAuthStore = () => findStore('AuthenticationStore') ?? findByProps('getToken', 'getId');
 export const getNavigationUtils = () => findByProps('transitionToGuild', 'transitionTo') ?? findByProps('transitionTo');
-export const getHTTP = () => findByProps('get', 'post', 'put', 'del') ?? findByProps('get', 'post');
+
+export const getHTTP = () => {
+  if (typeof vcRestAPI !== 'undefined' && vcRestAPI?.get) return vcRestAPI;
+  if (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.Common?.RestAPI) {
+    return (window as any).Vencord?.Webpack?.Common?.RestAPI;
+  }
+  return findByProps('get', 'post', 'put', 'del') ?? findByProps('get', 'post', 'del') ?? findByProps('get', 'post');
+};
+
+/**
+ * Retrieves loaded messages for a channel from Discord's client-side cache
+ */
+export function getLoadedMessages(channelId: string): DiscordMessage[] {
+  try {
+    const store = getMessageStore();
+    if (!store || !channelId) return [];
+
+    const raw = store.getMessages?.(channelId);
+    if (!raw) return [];
+
+    // Discord message cache often returns a Record or collection with toArray() or _array
+    if (typeof raw.toArray === 'function') {
+      return raw.toArray();
+    }
+    if (Array.isArray(raw._array)) {
+      return raw._array;
+    }
+    if (Array.isArray(raw)) {
+      return raw;
+    }
+    if (typeof raw.values === 'function') {
+      return Array.from(raw.values());
+    }
+    return [];
+  } catch (err) {
+    console.warn(`[VencordAI] Error reading MessageStore for channel ${channelId}:`, err);
+    return [];
+  }
+}
 
 /**
  * Retrieves the current logged-in Discord user

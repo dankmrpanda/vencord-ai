@@ -65,3 +65,10 @@ export const ReactDOM = (typeof window !== 'undefined' && (window as any).ReactD
 };
 
 export const createRoot = ReactDOM.createRoot;
+
+export const RestAPI = {
+  get: async () => ({ body: [] }),
+  post: async () => ({ body: {} }),
+  put: async () => ({ body: {} }),
+  del: async () => ({ body: {} }),
+};
