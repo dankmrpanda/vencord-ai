@@ -364,27 +364,14 @@ function getReactDOM(): any {
 
 function renderSidebar() {
   try {
+    injectPluginStyles();
     logPlugin('info', `renderSidebar invoked. isSidebarOpen = ${isSidebarOpen}`);
-    const dom = getReactDOM();
-    logPlugin('info', `getReactDOM resolved: ${dom ? (dom.createRoot || dom.default?.createRoot ? 'createRoot found' : dom.render || dom.default?.render ? 'render found' : 'unknown dom') : 'null'}`);
 
     if (!rootContainer) {
       rootContainer = document.createElement('div');
       rootContainer.id = 'vencord-ai-sidebar-root';
       document.body.appendChild(rootContainer);
       logPlugin('info', 'Created and appended #vencord-ai-sidebar-root to document.body');
-    }
-
-    if (!reactRoot && dom) {
-      const cr = dom.createRoot || dom.default?.createRoot;
-      if (typeof cr === 'function') {
-        try {
-          reactRoot = cr(rootContainer);
-          logPlugin('info', 'Successfully created React root via dom.createRoot');
-        } catch (err: any) {
-          logPlugin('warn', `dom.createRoot call failed: ${err?.message || err}`);
-        }
-      }
     }
 
     if (!isSidebarOpen) {
@@ -407,20 +394,109 @@ function renderSidebar() {
     );
     const element = EB ? <EB>{panel}</EB> : panel;
 
+    // Attempt 1: Use existing React root
     if (reactRoot?.render) {
-      reactRoot.render(element);
-      logPlugin('info', 'Mounted component via reactRoot.render');
-      return;
+      try {
+        reactRoot.render(element);
+        logPlugin('info', 'Mounted component via existing reactRoot.render');
+        return;
+      } catch (err: any) {
+        logPlugin('warn', `Existing reactRoot.render failed: ${err?.message || err}`);
+        reactRoot = null;
+      }
     }
 
-    const ren = dom?.render || dom?.default?.render;
-    if (typeof ren === 'function') {
-      ren(element, rootContainer);
-      logPlugin('info', 'Mounted component via dom.render');
-      return;
+    // Attempt 2: Try to get ReactDOM and create a new root or use render
+    const dom = getReactDOM();
+    logPlugin('info', `getReactDOM resolved: ${dom ? Object.keys(dom).join(', ') : 'null'}`);
+
+    // Attempt 2a: Try createRoot (React 18+)
+    if (dom && !reactRoot) {
+      const cr = typeof dom.createRoot === 'function' ? dom.createRoot
+        : typeof dom.default?.createRoot === 'function' ? dom.default.createRoot
+        : null;
+      if (cr) {
+        try {
+          reactRoot = cr(rootContainer);
+          logPlugin('info', 'Successfully created React root via createRoot');
+        } catch (err: any) {
+          logPlugin('warn', `createRoot call failed: ${err?.message || err}`);
+          reactRoot = null;
+        }
+      }
     }
 
-    logPlugin('error', 'No ReactDOM render or createRoot method found');
+    if (reactRoot?.render) {
+      try {
+        reactRoot.render(element);
+        logPlugin('info', 'Mounted component via new reactRoot.render');
+        return;
+      } catch (err: any) {
+        logPlugin('warn', `New reactRoot.render failed: ${err?.message || err}`);
+        reactRoot = null;
+      }
+    }
+
+    // Attempt 2b: Try legacy ReactDOM.render
+    if (dom) {
+      const ren = typeof dom.render === 'function' ? dom.render
+        : typeof dom.default?.render === 'function' ? dom.default.render
+        : null;
+      if (ren) {
+        try {
+          ren(element, rootContainer);
+          logPlugin('info', 'Mounted component via legacy dom.render');
+          return;
+        } catch (err: any) {
+          logPlugin('warn', `Legacy dom.render failed: ${err?.message || err}`);
+        }
+      }
+    }
+
+    // Attempt 3: Try Vencord's internal ReactDOM from various sources
+    const fallbackSources = [
+      () => (window as any).Vencord?.Webpack?.Common?.ReactDOM,
+      () => (window as any).ReactDOM,
+      () => {
+        try { return findByProps('createRoot', 'hydrateRoot'); } catch { return null; }
+      },
+      () => {
+        try { return findByProps('render', 'unmountComponentAtNode'); } catch { return null; }
+      },
+    ];
+
+    for (const getFallback of fallbackSources) {
+      try {
+        const fallbackDom = getFallback();
+        if (!fallbackDom) continue;
+        const actualDom = fallbackDom.default || fallbackDom;
+
+        if (typeof actualDom.createRoot === 'function') {
+          try {
+            reactRoot = actualDom.createRoot(rootContainer);
+            reactRoot.render(element);
+            logPlugin('info', 'Mounted component via fallback createRoot');
+            return;
+          } catch (err: any) {
+            logPlugin('warn', `Fallback createRoot failed: ${err?.message || err}`);
+            reactRoot = null;
+          }
+        }
+
+        if (typeof actualDom.render === 'function') {
+          try {
+            actualDom.render(element, rootContainer);
+            logPlugin('info', 'Mounted component via fallback render');
+            return;
+          } catch (err: any) {
+            logPlugin('warn', `Fallback render failed: ${err?.message || err}`);
+          }
+        }
+      } catch {}
+    }
+
+    // All React render methods failed — show diagnostic HTML fallback
+    logPlugin('error', 'All ReactDOM render methods failed. Showing HTML fallback.');
     const logsHtml = pluginLogs
       .map(
         (l) =>
@@ -444,6 +520,7 @@ function renderSidebar() {
     `;
     const retryBtn = rootContainer.querySelector('#vencord-ai-retry-mount-btn');
     retryBtn?.addEventListener('click', () => {
+      reactRoot = null;
       renderSidebar();
     });
   } catch (err: any) {
