@@ -80,48 +80,32 @@ export const settings = definePluginSettings({
 export const pluginSettings = settings;
 export const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
 
+function applySettings(target: PluginSettings, source?: any): void {
+  if (!source || typeof source !== 'object') return;
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof PluginSettings)[]) {
+    if (source[key] !== undefined && source[key] !== null) {
+      (target as any)[key] = source[key];
+    }
+  }
+}
+
 export function loadSavedSettings(): PluginSettings {
   const result: PluginSettings = { ...DEFAULT_SETTINGS };
 
   if (pluginSettings?.store) {
-    try {
-      const store = pluginSettings.store as any;
-      if (store.baseUrl !== undefined) result.baseUrl = String(store.baseUrl);
-      if (store.apiKey !== undefined) result.apiKey = String(store.apiKey);
-      if (store.model !== undefined) result.model = String(store.model);
-      if (store.providerPreset !== undefined && store.providerPreset !== null) result.providerPreset = store.providerPreset as ProviderPreset;
-      if (store.temperature !== undefined) result.temperature = Number(store.temperature);
-      if (store.enableVision !== undefined) result.enableVision = Boolean(store.enableVision);
-      if (store.maxSearchIterations !== undefined) result.maxSearchIterations = Number(store.maxSearchIterations);
-      if (store.systemPrompt !== undefined) result.systemPrompt = String(store.systemPrompt);
-    } catch {}
+    applySettings(result, pluginSettings.store);
   }
 
   try {
     if (typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.baseUrl !== undefined) result.baseUrl = parsed.baseUrl;
-        if (parsed.apiKey !== undefined) result.apiKey = parsed.apiKey;
-        if (parsed.model !== undefined) result.model = parsed.model;
-        if (parsed.providerPreset !== undefined && parsed.providerPreset !== null) result.providerPreset = parsed.providerPreset as ProviderPreset;
-        if (parsed.temperature !== undefined) result.temperature = parsed.temperature;
-        if (parsed.enableVision !== undefined) result.enableVision = parsed.enableVision;
-        if (parsed.maxSearchIterations !== undefined) result.maxSearchIterations = parsed.maxSearchIterations;
-        if (parsed.systemPrompt !== undefined) result.systemPrompt = parsed.systemPrompt;
-      }
+      if (raw) applySettings(result, JSON.parse(raw));
     }
   } catch {}
 
   try {
     const ds = (window as any)?.Vencord?.Api?.DataStore?.get?.(SETTINGS_KEY);
-    if (ds && typeof ds === 'object') {
-      if (ds.baseUrl !== undefined) result.baseUrl = ds.baseUrl;
-      if (ds.apiKey !== undefined) result.apiKey = ds.apiKey;
-      if (ds.model !== undefined) result.model = ds.model;
-      if (ds.providerPreset !== undefined && ds.providerPreset !== null) result.providerPreset = ds.providerPreset as ProviderPreset;
-    }
+    applySettings(result, ds);
   } catch {}
 
   return result;

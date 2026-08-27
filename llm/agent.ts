@@ -5,14 +5,20 @@
  */
 
 import {
+  extractPatternMatches,
   fetchRecentMessages,
   fetchSurroundingMessages,
   filterMessagesLocally,
   formatMessageForLLM,
+  formatMessageWithPattern,
 } from '../discord/messages';
 import { getCurrentScopeContext, isChannelAllowedInScope } from '../discord/scope';
-import { searchDiscordMessages, SearchResponse } from '../discord/search';
-import { getChannel, resolvePromptMentions } from '../discord/stores';
+import {
+  detectPatternFromQuery,
+  RelaxedSearchResult,
+  searchDiscordMessagesWithRelaxation,
+} from '../discord/search';
+import { getChannel, getCurrentUser, resolvePromptMentions } from '../discord/stores';
 import {
   AgentStep,
   AssistantChatMessage,
@@ -95,6 +101,31 @@ export class AIAssistantAgent {
     const nowDateStr = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const nowTimeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
 
+    // Resolve current logged-in user identity
+    const currentUser = currentScope.currentUser || getCurrentUser();
+    let userContext = '';
+    if (currentUser) {
+      const displayName = currentUser.globalName ? `${currentUser.globalName} (@${currentUser.username})` : `@${currentUser.username}`;
+      userContext = `\n[Current Logged-in User (You/Me)]: ${displayName} (Discord User ID: "${currentUser.id}")\n*Guidance: When the user asks about messages they sent (e.g. "where I talk about...", "my message", "what did I say"), set author_id: "${currentUser.id}".*`;
+    }
+
+    // Resolve scope details
+    let scopeDetails = '';
+    if (currentScope.isGuild) {
+      const accessibleCount = currentScope.accessibleGuildChannels?.length ?? 1;
+      scopeDetails = `\n[Active Scope Context]: Server: "${currentScope.guildName || 'Server'}" (Guild ID: "${currentScope.guildId}"), Active Channel: #${currentScope.channelName} (${currentScope.channelId}), Total Accessible Server Channels: ${accessibleCount}\n*Guidance: In servers, you can search across ALL accessible channels by omitting channel_id or setting guild_wide: true.*`;
+    } else if (currentScope.isDM) {
+      const other = currentScope.otherUser;
+      const partnerName = other?.globalName ? `${other.globalName} (@${other.username})` : other ? `@${other.username}` : 'User';
+      const gdmCount = currentScope.mutualGroupDMs?.length ?? 0;
+      const gdmText = gdmCount > 0 ? ` (with ${gdmCount} mutual group chat(s))` : '';
+      scopeDetails = `\n[Active Scope Context]: Direct Message with ${partnerName} (ID: "${other?.id || ''}")${gdmText}, Channel: #${currentScope.channelName} (${currentScope.channelId})`;
+    } else if (currentScope.isGroupDM) {
+      scopeDetails = `\n[Active Scope Context]: Group DM: #${currentScope.channelName} (${currentScope.channelId})`;
+    } else {
+      scopeDetails = `\n[Active Scope Context]: Channel: #${currentScope.channelName} (${currentScope.channelId})`;
+    }
+
     // Resolve any mentioned users in the user's prompt
     const mentionedUsers = resolvePromptMentions(userPrompt, currentScope.channelId, currentScope.guildId);
     let mentionContext = '';
@@ -110,7 +141,7 @@ export class AIAssistantAgent {
     const llmMessages: LLMMessage[] = [
       {
         role: 'system',
-        content: `${systemPrompt}\n\n[Current System Time & Date]: ${nowDateStr}, ${nowTimeStr} (${nowIso})\n[Active Scope Context]: Channel: #${currentScope.channelName} (${currentScope.channelId}), Type: ${currentScope.isDM ? 'Direct Message' : currentScope.isGroupDM ? 'Group DM' : `Server Guild (${currentScope.guildName || currentScope.guildId})`}${mentionContext}`,
+        content: `${systemPrompt}\n\n[Current System Time & Date]: ${nowDateStr}, ${nowTimeStr} (${nowIso})${userContext}${scopeDetails}${mentionContext}`,
       },
     ];
 
@@ -238,6 +269,7 @@ export class AIAssistantAgent {
   ): Promise<string> {
     switch (name) {
       case 'get_current_context': {
+        const loggedIn = currentScope.currentUser || getCurrentUser();
         return JSON.stringify(
           {
             currentChannelId: currentScope.channelId,
@@ -247,6 +279,10 @@ export class AIAssistantAgent {
             isGroupDM: currentScope.isGroupDM,
             isGuild: currentScope.isGuild,
             guildName: currentScope.guildName,
+            guildId: currentScope.guildId,
+            currentUser: loggedIn
+              ? { id: loggedIn.id, username: loggedIn.username, globalName: loggedIn.globalName || null }
+              : null,
             otherParticipant: currentScope.otherUser
               ? { id: currentScope.otherUser.id, name: currentScope.otherUser.globalName || currentScope.otherUser.username }
               : null,
@@ -285,7 +321,10 @@ export class AIAssistantAgent {
 
       case 'search_messages': {
         const isGuildContext = currentScope.isGuild;
-        const targetChannelId = args.channel_id || currentScope.channelId;
+        const guildWide = Boolean(args.guild_wide || args.channel_id === 'all');
+        const targetChannelId = guildWide
+          ? undefined
+          : (args.channel_id || (!isGuildContext ? currentScope.channelId : undefined));
 
         // If targetChannelId is specified, enforce privacy/scope boundary
         if (targetChannelId && !isChannelAllowedInScope(targetChannelId, currentScope)) {
@@ -298,54 +337,106 @@ export class AIAssistantAgent {
         const duringDate = args.date || args.during_date;
         const afterDate = args.after_date;
         const beforeDate = args.before_date;
+        const scanLimit = Math.min(Math.max(Number(args.limit) || 50, 10), 100);
 
-        let res: SearchResponse | null = null;
+        let rawQuery = args.query?.trim();
+        let effectivePattern = args.pattern?.trim();
+        let patternDescription: string | null = null;
+
+        // Auto-detect pattern from query if pattern wasn't explicitly passed
+        if (rawQuery) {
+          const detected = detectPatternFromQuery(rawQuery);
+          if (detected.pattern && !effectivePattern) {
+            effectivePattern = detected.pattern;
+            patternDescription = detected.patternDescription;
+            rawQuery = detected.cleanedQuery || undefined;
+          }
+        }
+
+        const formatGroup = (msgs: DiscordMessage[], defaultChannelName: string) => {
+          const allExtracted: string[] = [];
+          const lines = msgs.map((m) => {
+            const ch = getChannel(m.channel_id);
+            const chName = ch?.name || defaultChannelName;
+            addCitation(m, chName);
+            const { formatted, matchedValues } = formatMessageWithPattern(m, chName, effectivePattern);
+            if (matchedValues.length > 0) allExtracted.push(...matchedValues);
+            return formatted;
+          });
+          const unique = Array.from(new Set(allExtracted));
+          const summary = unique.length > 0
+            ? `\n• Extracted Value(s): ${unique.map((v) => `"${v}"`).join(', ')}\n`
+            : '';
+          return { lines, summary };
+        };
+
+        let res: RelaxedSearchResult | null = null;
         let searchError: string | null = null;
 
-        try {
-          res = await searchDiscordMessages({
-            query: args.query,
-            channelId: targetChannelId,
-            guildId: resolvedGuildId,
-            authorId: args.author_id,
-            has: args.has,
-            duringDate,
-            afterDate,
-            beforeDate,
-            sortBy: args.sort_by,
-            sortOrder: args.sort_order,
-            offset: args.offset,
-            pinned: args.pinned,
-            mentions: args.mentions,
-          });
-        } catch (err: any) {
-          searchError = err?.message || String(err);
+        // If we have a query, authorId, has, or date criteria, attempt Discord Search Index
+        if (rawQuery || args.author_id || args.has || duringDate || afterDate || beforeDate) {
+          try {
+            res = await searchDiscordMessagesWithRelaxation({
+              query: rawQuery,
+              pattern: effectivePattern,
+              channelId: targetChannelId,
+              guildId: resolvedGuildId,
+              guildWide: guildWide || (!targetChannelId && isGuildContext),
+              authorId: args.author_id,
+              has: args.has,
+              duringDate,
+              afterDate,
+              beforeDate,
+              sortBy: args.sort_by,
+              sortOrder: args.sort_order,
+              offset: args.offset,
+              pinned: args.pinned,
+              mentions: args.mentions,
+            });
+          } catch (err: any) {
+            searchError = err?.message || String(err);
+          }
         }
 
         // Check if server search returned positive results
         if (res && res.messages && res.messages.length > 0) {
-          const formattedResults: string[] = [];
-          for (const group of res.messages.slice(0, 15)) {
+          let hitMessages: DiscordMessage[] = [];
+          for (const group of res.messages.slice(0, 25)) {
             const hitMsg = Array.isArray(group) ? (group.find((m) => m.hit) || group[0]) : group;
-            if (hitMsg) {
-              const msgChannel = getChannel(hitMsg.channel_id);
-              const resolvedChannelName = msgChannel?.name || currentScope.channelName;
-              addCitation(hitMsg, resolvedChannelName);
-              formattedResults.push(formatMessageForLLM(hitMsg, resolvedChannelName));
-            }
+            if (hitMsg) hitMessages.push(hitMsg);
           }
-          if (formattedResults.length > 0) {
-            return `Found ${res.totalResults} matching messages (Discord Search Index):\n\n${formattedResults.join('\n\n')}`;
+
+          if (effectivePattern) {
+            hitMessages = filterMessagesLocally(hitMessages, {
+              pattern: effectivePattern,
+              authorId: args.author_id,
+              duringDate,
+              afterDate,
+              beforeDate,
+            });
+          }
+
+          if (hitMessages.length > 0) {
+            const { lines, summary } = formatGroup(hitMessages.slice(0, 15), currentScope.channelName);
+            const relaxedNotice = res.relaxedQueryUsed
+              ? ` (Note: exact query "${res.originalQuery}" returned 0 results, automatically broadened to keyword "${res.relaxedQueryUsed}")`
+              : '';
+            const scopeNote = guildWide || (!targetChannelId && isGuildContext)
+              ? `Server-wide: ${currentScope.guildName || 'Server'}`
+              : `#${targetChannel?.name || currentScope.channelName}`;
+
+            return `Found ${hitMessages.length} matching messages (Discord Search Index [${scopeNote}])${relaxedNotice}:${summary}\n\n${lines.join('\n\n')}`;
           }
         }
 
-        // Automatic Local / Recent Channel Messages Fallback:
-        // Scan local channel history using the exact criteria (including date constraints)
-        if (targetChannelId) {
-          const recent = await fetchRecentMessages(targetChannelId, 50);
+        // Automatic Local / Channel History Scan Fallback:
+        const localScanChannelId = targetChannelId || currentScope.channelId;
+        if (localScanChannelId) {
+          const recent = await fetchRecentMessages(localScanChannelId, scanLimit);
           if (recent.length > 0) {
             const matchedLocal = filterMessagesLocally(recent, {
-              query: args.query,
+              query: rawQuery,
+              pattern: effectivePattern,
               has: args.has,
               authorId: args.author_id,
               duringDate,
@@ -354,31 +445,57 @@ export class AIAssistantAgent {
             });
 
             if (matchedLocal.length > 0) {
-              const formattedResults: string[] = [];
-              for (const msg of matchedLocal.slice(-10)) {
-                const msgChannel = getChannel(msg.channel_id);
-                const resolvedChannelName = msgChannel?.name || currentScope.channelName;
-                addCitation(msg, resolvedChannelName);
-                formattedResults.push(formatMessageForLLM(msg, resolvedChannelName));
-              }
-              return `Found ${matchedLocal.length} matching messages in channel history:\n\n${formattedResults.join('\n\n')}`;
+              const { lines, summary } = formatGroup(matchedLocal.slice(-15), targetChannel?.name || currentScope.channelName);
+              const patLabel = patternDescription || (effectivePattern ? `Pattern: ${effectivePattern}` : '');
+              const patNote = patLabel ? ` [${patLabel}]` : '';
+
+              return `Found ${matchedLocal.length} matching messages in channel history (#${targetChannel?.name || currentScope.channelName})${patNote}:${summary}\n\n${lines.join('\n\n')}`;
             }
           }
         }
 
+        // If in DM and 0 hits found in current DM, check mutual group DMs automatically
+        if (currentScope.isDM && currentScope.mutualGroupDMs && currentScope.mutualGroupDMs.length > 0 && !args.channel_id) {
+          const gdmResults: string[] = [];
+          for (const gdm of currentScope.mutualGroupDMs.slice(0, 3)) {
+            const recentGDM = await fetchRecentMessages(gdm.id, 40);
+            const matchedGDM = filterMessagesLocally(recentGDM, {
+              query: rawQuery,
+              pattern: effectivePattern,
+              has: args.has,
+              authorId: args.author_id,
+              duringDate,
+              afterDate,
+              beforeDate,
+            });
+            if (matchedGDM.length > 0) {
+              const { lines } = formatGroup(matchedGDM, gdm.name);
+              gdmResults.push(...lines);
+            }
+          }
+          if (gdmResults.length > 0) {
+            return `Found ${gdmResults.length} matching messages in mutual group chat(s):\n\n${gdmResults.join('\n\n')}`;
+          }
+        }
+
         const criteriaDetails: string[] = [];
-        if (args.query) criteriaDetails.push(`Query: "${args.query}"`);
+        if (rawQuery) criteriaDetails.push(`Query: "${rawQuery}"`);
+        if (effectivePattern) criteriaDetails.push(`Pattern: ${effectivePattern}${patternDescription ? ` (${patternDescription})` : ''}`);
         if (args.has) criteriaDetails.push(`Has: "${args.has}"`);
         if (duringDate) criteriaDetails.push(`Date: ${duringDate}`);
         if (afterDate) criteriaDetails.push(`After: ${afterDate}`);
         if (beforeDate) criteriaDetails.push(`Before: ${beforeDate}`);
         if (args.author_id) criteriaDetails.push(`Author ID: ${args.author_id}`);
 
+        const searchedLocation = guildWide || (!targetChannelId && isGuildContext)
+          ? `server "${currentScope.guildName || 'Server'}"`
+          : `channel #${targetChannel?.name || currentScope.channelName}`;
+
         if (searchError) {
-          return `Search query failed: ${searchError}. No matching messages found for ${criteriaDetails.join(', ') || 'criteria'} in #${targetChannel?.name || currentScope.channelName}.`;
+          return `Search query failed: ${searchError}. No matching messages found for ${criteriaDetails.join(', ') || 'criteria'} in ${searchedLocation}. Suggested next steps: try broader anchor keywords (1-2 distinctive words), regex patterns, or search server-wide.`;
         }
 
-        return `No messages found matching search criteria (${criteriaDetails.join(', ') || 'unspecified criteria'}) in channel #${targetChannel?.name || currentScope.channelName}.`;
+        return `No messages found matching search criteria (${criteriaDetails.join(', ') || 'unspecified criteria'}) in ${searchedLocation}. Suggested next steps: try searching with 1 distinctive anchor keyword, a regex pattern, removing date/author restrictions, or searching server-wide.`;
       }
 
       case 'fetch_surrounding_messages': {
@@ -406,14 +523,46 @@ export class AIAssistantAgent {
           return `Error: Access denied. Channel ${targetChannelId} is outside of allowed scope.`;
         }
 
-        const recent = await fetchRecentMessages(targetChannelId, args.limit || 20);
-        if (recent.length === 0) {
+        const fetchLimit = Math.min(Math.max(Number(args.limit) || 25, 1), 100);
+        const rawMessages = await fetchRecentMessages(targetChannelId, fetchLimit);
+        if (rawMessages.length === 0) {
           return `No recent messages found in channel ${targetChannelId}.`;
         }
 
-        recent.forEach((m) => addCitation(m, currentScope.channelName));
-        const formatted = recent.map((m) => formatMessageForLLM(m)).join('\n');
-        return `Recent messages in channel (${recent.length} messages):\n\n${formatted}`;
+        let pattern = args.pattern?.trim();
+        let patternDescription: string | null = null;
+        if (pattern) {
+          const patInfo = detectPatternFromQuery(pattern);
+          if (patInfo.pattern) {
+            pattern = patInfo.pattern;
+            patternDescription = patInfo.patternDescription;
+          }
+        }
+
+        let finalMessages = rawMessages;
+        if (pattern) {
+          finalMessages = filterMessagesLocally(rawMessages, { pattern });
+          if (finalMessages.length === 0) {
+            return `No messages matching pattern "${pattern}" found in the last ${rawMessages.length} messages of channel #${currentScope.channelName}.`;
+          }
+        }
+
+        const allExtracted: string[] = [];
+        const formatted = finalMessages.map((m) => {
+          addCitation(m, currentScope.channelName);
+          const { formatted: msgStr, matchedValues } = formatMessageWithPattern(m, currentScope.channelName, pattern);
+          if (matchedValues.length > 0) allExtracted.push(...matchedValues);
+          return msgStr;
+        }).join('\n\n');
+
+        const uniqueExtracted = Array.from(new Set(allExtracted));
+        const patternSummary = uniqueExtracted.length > 0
+          ? `\n• Extracted Value(s): ${uniqueExtracted.map((v) => `"${v}"`).join(', ')}\n`
+          : '';
+        const patLabel = patternDescription || (pattern ? `Pattern: ${pattern}` : '');
+        const patNote = patLabel ? ` [${patLabel}]` : '';
+
+        return `Recent messages in channel (${finalMessages.length} messages)${patNote}:${patternSummary}\n\n${formatted}`;
       }
 
       case 'inspect_image': {

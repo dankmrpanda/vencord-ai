@@ -190,6 +190,7 @@ export interface CurrentScopeContext {
   isGuild: boolean;
   guildId?: string;
   guildName?: string;
+  currentUser?: DiscordUser;
   otherUser?: DiscordUser;
   mutualGroupDMs?: { id: string; name: string; recipientNames: string[] }[];
   accessibleGuildChannels?: { id: string; name: string; topic?: string }[];

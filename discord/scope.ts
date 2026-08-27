@@ -31,42 +31,29 @@ export function getMutualGroupDMs(otherUserId: string): DiscordChannel[] {
     const channelStore = getChannelStore();
     if (!channelStore) return [];
 
-    // Check all private channels in ChannelStore
-    const privateChannels: DiscordChannel[] = [];
+    const raw =
+      channelStore.getMutablePrivateChannels?.() ||
+      channelStore.getPrivateChannels?.() ||
+      channelStore.getChannels?.() ||
+      [];
+    const privateChannels: DiscordChannel[] = Array.isArray(raw) ? raw : Object.values(raw);
 
-    // Various Discord internal methods for private channels
-    if (typeof channelStore.getMutablePrivateChannels === 'function') {
-      const map = channelStore.getMutablePrivateChannels();
-      for (const key in map) {
-        privateChannels.push(map[key]);
-      }
-    } else if (typeof channelStore.getPrivateChannels === 'function') {
-      const map = channelStore.getPrivateChannels();
-      for (const key in map) {
-        privateChannels.push(map[key]);
-      }
-    } else if (typeof channelStore.getChannels === 'function') {
-      const all = channelStore.getChannels();
-      if (Array.isArray(all)) {
-        for (const ch of all) {
-          if (ch.type === ChannelType.GROUP_DM) privateChannels.push(ch);
-        }
-      }
-    }
-
-    const mutualGDMs = privateChannels.filter((ch) => {
-      if (ch.type !== ChannelType.GROUP_DM) return false;
-      const recipients: string[] = ch.recipients ?? [];
-      // Group DMs store recipient user IDs (excluding current user or sometimes including)
-      return recipients.includes(otherUserId);
+    return privateChannels.filter((ch) => {
+      return ch.type === ChannelType.GROUP_DM && (ch.recipients ?? []).includes(otherUserId);
     });
-
-    return mutualGDMs;
   } catch (err) {
     console.error('[VencordAI] Error finding mutual group DMs:', err);
     return [];
   }
 }
+
+const TEXT_CHANNEL_TYPES = new Set([
+  ChannelType.GUILD_TEXT,
+  ChannelType.GUILD_ANNOUNCEMENT,
+  ChannelType.PUBLIC_THREAD,
+  ChannelType.PRIVATE_THREAD,
+  ChannelType.GUILD_FORUM,
+]);
 
 /**
  * Gets accessible text channels for a guild
@@ -79,58 +66,27 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
     const permStore = getPermissionStore();
     if (!channelStore) return [];
 
-    const guildChannels: DiscordChannel[] = [];
     const rawChannels = channelStore.getChannels(guildId);
+    if (!rawChannels) return [];
 
-    if (rawChannels && typeof rawChannels === 'object') {
-      // Flatten potential category bucket maps or nested arrays
-      const rawList = Array.isArray(rawChannels) ? rawChannels : Object.values(rawChannels);
-      const flattenedList: any[] = [];
+    const rawList = Array.isArray(rawChannels) ? rawChannels : Object.values(rawChannels);
+    const flattened: any[] = rawList.flat(2);
 
-      for (const entry of rawList) {
-        if (Array.isArray(entry)) {
-          flattenedList.push(...entry);
-        } else {
-          flattenedList.push(entry);
-        }
-      }
-
-      for (const item of flattenedList) {
-        const ch: DiscordChannel = item?.channel ?? item;
-        if (!ch || !ch.id) continue;
-
-        // Only include text-capable channels
-        const isTextCapable =
-          ch.type === ChannelType.GUILD_TEXT ||
-          ch.type === ChannelType.GUILD_ANNOUNCEMENT ||
-          ch.type === ChannelType.PUBLIC_THREAD ||
-          ch.type === ChannelType.PRIVATE_THREAD ||
-          ch.type === ChannelType.GUILD_FORUM;
-
-        if (isTextCapable) {
-          // Check permission if permStore is available
-          let canView = true;
-          if (permStore?.can) {
-            // VIEW_CHANNEL is 0x400n (1024)
-            try {
-              canView = Boolean(permStore.can(1024n, ch));
-            } catch {
-              try {
-                canView = Boolean(permStore.can(1024, ch));
-              } catch {
-                canView = true;
-              }
-            }
-          }
-
-          if (canView) {
-            guildChannels.push(ch);
+    return flattened
+      .map((entry) => entry?.channel ?? entry)
+      .filter((ch: DiscordChannel): ch is DiscordChannel => {
+        if (!ch?.id || !TEXT_CHANNEL_TYPES.has(ch.type)) return false;
+        if (!permStore?.can) return true;
+        try {
+          return Boolean(permStore.can(1024n, ch));
+        } catch {
+          try {
+            return Boolean(permStore.can(1024, ch));
+          } catch {
+            return true;
           }
         }
-      }
-    }
-
-    return guildChannels;
+      });
   } catch (err) {
     console.error(`[VencordAI] Error getting channels for guild ${guildId}:`, err);
     return [];
@@ -194,6 +150,8 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
     channelName = channel.name || 'Group DM';
   }
 
+  const currentUser = getCurrentUser() ?? undefined;
+
   return {
     channelId,
     channelName,
@@ -203,6 +161,7 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
     isGuild,
     guildId: channel.guild_id,
     guildName,
+    currentUser,
     otherUser,
     mutualGroupDMs,
     accessibleGuildChannels,

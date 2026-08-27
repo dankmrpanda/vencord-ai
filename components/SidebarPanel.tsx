@@ -258,55 +258,25 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    const updateAssistantMessage = (updater: (msg: AssistantChatMessage) => void) => {
+      setSession((prev) => {
+        if (!prev) return prev;
+        const msgs = [...prev.messages];
+        const last = msgs[msgs.length - 1];
+        if (last && last.id === assistantMsgId) updater(last);
+        return { ...prev, messages: msgs };
+      });
+    };
+
     try {
       const result = await agentRef.current.run(
         promptToSend,
         session.messages,
         {
-          onToken: (token) => {
-            setSession((prev) => {
-              if (!prev) return prev;
-              const msgs = [...prev.messages];
-              const last = msgs[msgs.length - 1];
-              if (last && last.id === assistantMsgId) {
-                last.content += token;
-              }
-              return { ...prev, messages: msgs };
-            });
-          },
-          onStepAdded: (step: AgentStep) => {
-            setSession((prev) => {
-              if (!prev) return prev;
-              const msgs = [...prev.messages];
-              const last = msgs[msgs.length - 1];
-              if (last && last.id === assistantMsgId) {
-                last.steps = [...(last.steps || []), step];
-              }
-              return { ...prev, messages: msgs };
-            });
-          },
-          onStepUpdated: (step: AgentStep) => {
-            setSession((prev) => {
-              if (!prev) return prev;
-              const msgs = [...prev.messages];
-              const last = msgs[msgs.length - 1];
-              if (last && last.id === assistantMsgId) {
-                last.steps = (last.steps || []).map((s) => (s.id === step.id ? step : s));
-              }
-              return { ...prev, messages: msgs };
-            });
-          },
-          onCitationsUpdated: (citations: CitationItem[]) => {
-            setSession((prev) => {
-              if (!prev) return prev;
-              const msgs = [...prev.messages];
-              const last = msgs[msgs.length - 1];
-              if (last && last.id === assistantMsgId) {
-                last.citations = citations;
-              }
-              return { ...prev, messages: msgs };
-            });
-          },
+          onToken: (token) => updateAssistantMessage((m) => { m.content += token; }),
+          onStepAdded: (step: AgentStep) => updateAssistantMessage((m) => { m.steps = [...(m.steps || []), step]; }),
+          onStepUpdated: (step: AgentStep) => updateAssistantMessage((m) => { m.steps = (m.steps || []).map((s) => (s.id === step.id ? step : s)); }),
+          onCitationsUpdated: (citations: CitationItem[]) => updateAssistantMessage((m) => { m.citations = citations; }),
         },
         controller.signal
       );

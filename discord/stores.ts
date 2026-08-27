@@ -17,45 +17,20 @@ import {
 } from '@webpack/common';
 import { DiscordChannel, DiscordGuild, DiscordMessage, DiscordUser } from '../types';
 
-export function find(filter: (mod: any) => boolean): any {
-  if (typeof wpFind === 'function') {
+function safeWpCall<T>(primaryFn: any, windowFnName: string, ...args: any[]): T | null {
+  if (typeof primaryFn === 'function') {
     try {
-      const res = wpFind(filter);
+      const res = primaryFn(...args);
       if (res) return res;
     } catch {}
   }
-  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.find?.(filter)) ?? null;
+  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.[windowFnName]?.(...args)) ?? null;
 }
 
-export function findByCode(...code: string[]): any {
-  if (typeof wpFindByCode === 'function') {
-    try {
-      const res = wpFindByCode(...code);
-      if (res) return res;
-    } catch {}
-  }
-  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findByCode?.(...code)) ?? null;
-}
-
-export function findByProps(...props: string[]): any {
-  if (typeof wpFindByProps === 'function') {
-    try {
-      const res = wpFindByProps(...props);
-      if (res) return res;
-    } catch {}
-  }
-  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findByProps?.(...props)) ?? null;
-}
-
-export function findStore(name: string): any {
-  if (typeof wpFindStore === 'function') {
-    try {
-      const res = wpFindStore(name);
-      if (res) return res;
-    } catch {}
-  }
-  return (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.findStore?.(name)) ?? findByProps(name);
-}
+export const find = (filter: (mod: any) => boolean): any => safeWpCall(wpFind, 'find', filter);
+export const findByCode = (...code: string[]): any => safeWpCall(wpFindByCode, 'findByCode', ...code);
+export const findByProps = (...props: string[]): any => safeWpCall(wpFindByProps, 'findByProps', ...props);
+export const findStore = (name: string): any => safeWpCall(wpFindStore, 'findStore', name) ?? findByProps(name);
 
 // Lazy Store Getters
 export const getSelectedChannelStore = () => findStore('SelectedChannelStore') ?? findByProps('getChannelId', 'getVoiceChannelId');
@@ -75,7 +50,7 @@ export const getNavigationRouter = () => {
   if (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.Common?.NavigationRouter) {
     return (window as any).Vencord?.Webpack?.Common?.NavigationRouter;
   }
-  return findByProps('transitionTo', 'replaceWith') ?? findByProps('transitionToGuild', 'transitionTo') ?? findByProps('transitionTo');
+  return findByProps('transitionTo', 'replaceWith') ?? findByProps('transitionToGuild') ?? findByProps('transitionTo');
 };
 
 export const getMessageJumpModule = () => {
@@ -93,8 +68,6 @@ export const getFluxDispatcher = () => {
   }
   return findByProps('dispatch', 'subscribe') ?? findStore('FluxDispatcher');
 };
-
-export const getNavigationUtils = () => getNavigationRouter();
 
 export const getHTTP = () => {
   if (typeof vcRestAPI !== 'undefined' && vcRestAPI?.get) return vcRestAPI;

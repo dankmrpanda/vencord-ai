@@ -40,14 +40,17 @@ export const ToolCallBadge: React.FC<ToolCallBadgeProps> = ({ step }) => {
   const getSummary = () => {
     if (step.toolName === 'search_messages') {
       const q = step.toolArgs?.query ? `"${step.toolArgs.query}"` : '';
-      const h = step.toolArgs?.has ? ` [has:${step.toolArgs.has}]` : '';
-      return `Search Discord ${q}${h}`.trim();
+      const p = step.toolArgs?.pattern ? `[pattern: ${step.toolArgs.pattern}]` : '';
+      const h = step.toolArgs?.has ? `[has:${step.toolArgs.has}]` : '';
+      const terms = [q, p, h].filter(Boolean).join(' ');
+      return `Search Discord ${terms || 'messages'}`.trim();
     }
     if (step.toolName === 'fetch_surrounding_messages') {
       return `Fetch context around message ${step.toolArgs?.message_id || ''}`.trim();
     }
     if (step.toolName === 'fetch_recent_messages') {
-      return `Fetch recent channel messages`;
+      const p = step.toolArgs?.pattern ? ` [pattern: ${step.toolArgs.pattern}]` : '';
+      return `Fetch recent channel messages${p}`.trim();
     }
     if (step.toolName === 'inspect_image') {
       return `Inspect image attachment`;

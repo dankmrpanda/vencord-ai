@@ -294,57 +294,25 @@ function getPluginErrorBoundary(): any {
 }
 
 /**
- * Finds React 18's createRoot function using Vencord's own resolution pattern.
- * Vencord source: createRoot = findByCodeLazy("(299));", ".onRecoverableError")
+ * Finds React 18's createRoot function using Vencord's resolution pattern.
  */
 function findCreateRoot(): ((container: Element | DocumentFragment) => { render(children: any): void; unmount(): void }) | null {
-  // Method 1: Direct export from @webpack/common
-  if (typeof vcCreateRoot === 'function') {
-    return vcCreateRoot;
-  }
+  if (typeof vcCreateRoot === 'function') return vcCreateRoot;
 
-  // Method 2: Check window.Vencord.Webpack.Common.createRoot
-  if (typeof window !== 'undefined') {
-    const vcCommon = (window as any).Vencord?.Webpack?.Common;
-    if (typeof vcCommon?.createRoot === 'function') return vcCommon.createRoot;
-  }
-
-  // Method 3: Vencord's exact pattern: findByCode("(299));", ".onRecoverableError")
   try {
-    const byCode = findByCode('(299));', '.onRecoverableError') || findByCode('.onRecoverableError');
-    if (typeof byCode === 'function') return byCode;
-    if (typeof byCode?.createRoot === 'function') return byCode.createRoot;
-    if (typeof byCode?.default?.createRoot === 'function') return byCode.default.createRoot;
-    if (typeof byCode?.default === 'function') return byCode.default;
-  } catch {}
+    const candidates = [
+      (window as any)?.Vencord?.Webpack?.Common?.createRoot,
+      (window as any)?.ReactDOM?.createRoot,
+      findByCode('(299));', '.onRecoverableError')?.createRoot,
+      findByCode('(299));', '.onRecoverableError'),
+      findByProps('createRoot', 'hydrateRoot')?.createRoot,
+      findByProps('createRoot')?.createRoot,
+      findByProps('createRoot'),
+    ];
 
-  // Method 4: findByProps for the react-dom/client chunk
-  try {
-    const clientMod = findByProps('createRoot', 'hydrateRoot') || findByProps('createRoot');
-    if (typeof clientMod?.createRoot === 'function') return clientMod.createRoot;
-    if (typeof clientMod?.default?.createRoot === 'function') return clientMod.default.createRoot;
-    if (typeof clientMod === 'function') return clientMod;
-  } catch {}
-
-  // Method 5: Global window.ReactDOM
-  if (typeof window !== 'undefined') {
-    const rdom = (window as any).ReactDOM;
-    if (typeof rdom?.createRoot === 'function') return rdom.createRoot;
-  }
-
-  // Method 6: Broad search in Webpack modules
-  try {
-    const found = find((m: any) => {
-      if (!m) return false;
-      return (
-        typeof m.createRoot === 'function' ||
-        typeof m.default?.createRoot === 'function' ||
-        (typeof m === 'function' && m.toString().includes('onRecoverableError'))
-      );
-    });
-    if (typeof found?.createRoot === 'function') return found.createRoot;
-    if (typeof found?.default?.createRoot === 'function') return found.default.createRoot;
-    if (typeof found === 'function') return found;
+    for (const fn of candidates) {
+      if (typeof fn === 'function') return fn;
+    }
   } catch {}
 
   return null;
@@ -352,31 +320,18 @@ function findCreateRoot(): ((container: Element | DocumentFragment) => { render(
 
 /**
  * Gets a legacy ReactDOM module (with render/unmountComponentAtNode/createPortal).
- * Vencord source: ReactDOM = findByPropsLazy("createPortal")
  */
 function getLegacyReactDOM(): any {
-  // Method 1: window.ReactDOM
-  if (typeof window !== 'undefined' && (window as any).ReactDOM) {
-    return (window as any).ReactDOM;
-  }
-
-  // Method 2: Vencord Webpack Common ReactDOM
   if (typeof window !== 'undefined') {
+    if ((window as any).ReactDOM) return (window as any).ReactDOM;
     const vcRDOM = (window as any).Vencord?.Webpack?.Common?.ReactDOM;
     if (vcRDOM) {
       const actual = vcRDOM.default || vcRDOM;
-      if (typeof actual.render === 'function' || typeof actual.createPortal === 'function') return actual;
+      if (typeof actual.render === 'function') return actual;
     }
   }
-
-  // Method 3: findByProps with render + unmountComponentAtNode
-  try {
-    const mod = findByProps('render', 'unmountComponentAtNode') || findByProps('createPortal');
-    if (mod?.render) return mod;
-    if (mod?.default?.render) return mod.default;
-  } catch {}
-
-  return null;
+  const mod = findByProps('render', 'unmountComponentAtNode') || findByProps('createPortal');
+  return mod?.default || mod || null;
 }
 
 function renderSidebar() {

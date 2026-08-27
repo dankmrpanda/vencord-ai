@@ -6,7 +6,10 @@
   "scripts": {
     "build": "tsc --project tsconfig.dev.json --noEmit",
     "typecheck": "tsc --project tsconfig.dev.json --noEmit",
-    "test": "npx tsx --tsconfig tsconfig.dev.json test/scope.test.ts && npx tsx --tsconfig tsconfig.dev.json test/search.test.ts"
+    "test": "npx tsx --tsconfig tsconfig.dev.json test/scope.test.ts && npx tsx --tsconfig tsconfig.dev.json test/search.test.ts",
+    "sync": "rsync -av --exclude=node_modules --exclude=.git ./ /Users/raymond/Documents/Vencord/src/userplugins/vencord-ai/",
+    "build:vencord": "pnpm sync && pnpm --dir /Users/raymond/Documents/Vencord build",
+    "inject": "pnpm sync && pnpm --dir /Users/raymond/Documents/Vencord build && pnpm --dir /Users/raymond/Documents/Vencord inject"
   },
   "keywords": [
     "vencord",

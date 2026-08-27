@@ -17,32 +17,22 @@ interface ChatMessageProps {
 function handleLinkClick(e: React.MouseEvent, href: string) {
   e.preventDefault();
   try {
-    // Match Discord web URLs: /channels/:guildId/:channelId/:messageId
-    const discordMatch = href.match(/(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i) ||
-      href.match(/^\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i);
+    // Match Discord web URLs: https://discord.com/channels/:guildId/:channelId/:messageId
+    const discordMatch = href.match(/(?:https?:\/\/(?:[a-z0-9]+\.)?discord(?:app)?\.com)?\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i);
     if (discordMatch) {
       const [, guildId, channelId, messageId] = discordMatch;
       jumpToMessage(channelId, messageId, guildId === '@me' ? undefined : guildId);
       return;
     }
 
-    // Match custom URI: discord://message/:channelId/:messageId
-    const customMatch = href.match(/discord:\/\/message\/([^\/\s]+)\/([^\/\s]+)/i);
-    if (customMatch) {
-      const [, channelId, messageId] = customMatch;
-      jumpToMessage(channelId, messageId);
-      return;
-    }
-
-    // Match custom URI: discord://channels/:guildId/:channelId/:messageId
-    const customChannelMatch = href.match(/discord:\/\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i);
-    if (customChannelMatch) {
-      const [, guildId, channelId, messageId] = customChannelMatch;
+    // Match custom URIs: discord://message/:channelId/:messageId or discord://channels/:guildId/:channelId/:messageId
+    const uriMatch = href.match(/discord:\/\/(?:channels\/([^\/\s]+)\/|message\/)([^\/\s]+)(?:\/([^\/\s]+))?/i);
+    if (uriMatch) {
+      const [, guildId, channelId, messageId] = uriMatch;
       jumpToMessage(channelId, messageId, guildId === '@me' ? undefined : guildId);
       return;
     }
 
-    // Non-Discord external web links
     window.open(href, '_blank', 'noopener,noreferrer');
   } catch {
     window.open(href, '_blank', 'noopener,noreferrer');
@@ -140,42 +130,16 @@ function renderMarkdownContent(content: string): React.ReactNode {
           const firstNewline = inner.indexOf('\n');
           const lang = firstNewline !== -1 ? inner.slice(0, firstNewline).trim() : '';
           const code = firstNewline !== -1 ? inner.slice(firstNewline + 1) : inner;
-
           return <CodeBlock key={bIdx} code={code} lang={lang} />;
         }
 
-        const lines = block.split('\n');
         return (
           <div key={bIdx}>
-            {lines.map((line, lIdx) => {
-              if (line.startsWith('### ')) {
-                return (
-                  <h4 key={lIdx} style={h4Style}>
-                    {renderInlineMarkdown(line.slice(4))}
-                  </h4>
-                );
-              }
-              if (line.startsWith('## ')) {
-                return (
-                  <h3 key={lIdx} style={h3Style}>
-                    {renderInlineMarkdown(line.slice(3))}
-                  </h3>
-                );
-              }
-              if (line.startsWith('# ')) {
-                return (
-                  <h2 key={lIdx} style={h2Style}>
-                    {renderInlineMarkdown(line.slice(2))}
-                  </h2>
-                );
-              }
-              if (line.startsWith('> ')) {
-                return (
-                  <blockquote key={lIdx} style={blockquoteStyle}>
-                    {renderInlineMarkdown(line.slice(2))}
-                  </blockquote>
-                );
-              }
+            {block.split('\n').map((line, lIdx) => {
+              if (line.startsWith('### ')) return <h4 key={lIdx} style={h4Style}>{renderInlineMarkdown(line.slice(4))}</h4>;
+              if (line.startsWith('## ')) return <h3 key={lIdx} style={h3Style}>{renderInlineMarkdown(line.slice(3))}</h3>;
+              if (line.startsWith('# ')) return <h2 key={lIdx} style={h2Style}>{renderInlineMarkdown(line.slice(2))}</h2>;
+              if (line.startsWith('> ')) return <blockquote key={lIdx} style={blockquoteStyle}>{renderInlineMarkdown(line.slice(2))}</blockquote>;
               if (line.startsWith('- ') || line.startsWith('* ')) {
                 return (
                   <div key={lIdx} style={listItemStyle}>
@@ -193,9 +157,7 @@ function renderMarkdownContent(content: string): React.ReactNode {
                   </div>
                 );
               }
-              if (line.trim() === '---' || line.trim() === '***') {
-                return <hr key={lIdx} style={hrStyle} />;
-              }
+              if (line.trim() === '---' || line.trim() === '***') return <hr key={lIdx} style={hrStyle} />;
 
               return (
                 <div key={lIdx} style={paragraphLineStyle}>
