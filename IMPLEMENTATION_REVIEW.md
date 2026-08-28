@@ -6,10 +6,10 @@ This implementation is split into five stacked phase branches. Review and merge 
 
 - Starting `llm/` + `discord/` production lines: **2,724**.
 - Phase 1–3 attributed core: **2,860** lines, **+136 / +4.99%**.
-- Phase 4 core bundle: **205** lines; total Phase 4 production attribution, including launch state/UI/types/declarations, is **328** lines.
+- Phase 4 core bundle: **205** lines; total Phase 4 production attribution, including launch state/UI/types/declarations, is **331** lines.
 - Current `llm/` + `discord/` total: **3,065** lines.
 - Largest new production file: `llm/toolRegistry.ts` at **190** lines; every new production file is below 300 lines.
-- Remaining touched hotspots: `components/SidebarPanel.tsx` (1,013), `index.tsx` (647), `discord/search.ts` (562), and `discord/messages.ts` (420).
+- Remaining touched hotspots: `components/SidebarPanel.tsx` (1,013), `index.tsx` (649), `discord/search.ts` (562), and `discord/messages.ts` (420).
 
 ## Phase 1 — Correctness, privacy, tests
 

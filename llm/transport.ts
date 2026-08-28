@@ -46,30 +46,24 @@ function normalizeTools(tools: ToolDefinition[], capabilities: ProviderCapabilit
     };
   });
 }
-
 function mergeToolCalls(target: Map<number, { id: string; name: string; arguments: string }>, raw: any[]): void {
   for (const item of raw) {
     const index = Number(item.index) || 0;
     const existing = target.get(index) || { id: item.id || `call_${index}`, name: '', arguments: '' };
     if (item.id) existing.id = item.id;
-    if (item.function?.name) {
-      const fragment = item.function.name;
-      existing.name += fragment.startsWith(existing.name) ? fragment.slice(existing.name.length) : fragment;
-    }
+    const name = item.function?.name;
+    if (name) existing.name = name.startsWith(existing.name) ? name : existing.name + name;
     if (item.function?.arguments) existing.arguments += item.function.arguments;
     target.set(index, existing);
   }
 }
-
 function materialize(target: Map<number, { id: string; name: string; arguments: string }>): LLMToolCall[] {
-  return Array.from(target.entries())
-    .sort(([left], [right]) => left - right)
-    .map(([, item]) => item)
+  return Array.from(target.entries()).sort(([left], [right]) => left - right).map(([, item]) => item)
     .filter((item) => item.name).map((item) => ({
-    id: item.id,
-    type: 'function',
-    function: { name: item.name, arguments: item.arguments },
-  }));
+      id: item.id,
+      type: 'function',
+      function: { name: item.name, arguments: item.arguments },
+    }));
 }
 
 export async function consumeChatCompletionStream(
