@@ -347,30 +347,65 @@ const CACHE_TTL_MS = 60 * 1000; // 1 minute
 
 // Rate limiter / serial queue
 let lastRequestTime = 0;
+let searchStartQueue: Promise<void> = Promise.resolve();
 const MIN_REQUEST_INTERVAL_MS = 1200;
 
 async function throttle(): Promise<void> {
-  const now = Date.now();
-  const elapsed = now - lastRequestTime;
-  if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-    await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
-  }
-  lastRequestTime = Date.now();
+  const scheduled = searchStartQueue.then(async () => {
+    const elapsed = Date.now() - lastRequestTime;
+    if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+      await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
+    }
+    lastRequestTime = Date.now();
+  });
+  searchStartQueue = scheduled.catch(() => undefined);
+  await scheduled;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function resolveDateSnowflakeBounds(options: SearchOptions): { minId?: string; maxId?: string } {
+export function buildSearchCacheKey(
+  options: SearchOptions,
+  sanitizedQuery = options.query?.trim() || '',
+  effectiveMinId?: string,
+  effectiveMaxId?: string,
+): string {
+  return JSON.stringify({
+    q: sanitizedQuery,
+    pat: options.pattern ? String(options.pattern) : '',
+    ch: options.channelId || '',
+    g: options.guildId || '',
+    gw: Boolean(options.guildWide),
+    a: options.authorId || '',
+    h: options.has || '',
+    min: effectiveMinId || '',
+    max: effectiveMaxId || '',
+    sort: options.sortBy || '',
+    ord: options.sortOrder || '',
+    off: options.offset || 0,
+    pin: options.pinned === undefined ? '' : options.pinned,
+    men: options.mentions || '',
+  });
+}
+
+export function resolveDateSnowflakeBounds(options: SearchOptions): { minId?: string; maxId?: string } {
   if (options.duringDate) {
-    const d = new Date(options.duringDate);
+    const raw = options.duringDate;
+    const d = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)
+      ? new Date(`${raw}T00:00:00`)
+      : new Date(raw);
     if (!isNaN(d.getTime())) {
-      const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
-      const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      const end = new Date(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime() - 1);
       return { minId: dateToSnowflake(start), maxId: dateToSnowflake(end) };
     }
   }
-  const minId = options.afterDate ? dateToSnowflake(options.afterDate) : options.minId;
-  const maxId = options.beforeDate ? dateToSnowflake(options.beforeDate) : options.maxId;
+  const localizeDateOnly = (value: string | Date): string | Date =>
+    typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? new Date(`${value}T00:00:00`)
+      : value;
+  const minId = options.afterDate ? dateToSnowflake(localizeDateOnly(options.afterDate)) : options.minId;
+  const maxId = options.beforeDate ? dateToSnowflake(localizeDateOnly(options.beforeDate)) : options.maxId;
   return {
     minId: minId && minId !== '0' ? minId : undefined,
     maxId: maxId && maxId !== '0' ? maxId : undefined,
@@ -412,21 +447,7 @@ export async function searchDiscordMessages(
     }
   }
 
-  const normalizedKey = JSON.stringify({
-    q: sanitizedQuery || '',
-    pat: options.pattern ? String(options.pattern) : '',
-    ch: options.channelId || '',
-    g: options.guildId || '',
-    a: options.authorId || '',
-    h: options.has || '',
-    min: effectiveMinId || '',
-    max: effectiveMaxId || '',
-    sort: options.sortBy || '',
-    ord: options.sortOrder || '',
-    off: options.offset || 0,
-    pin: options.pinned || '',
-    men: options.mentions || '',
-  });
+  const normalizedKey = buildSearchCacheKey(options, sanitizedQuery || '', effectiveMinId, effectiveMaxId);
 
   const cached = searchCache.get(normalizedKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -505,16 +526,18 @@ export async function searchDiscordMessages(
 
     const retrySec = extractRetryAfterSeconds(rawData);
     if (retrySec !== null && retriesRemaining > 0) {
+      console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
       await sleep(retrySec * 1000 + 500);
       return searchDiscordMessages(options, retriesRemaining - 1);
     }
   } catch (err: any) {
     const retrySec = extractRetryAfterSeconds(err);
     if (retrySec !== null && retriesRemaining > 0) {
+      console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
       await sleep(retrySec * 1000 + 500);
       return searchDiscordMessages(options, retriesRemaining - 1);
     }
-    console.error('[VencordAI] Search error:', err);
+    console.error('[VencordAI] Search error', { status: err?.status ?? err?.statusCode ?? 'unknown' });
     throw err;
   }
 
@@ -537,58 +560,3 @@ export async function searchDiscordMessages(
 
   return result;
 }
-
-export interface RelaxedSearchResult extends SearchResponse {
-  relaxedQueryUsed?: string;
-  originalQuery?: string;
-}
-
-/**
- * Searches messages with automatic query relaxation if primary query returns 0 hits
- */
-export async function searchDiscordMessagesWithRelaxation(
-  options: SearchOptions,
-  retriesRemaining: number = 3
-): Promise<RelaxedSearchResult> {
-  const primaryResult = await searchDiscordMessages(options, retriesRemaining);
-
-  // If primary search succeeded or no query was provided, return directly
-  if ((primaryResult.messages && primaryResult.messages.length > 0) || !options.query?.trim()) {
-    return primaryResult;
-  }
-
-  const rawQuery = options.query.trim();
-  const patternInfo = detectPatternFromQuery(rawQuery);
-  if (patternInfo.pattern && !patternInfo.cleanedQuery) {
-    // Pure pattern query (e.g. "6-digit"), do not attempt keyword relaxation
-    return primaryResult;
-  }
-
-  const effectiveQuery = patternInfo.cleanedQuery || rawQuery;
-  const variations = generateRelaxedQueries(effectiveQuery);
-
-  for (const relaxedQuery of variations) {
-    try {
-      const relaxedResult = await searchDiscordMessages(
-        {
-          ...options,
-          query: relaxedQuery,
-        },
-        retriesRemaining
-      );
-
-      if (relaxedResult.messages && relaxedResult.messages.length > 0) {
-        return {
-          ...relaxedResult,
-          relaxedQueryUsed: relaxedQuery,
-          originalQuery: rawQuery,
-        };
-      }
-    } catch (err) {
-      console.warn(`[VencordAI] Relaxed search failed for "${relaxedQuery}":`, err);
-    }
-  }
-
-  return primaryResult;
-}
-

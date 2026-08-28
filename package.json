@@ -6,10 +6,10 @@
   "scripts": {
     "build": "tsc --project tsconfig.dev.json --noEmit",
     "typecheck": "tsc --project tsconfig.dev.json --noEmit",
-    "test": "npx tsx --tsconfig tsconfig.dev.json test/scope.test.ts && npx tsx --tsconfig tsconfig.dev.json test/search.test.ts",
-    "sync": "rsync -av --exclude=node_modules --exclude=.git ./ /Users/raymond/Documents/Vencord/src/userplugins/vencord-ai/",
-    "build:vencord": "pnpm sync && pnpm --dir /Users/raymond/Documents/Vencord build",
-    "inject": "pnpm sync && pnpm --dir /Users/raymond/Documents/Vencord build && pnpm --dir /Users/raymond/Documents/Vencord inject"
+    "test": "tsx --tsconfig tsconfig.dev.json test/run.ts",
+    "sync": "rsync -av --exclude=node_modules --exclude=.git --exclude=graphify-out --exclude=AGENTS.md ./ /Users/raymond/Documents/Vencord/src/userplugins/vencord-ai/",
+    "build:vencord": "pnpm run sync && pnpm --dir /Users/raymond/Documents/Vencord build",
+    "inject": "pnpm run sync && pnpm --dir /Users/raymond/Documents/Vencord build && pnpm --dir /Users/raymond/Documents/Vencord inject"
   },
   "keywords": [
     "vencord",
@@ -24,8 +24,10 @@
   "author": "Raymond",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
+    "@types/node": "^26.4.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.4.5"
   },
   "peerDependencies": {

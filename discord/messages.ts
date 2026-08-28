@@ -16,6 +16,8 @@ export interface LocalMessageFilter {
   beforeDate?: string | Date;
   afterDate?: string | Date;
   duringDate?: string | Date;
+  pinned?: boolean;
+  mentions?: string;
 }
 
 /**
@@ -168,6 +170,12 @@ export function filterMessagesLocally(
 
   // Prepare pattern regex if present
   const patternRegex = compileRegexSafely(filter.pattern);
+  const dateTime = (value: string | Date): number => {
+    const normalized = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? `${value}T00:00:00`
+      : value;
+    return new Date(normalized).getTime();
+  };
   const scoredList: { msg: DiscordMessage; score: number }[] = [];
 
   for (const msg of messages) {
@@ -180,17 +188,23 @@ export function filterMessagesLocally(
 
     // Filter by date range
     if (filter.duringDate) {
-      const targetDate = new Date(filter.duringDate).toISOString().slice(0, 10);
-      const msgDate = new Date(msg.timestamp).toISOString().slice(0, 10);
-      if (targetDate !== msgDate) continue;
+      const rawDate = filter.duringDate;
+      const target = typeof rawDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+        ? rawDate
+        : new Date(rawDate).toLocaleDateString('en-CA');
+      const msgDate = new Date(msg.timestamp).toLocaleDateString('en-CA');
+      if (target !== msgDate) continue;
     }
+
+    if (filter.pinned !== undefined && Boolean(msg.pinned) !== filter.pinned) continue;
+    if (filter.mentions && !msg.mentions?.some((user) => user.id === filter.mentions)) continue;
     if (filter.afterDate) {
-      const afterTime = new Date(filter.afterDate).getTime();
+      const afterTime = dateTime(filter.afterDate);
       const msgTime = new Date(msg.timestamp).getTime();
       if (msgTime < afterTime) continue;
     }
     if (filter.beforeDate) {
-      const beforeTime = new Date(filter.beforeDate).getTime();
+      const beforeTime = dateTime(filter.beforeDate);
       const msgTime = new Date(msg.timestamp).getTime();
       if (msgTime > beforeTime) continue;
     }
@@ -285,7 +299,7 @@ export function filterMessagesLocally(
 /**
  * Helper to fetch messages from Discord API using RestAPI with fetch fallback
  */
-async function fetchDiscordMessagesApi(
+export async function fetchDiscordMessagesApi(
   channelId: string,
   queryObj: Record<string, string>
 ): Promise<DiscordMessage[]> {
@@ -346,13 +360,23 @@ export async function fetchSurroundingMessages(
  */
 export async function fetchRecentMessages(
   channelId: string,
-  limit: number = 50
+  limit: number = 50,
+  beforeMessageId?: string,
 ): Promise<DiscordMessage[]> {
-  const loadedFromCache = getLoadedMessages(channelId);
-  const targetLimit = Math.min(Math.max(limit, 1), 100);
-  const fetchedMessages = await fetchDiscordMessagesApi(channelId, {
-    limit: String(targetLimit),
-  });
+  const loadedFromCache = beforeMessageId ? [] : getLoadedMessages(channelId);
+  const targetLimit = Math.min(Math.max(limit, 1), 500);
+  const fetchedMessages: DiscordMessage[] = [];
+  let before = beforeMessageId;
+  while (fetchedMessages.length < targetLimit) {
+    const page = await fetchDiscordMessagesApi(channelId, {
+      limit: String(Math.min(100, targetLimit - fetchedMessages.length)),
+      ...(before ? { before } : {}),
+    });
+    if (page.length === 0) break;
+    fetchedMessages.push(...page);
+    before = page.reduce((oldest, message) => BigInt(message.id) < BigInt(oldest) ? message.id : oldest, page[0].id);
+    if (page.length < 100) break;
+  }
 
   const combinedMap = new Map<string, DiscordMessage>();
   if (Array.isArray(loadedFromCache)) {
@@ -362,85 +386,14 @@ export async function fetchRecentMessages(
     fetchedMessages.forEach((m) => m?.id && combinedMap.set(m.id, m));
   }
 
-  // If user requested limit > 100 and we have an oldest message, fetch additional pages
-  if (limit > 100 && fetchedMessages.length > 0) {
-    try {
-      const oldestId = [...fetchedMessages].sort(
-        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      )[0]?.id;
-      if (oldestId) {
-        const remainingLimit = Math.min(limit - 100, 100);
-        const secondBatch = await fetchDiscordMessagesApi(channelId, {
-          before: oldestId,
-          limit: String(remainingLimit),
-        });
-        if (Array.isArray(secondBatch)) {
-          secondBatch.forEach((m) => m?.id && combinedMap.set(m.id, m));
-        }
-      }
-    } catch {}
-  }
-
   const allMessages = Array.from(combinedMap.values());
   if (allMessages.length > 0) {
     return allMessages
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .slice(-limit);
+      .slice(-targetLimit);
   }
 
-  return Array.isArray(loadedFromCache) ? loadedFromCache.slice(-limit) : [];
-}
-
-/**
- * Formats a Discord message into a structured, readable string for the LLM
- */
-export function formatMessageForLLM(msg: DiscordMessage, channelName?: string): string {
-  const author = msg.author?.globalName || msg.author?.username || 'Unknown';
-  const authorId = msg.author?.id || '';
-  const date = new Date(msg.timestamp).toISOString().replace('T', ' ').slice(0, 19);
-  const chInfo = channelName ? ` [#${channelName}]` : '';
-
-  let text = `[${date}]${chInfo} ${author} (${authorId}) [ID:${msg.id}]: ${msg.content || ''}`;
-
-  if (msg.attachments && msg.attachments.length > 0) {
-    const attachmentSummaries = msg.attachments.map(
-      (a) => `[Attachment: ${a.filename} (${a.content_type || 'file'}) - ${a.url}]`
-    );
-    text += `\n  ${attachmentSummaries.join('\n  ')}`;
-  }
-
-  if (msg.embeds && msg.embeds.length > 0) {
-    const embedSummaries = msg.embeds
-      .filter((e) => e.title || e.description || e.url)
-      .map((e) => `[Embed: "${e.title || ''}" - ${e.description || e.url || ''}]`);
-    if (embedSummaries.length > 0) {
-      text += `\n  ${embedSummaries.join('\n  ')}`;
-    }
-  }
-
-  return text;
-}
-
-/**
- * Formats a Discord message for LLM and annotates any extracted pattern values
- */
-export function formatMessageWithPattern(
-  msg: DiscordMessage,
-  channelName?: string,
-  pattern?: string | RegExp
-): { formatted: string; matchedValues: string[] } {
-  let formatted = formatMessageForLLM(msg, channelName);
-  let matchedValues: string[] = [];
-
-  if (pattern) {
-    const fullText = `${msg.content || ''} ${msg.attachments?.map((a) => a.filename).join(' ') || ''} ${msg.embeds?.map((e) => `${e.title || ''} ${e.description || ''}`).join(' ') || ''}`;
-    matchedValues = extractPatternMatches(fullText, pattern);
-    if (matchedValues.length > 0) {
-      formatted += `\n  [Matched Pattern Value(s): ${matchedValues.map((v) => `"${v}"`).join(', ')}]`;
-    }
-  }
-
-  return { formatted, matchedValues };
+  return Array.isArray(loadedFromCache) ? loadedFromCache.slice(-targetLimit) : [];
 }
 
 /**
@@ -450,7 +403,10 @@ export async function fetchImageAsBase64(imageUrl: string): Promise<string> {
   try {
     const response = await fetch(imageUrl);
     if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+    const declaredSize = Number(response.headers.get('Content-Length') || 0);
+    if (declaredSize > 10 * 1024 * 1024) throw new Error('Image exceeds the 10 MB inspection limit.');
     const blob = await response.blob();
+    if (blob.size > 10 * 1024 * 1024) throw new Error('Image exceeds the 10 MB inspection limit.');
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);

@@ -63,6 +63,13 @@ export interface DiscordMessage {
   attachments: DiscordAttachment[];
   embeds: DiscordEmbed[];
   mentions: DiscordUser[];
+  pinned?: boolean;
+  type?: number;
+  message_reference?: { channel_id?: string; message_id?: string; guild_id?: string };
+  referenced_message?: DiscordMessage | null;
+  reactions?: Array<{ count: number; me?: boolean; emoji: { id?: string | null; name?: string | null } }>;
+  poll?: { question?: { text?: string }; answers?: Array<{ answer_id: number; poll_media?: { text?: string } }>; results?: unknown };
+  thread?: DiscordChannel;
   hit?: boolean;
 }
 
@@ -74,6 +81,13 @@ export interface DiscordChannel {
   guild_id?: string;
   recipients?: string[];
   ownerId?: string;
+  parent_id?: string | null;
+  last_message_id?: string | null;
+  message_count?: number;
+  total_message_sent?: number;
+  thread_metadata?: { archived?: boolean; archive_timestamp?: string; locked?: boolean; auto_archive_duration?: number };
+  applied_tags?: string[];
+  available_tags?: Array<{ id: string; name: string; moderated?: boolean; emoji_id?: string | null; emoji_name?: string | null }>;
   isDM?: () => boolean;
   isGroupDM?: () => boolean;
   isGuildText?: () => boolean;
@@ -119,7 +133,9 @@ export interface ToolDefinition {
       type: 'object';
       properties: Record<string, any>;
       required?: string[];
+      additionalProperties?: boolean;
     };
+    strict?: boolean;
   };
 }
 
@@ -133,11 +149,80 @@ export interface LLMToolCall {
 }
 
 export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | null;
+  role: 'developer' | 'system' | 'user' | 'assistant' | 'tool';
+  content: any;
   name?: string;
   tool_call_id?: string;
   tool_calls?: LLMToolCall[];
+}
+
+export interface ProviderCapabilities {
+  strictSchemas: boolean;
+  streamingTools: boolean;
+  parallelToolCalls: boolean;
+  developerMessages: boolean;
+  vision: boolean;
+}
+
+export interface CompletionRequest {
+  messages: LLMMessage[];
+  tools?: ToolDefinition[];
+  toolChoice?: 'auto' | 'none';
+  temperature?: number;
+  maxTokens?: number;
+  stream?: boolean;
+}
+
+export interface CompletionResult {
+  content: string;
+  toolCalls?: LLMToolCall[];
+  finishReason?: string;
+}
+
+export interface ToolExecutionResult<TData = unknown> {
+  ok: boolean;
+  code: string;
+  summary: string;
+  untrustedData?: boolean;
+  data?: TData;
+  citations?: CitationItem[];
+  scope?: { channelIds: string[]; guildId?: string };
+  pagination?: { nextOffset?: number; nextBeforeMessageId?: string; nextCursor?: string };
+  truncation?: { truncated: boolean; returned: number; available?: number };
+}
+
+export interface RegisteredTool<TArgs extends Record<string, unknown>, TData = unknown> {
+  definition: ToolDefinition;
+  parseArgs: (value: unknown) => TArgs;
+  isAvailable: (context: CurrentScopeContext, settings: PluginSettings) => boolean;
+  timeoutMs: number;
+  readOnly: true;
+  kind: 'local' | 'discord';
+  execute: (args: TArgs, context: ToolExecutionContext) => Promise<ToolExecutionResult<TData>>;
+}
+
+export interface ToolExecutionContext {
+  scope: CurrentScopeContext;
+  settings: PluginSettings;
+  signal?: AbortSignal;
+  addCitation: (message: DiscordMessage, channelName?: string) => CitationItem;
+  analyzeImage: (url: string, question: string, signal?: AbortSignal) => Promise<string>;
+}
+
+export interface AgentRunBudget {
+  maxModelTurns: number;
+  maxToolCalls: number;
+  maxElapsedMs: number;
+  maxReturnedRecords: number;
+  maxEstimatedInputTokens: number;
+  finalizationCalls: number;
+}
+
+export interface AssistantLaunchRequest {
+  targetChannelId: string;
+  targetMessageId?: string;
+  mode: 'message' | 'thread';
+  initialPrompt: string;
 }
 
 export interface CitationItem {
@@ -193,5 +278,6 @@ export interface CurrentScopeContext {
   currentUser?: DiscordUser;
   otherUser?: DiscordUser;
   mutualGroupDMs?: { id: string; name: string; recipientNames: string[] }[];
+  explicitMutualGroupDMIds?: string[];
   accessibleGuildChannels?: { id: string; name: string; topic?: string }[];
 }
