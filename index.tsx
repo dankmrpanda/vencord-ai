@@ -491,6 +491,7 @@ const messageContextMenuPatch: NavContextMenuPatchCallback = (children, props: {
 const threadContextMenuPatch: NavContextMenuPatchCallback = (children, props: { channel?: DiscordChannel }) => {
   const channel = props.channel;
   const scope = getCurrentScopeContext();
+  const isForum = channel?.type === ChannelType.GUILD_FORUM;
   const supported = channel?.isThread?.()
     || channel?.type === ChannelType.PUBLIC_THREAD
     || channel?.type === ChannelType.PRIVATE_THREAD
@@ -500,11 +501,13 @@ const threadContextMenuPatch: NavContextMenuPatchCallback = (children, props: { 
   children.push(
     <Menu.MenuItem
       id="vencord-ai-summarize-thread"
-      label="Summarize this thread"
+      label={isForum ? 'Summarize this forum' : 'Summarize this thread'}
       action={() => launchAssistant({
         targetChannelId: channel.id,
         mode: 'thread',
-        initialPrompt: 'Summarize this thread, including decisions, open questions, and cited key messages.',
+        initialPrompt: isForum
+          ? 'Summarize the relevant posts in this forum, including decisions, open questions, and cited key messages.'
+          : 'Summarize this thread, including decisions, open questions, and cited key messages.',
       })}
     />,
   );

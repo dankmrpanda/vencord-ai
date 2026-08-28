@@ -282,7 +282,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
     try {
       const activeLaunchRequest = launchRequest;
-      onLaunchConsumed?.();
+      if (activeLaunchRequest) onLaunchConsumed?.();
       const result = await agentRef.current.run(
         promptToSend,
         session.messages,

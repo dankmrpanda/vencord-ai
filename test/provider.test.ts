@@ -12,9 +12,9 @@ presets.forEach((preset) => {
 assert(!getProviderCapabilities('unknown').strictSchemas, 'Unknown providers must use conservative capabilities');
 
 const frames = [
-  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"search_","arguments":"{\\"query\\":\\"alpha"}}]}}]}\n',
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","function":{"name":"list_threads","arguments":"{}"}},{"index":0,"id":"call_1","function":{"name":"search_","arguments":"{\\"query\\":\\"alpha"}}]}}]}\n',
   '\n',
-  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"messages","arguments":" beta\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+  'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"search_messages","arguments":" beta\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
   'data: [DONE]\n\n',
 ];
 const encoder = new TextEncoder();
@@ -30,9 +30,11 @@ const fixtureTool: ToolDefinition = {
   function: { name: 'fixture', description: 'fixture', parameters: { type: 'object', properties: {} } },
 };
 
-consumeChatCompletionStream(stream).then(async (result) => {
-  assert(result.toolCalls?.[0]?.function.name === 'search_messages', 'Fragmented tool names must be reassembled');
+export async function runProviderTests(): Promise<void> {
+  const result = await consumeChatCompletionStream(stream);
+  assert(result.toolCalls?.[0]?.function.name === 'search_messages', 'Repeated full tool names must not duplicate accumulated fragments');
   assert(result.toolCalls?.[0]?.function.arguments === '{"query":"alpha beta"}', 'Fragmented tool arguments must be reassembled');
+  assert(result.toolCalls?.[1]?.function.name === 'list_threads', 'Out-of-order tool deltas must materialize in numeric index order');
   const originalFetch = globalThis.fetch;
   const payloads: Array<{ url: string; payload: any; preset: ProviderPreset }> = [];
   try {
@@ -73,7 +75,4 @@ consumeChatCompletionStream(stream).then(async (result) => {
   assert(payloads.find((item) => item.preset === 'custom')?.payload.tools[0].function.strict === undefined, 'Unknown/custom strict schemas should remain off');
   assert(payloads.find((item) => item.preset === 'custom')?.payload.messages[0].role === 'system', 'Unsupported developer messages should fall back to system');
   console.log('✅ Provider capability, contract, and fragmented-stream fixtures passed');
-}).catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+}
