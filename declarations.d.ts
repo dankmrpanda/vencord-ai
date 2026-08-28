@@ -45,6 +45,10 @@ declare module '@utils/constants' {
   export const Devs: Record<string, { name: string; id?: bigint | string }>;
 }
 
+declare module '@api/ContextMenu' {
+  export type NavContextMenuPatchCallback = (children: Array<React.ReactElement<any> | null>, ...args: any[]) => void;
+}
+
 declare module '@webpack' {
   export function find(filter: (mod: any) => boolean): any;
   export function findByProps(...props: string[]): any;
@@ -80,4 +84,7 @@ declare module '@webpack/common' {
   export const FluxDispatcher: any;
   export const NavigationRouter: any;
   export const RestAPI: any;
+  export const Menu: {
+    MenuItem: ReactTypes.ComponentType<any>;
+  };
 }

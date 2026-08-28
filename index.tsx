@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { NavContextMenuPatchCallback } from '@api/ContextMenu';
 import definePlugin from '@utils/types';
-import { createRoot as vcCreateRoot, React } from '@webpack/common';
+import { createRoot as vcCreateRoot, Menu, React } from '@webpack/common';
+import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from './assistantLaunch';
 import { SidebarPanel } from './components/SidebarPanel';
+import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
 import { find, findByCode, findByProps } from './discord/stores';
 import {
   DEFAULT_SETTINGS,
@@ -15,7 +18,7 @@ import {
   settings,
   SettingsPanel,
 } from './settings';
-import { PluginSettings } from './types';
+import { AssistantLaunchRequest, ChannelType, DiscordChannel, DiscordMessage, PluginSettings } from './types';
 
 let rootContainer: HTMLDivElement | null = null;
 let reactRoot: any = null;
@@ -361,6 +364,11 @@ function renderSidebar() {
           renderSidebar();
         }}
         logs={pluginLogs}
+        launchRequest={getAssistantLaunchRequest()}
+        onLaunchConsumed={() => {
+          clearAssistantLaunchRequest();
+          renderSidebar();
+        }}
       />
     );
     const ErrorBoundary = getPluginErrorBoundary();
@@ -454,6 +462,56 @@ export function toggleAIAssistant() {
   isSidebarOpen = !isSidebarOpen;
   renderSidebar();
 }
+
+function launchAssistant(request: AssistantLaunchRequest): void {
+  const scope = getCurrentScopeContext();
+  if (!scope || !setAssistantLaunchRequest(request, scope)) return;
+  isSidebarOpen = true;
+  renderSidebar();
+}
+
+const messageContextMenuPatch: NavContextMenuPatchCallback = (children, props: { message?: DiscordMessage }) => {
+  const message = props.message;
+  const scope = getCurrentScopeContext();
+  if (!message || !scope || !isChannelAllowedInScope(message.channel_id, scope)) return;
+  children.push(
+    <Menu.MenuItem
+      id="vencord-ai-ask-message"
+      label="Ask AI about this message"
+      action={() => launchAssistant({
+        targetChannelId: message.channel_id,
+        targetMessageId: message.id,
+        mode: 'message',
+        initialPrompt: 'Explain this message and its surrounding context.',
+      })}
+    />,
+  );
+};
+
+const threadContextMenuPatch: NavContextMenuPatchCallback = (children, props: { channel?: DiscordChannel }) => {
+  const channel = props.channel;
+  const scope = getCurrentScopeContext();
+  const isForum = channel?.type === ChannelType.GUILD_FORUM;
+  const supported = channel?.isThread?.()
+    || channel?.type === ChannelType.PUBLIC_THREAD
+    || channel?.type === ChannelType.PRIVATE_THREAD
+    || channel?.type === ChannelType.ANNOUNCEMENT_THREAD
+    || channel?.type === ChannelType.GUILD_FORUM;
+  if (!channel || !supported || !scope || !isChannelAllowedInScope(channel.id, scope)) return;
+  children.push(
+    <Menu.MenuItem
+      id="vencord-ai-summarize-thread"
+      label={isForum ? 'Summarize this forum' : 'Summarize this thread'}
+      action={() => launchAssistant({
+        targetChannelId: channel.id,
+        mode: 'thread',
+        initialPrompt: isForum
+          ? 'Summarize the relevant posts in this forum, including decisions, open questions, and cited key messages.'
+          : 'Summarize this thread, including decisions, open questions, and cited key messages.',
+      })}
+    />,
+  );
+};
 
 if (typeof window !== 'undefined') {
   (window as any).toggleVencordAIAssistant = toggleAIAssistant;
@@ -557,6 +615,7 @@ export function stopPlugin() {
     rootContainer?.remove();
     rootContainer = null;
     isSidebarOpen = false;
+    clearAssistantLaunchRequest();
 
     console.log('[VencordAI] AI Assistant Plugin stopped.');
   } catch (err) {
@@ -580,6 +639,11 @@ export default definePlugin({
       }}
     />
   ),
+  contextMenus: {
+    message: messageContextMenuPatch,
+    'channel-context': threadContextMenuPatch,
+    'thread-context': threadContextMenuPatch,
+  },
   start: startPlugin,
   stop: stopPlugin,
 });
