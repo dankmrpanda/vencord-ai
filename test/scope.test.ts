@@ -4,11 +4,15 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { isChannelAllowedInScope } from '../discord/scope';
+import { canReadChannel, isChannelAllowedInScope, restrictScopeForUserPrompt } from '../discord/scope';
 import { ChannelType, CurrentScopeContext, DiscordChannel, DiscordMessage } from '../types';
+import { assert } from './assert';
 
 function runTests() {
   console.log('--- Running Vencord AI Assistant Test Suite ---');
+
+  assert(!canReadChannel(null, { id: 'x', type: ChannelType.GUILD_TEXT }), 'Missing permission discovery must fail closed');
+  assert(!canReadChannel({ can: () => { throw new Error('unavailable'); } }, { id: 'x', type: ChannelType.GUILD_TEXT }), 'Permission errors must fail closed');
 
   // Test 1: Guild context boundary
   const guildContext: CurrentScopeContext = {
@@ -27,15 +31,15 @@ function runTests() {
     ],
   };
 
-  console.assert(
+  assert(
     isChannelAllowedInScope('1001', guildContext) === true,
     'Active guild channel should be allowed'
   );
-  console.assert(
+  assert(
     isChannelAllowedInScope('1002', guildContext) === true,
     'Accessible sister guild channel should be allowed'
   );
-  console.assert(
+  assert(
     isChannelAllowedInScope('9999', guildContext) === false,
     'Inaccessible / external channel should be blocked'
   );
@@ -55,19 +59,28 @@ function runTests() {
     ],
   };
 
-  console.assert(
+  assert(
     isChannelAllowedInScope('dm_alice', dmContext) === true,
     'Active DM should be allowed'
   );
-  console.assert(
-    isChannelAllowedInScope('gdm_project', dmContext) === true,
-    'Mutual group DM with Alice should be allowed'
+  assert(
+    isChannelAllowedInScope('gdm_project', dmContext) === false,
+    'Mutual group DM must be blocked until explicitly requested'
   );
-  console.assert(
+  const explicitDmContext = restrictScopeForUserPrompt(dmContext, 'Search the Project Alpha group DM for the launch notes.');
+  assert(
+    isChannelAllowedInScope('gdm_project', explicitDmContext) === true,
+    'A specifically named mutual group DM should be allowed for this run'
+  );
+  assert(
+    isChannelAllowedInScope('gdm_gaming', explicitDmContext) === false,
+    'Other mutual group DMs must remain blocked'
+  );
+  assert(
     isChannelAllowedInScope('dm_bob', dmContext) === false,
     'Unrelated DM with Bob must be blocked'
   );
-  console.assert(
+  assert(
     isChannelAllowedInScope('gdm_unrelated', dmContext) === false,
     'Non-mutual group DM must be blocked'
   );
@@ -97,18 +110,18 @@ function runTests() {
     .map((item) => item?.channel ?? item)
     .filter((ch): ch is DiscordChannel => Boolean(ch && ch.id));
 
-  console.assert(extractedChannels.length === 3, 'Should extract all 3 channels from category buckets');
-  console.assert(extractedChannels[0].name === 'general', 'First channel should be general');
-  console.assert(extractedChannels[2].name === 'dev', 'Third channel should be dev');
+  assert(extractedChannels.length === 3, 'Should extract all 3 channels from category buckets');
+  assert(extractedChannels[0].name === 'general', 'First channel should be general');
+  assert(extractedChannels[2].name === 'dev', 'Third channel should be dev');
 
   // Test 4: Discord URL regex matching for message jump links
   const testDiscordWebUrl = 'https://discord.com/channels/123456/789012/345678';
   const matchWeb = testDiscordWebUrl.match(/discord\.com\/channels\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
-  console.assert(matchWeb !== null && matchWeb[1] === '123456' && matchWeb[2] === '789012' && matchWeb[3] === '345678', 'Should extract guild, channel, message IDs from web URL');
+  assert(matchWeb !== null && matchWeb[1] === '123456' && matchWeb[2] === '789012' && matchWeb[3] === '345678', 'Should extract guild, channel, message IDs from web URL');
 
   const testDiscordUri = 'discord://message/789012/345678';
   const matchUri = testDiscordUri.match(/discord:\/\/message\/([^\/]+)\/([^\/]+)/);
-  console.assert(matchUri !== null && matchUri[1] === '789012' && matchUri[2] === '345678', 'Should extract channel and message IDs from custom URI');
+  assert(matchUri !== null && matchUri[1] === '789012' && matchUri[2] === '345678', 'Should extract channel and message IDs from custom URI');
 
   // Test 5: Citation guildId resolution logic
   const mockMsg: DiscordMessage = {
@@ -123,7 +136,7 @@ function runTests() {
   };
 
   const resolvedGuildId = mockMsg.guild_id || guildContext.guildId;
-  console.assert(resolvedGuildId === 'guild_999', 'Resolved guildId should fall back to active guildContext');
+  assert(resolvedGuildId === 'guild_999', 'Resolved guildId should fall back to active guildContext');
 
   console.log('✅ All Tests Passed Successfully!');
 }

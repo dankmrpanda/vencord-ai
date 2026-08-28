@@ -53,7 +53,21 @@ const TEXT_CHANNEL_TYPES = new Set([
   ChannelType.PUBLIC_THREAD,
   ChannelType.PRIVATE_THREAD,
   ChannelType.GUILD_FORUM,
+  ChannelType.GUILD_MEDIA,
 ]);
+
+export function canReadChannel(permissionStore: any, channel: DiscordChannel): boolean {
+  if (typeof permissionStore?.can !== 'function') return false;
+  try {
+    return Boolean(permissionStore.can(1024n, channel));
+  } catch {
+    try {
+      return Boolean(permissionStore.can(1024, channel));
+    } catch {
+      return false;
+    }
+  }
+}
 
 /**
  * Gets accessible text channels for a guild
@@ -64,7 +78,7 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
   try {
     const channelStore = getChannelStore();
     const permStore = getPermissionStore();
-    if (!channelStore) return [];
+    if (!channelStore || typeof permStore?.can !== 'function') return [];
 
     const rawChannels = channelStore.getChannels(guildId);
     if (!rawChannels) return [];
@@ -76,21 +90,19 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
       .map((entry) => entry?.channel ?? entry)
       .filter((ch: DiscordChannel): ch is DiscordChannel => {
         if (!ch?.id || !TEXT_CHANNEL_TYPES.has(ch.type)) return false;
-        if (!permStore?.can) return true;
-        try {
-          return Boolean(permStore.can(1024n, ch));
-        } catch {
-          try {
-            return Boolean(permStore.can(1024, ch));
-          } catch {
-            return true;
-          }
-        }
+        return canReadChannel(permStore, ch);
       });
   } catch (err) {
     console.error(`[VencordAI] Error getting channels for guild ${guildId}:`, err);
     return [];
   }
+}
+
+export function filterMessagesToScope<T extends { channel_id: string }>(
+  messages: T[],
+  context: CurrentScopeContext,
+): T[] {
+  return messages.filter((message) => isChannelAllowedInScope(message.channel_id, context));
 }
 
 /**
@@ -164,7 +176,31 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
     currentUser,
     otherUser,
     mutualGroupDMs,
+    explicitMutualGroupDMIds: [],
     accessibleGuildChannels,
+  };
+}
+
+function normalizedLabel(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+export function restrictScopeForUserPrompt(
+  context: CurrentScopeContext,
+  userPrompt: string,
+  launchTargetChannelId?: string,
+): CurrentScopeContext {
+  if (!context.isDM || !context.mutualGroupDMs?.length) return context;
+  const normalizedPrompt = normalizedLabel(userPrompt);
+  const explicitlyRequested = context.mutualGroupDMs.filter((group) => {
+    if (launchTargetChannelId === group.id || userPrompt.includes(group.id)) return true;
+    const groupName = normalizedLabel(group.name);
+    return groupName.length >= 3 && normalizedPrompt.includes(groupName);
+  });
+  return {
+    ...context,
+    mutualGroupDMs: explicitlyRequested,
+    explicitMutualGroupDMIds: explicitlyRequested.map((group) => group.id),
   };
 }
 
@@ -185,8 +221,10 @@ export function isChannelAllowedInScope(
   }
 
   if (context.isDM) {
-    // Must be a mutual group DM
-    return context.mutualGroupDMs?.some((g) => g.id === targetChannelId) ?? false;
+    return Boolean(
+      context.explicitMutualGroupDMIds?.includes(targetChannelId)
+      && context.mutualGroupDMs?.some((group) => group.id === targetChannelId),
+    );
   }
 
   return false;
