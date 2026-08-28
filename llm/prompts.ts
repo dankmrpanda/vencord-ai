@@ -21,6 +21,9 @@ Your primary role is to answer questions about past messages, conversations, fil
 4. \`fetch_surrounding_messages\`: Given a message ID, get the conversational turns before and after it to understand full context.
 5. \`fetch_recent_messages\`: Get the latest messages in the current channel with optional pattern filtering.
 6. \`inspect_image\`: Inspect an image attachment to analyze its visual content.
+7. \`get_message_details\`: Read one message plus its bounded reply/reference chain and metadata.
+8. \`list_channel_pins\`: Read pinned messages in a scoped channel.
+9. \`list_threads\`: List scoped active or archived threads and forum posts.
 
 ### Search & Query Strategy (CRITICAL):
 - **Anchor Keywords Over Full Sentences**:
@@ -32,9 +35,8 @@ Your primary role is to answer questions about past messages, conversations, fil
   - NEVER search literal pattern descriptions in \`query\` (e.g. NEVER search \`query: "6-digit"\`, \`query: "numbers"\`, \`query: "4-digit pin"\`, \`query: "codes"\`, or \`query: "messages"\`). A message like "Your code is 582910" does NOT contain the literal word "6-digit"!
   - Instead, when searching for numbers, verification codes, OTPs, PINs, phone numbers, emails, addresses, hashes, or general patterns (e.g. "find me all the 6 digit numbers in this dm"):
     1. Pass the regular expression in \`pattern\` (e.g. \`pattern: "\\\\b\\\\d{6}\\\\b"\` for 6-digit numbers, \`pattern: "\\\\b\\\\d{4}\\\\b"\` for 4-digit PINs, \`pattern: "\\\\b\\\\d{4,8}\\\\b"\` for OTP codes, \`pattern: "\\\\b\\\\d+\\\\b"\` for any numbers).
-    2. Set \`extract_pattern: true\` to have the tool automatically highlight and extract all matching values.
-    3. Leave \`query\` empty/omitted unless there is a specific contextual anchor keyword (e.g. "invoice" or "login").
-    4. The search tool will automatically scan the channel's message history and extract all matching numbers with jump links.
+    2. Leave \`query\` empty/omitted unless there is a specific contextual anchor keyword (e.g. "invoice" or "login").
+    3. The search tool will scan bounded channel history and return matching messages for evidence-backed extraction.
 - **Media & Attachment Filters ("find all links", "find images", "find files")**:
   - If the user asks for links, photos, files, or embeds, use the \`has\` parameter (\`has: "link"\`, \`has: "image"\`, \`has: "file"\`). DO NOT search \`query: "links"\` or \`query: "files"\`.
 - **Author Filtering ("I said", "my message", "what did [user] say")**:
@@ -106,10 +108,6 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           pattern: {
             type: 'string',
             description: 'Regular expression pattern to filter messages and match content (e.g. "\\b\\d{6}\\b" for 6-digit numbers, "\\b\\d{4,8}\\b" for PINs/OTPs, "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b" for emails, "\\b\\d+\\b" for any numbers). Always use this when the user asks for numbers, codes, pins, or specific formats.',
-          },
-          extract_pattern: {
-            type: 'boolean',
-            description: 'Set to true to explicitly extract and highlight all matching pattern values (e.g. list all found 6-digit numbers) from the messages in the result.',
           },
           limit: {
             type: 'number',

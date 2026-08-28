@@ -29,8 +29,7 @@ export class AgentBudgetTracker {
   private calls = new Set<string>();
   constructor(readonly limits: AgentRunBudget = DEFAULT_AGENT_RUN_BUDGET) {}
   canModelTurn = (): boolean => this.modelTurns < this.limits.maxModelTurns
-      && this.estimatedInputTokens <= this.limits.maxEstimatedInputTokens
-      && !this.expired();
+    && this.estimatedInputTokens <= this.limits.maxEstimatedInputTokens && !this.expired();
   canToolCall = (): boolean => this.toolCalls < this.limits.maxToolCalls && !this.expired();
   expired = (): boolean => Date.now() - this.startedAt >= this.limits.maxElapsedMs;
   markCall(name: string, args: Record<string, unknown>): boolean {

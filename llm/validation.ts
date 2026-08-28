@@ -4,11 +4,9 @@
  */
 
 import { ToolDefinition } from '../types';
-
 export class ToolArgumentError extends Error {
   name = 'ToolArgumentError';
 }
-
 function validateValue(name: string, value: unknown, schema: any): void {
   const valid = schema.type === 'string'
     ? typeof value === 'string'
@@ -22,7 +20,6 @@ function validateValue(name: string, value: unknown, schema: any): void {
     throw new ToolArgumentError(`Argument "${name}" must be one of: ${schema.enum.join(', ')}.`);
   }
 }
-
 export function validateToolArguments(definition: ToolDefinition, value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ToolArgumentError('Tool arguments must be a JSON object.');
@@ -41,7 +38,6 @@ export function validateToolArguments(definition: ToolDefinition, value: unknown
   }
   return args;
 }
-
 export function parseToolArguments(definition: ToolDefinition, raw: string): Record<string, unknown> {
   try {
     return validateToolArguments(definition, JSON.parse(raw || '{}'));

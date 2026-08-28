@@ -184,7 +184,6 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
 function normalizedLabel(value: string): string {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
-
 export function restrictScopeForUserPrompt(
   context: CurrentScopeContext,
   userPrompt: string,
@@ -197,11 +196,7 @@ export function restrictScopeForUserPrompt(
     const groupName = normalizedLabel(group.name);
     return groupName.length >= 3 && normalizedPrompt.includes(groupName);
   });
-  return {
-    ...context,
-    mutualGroupDMs: explicitlyRequested,
-    explicitMutualGroupDMIds: explicitlyRequested.map((group) => group.id),
-  };
+  return { ...context, mutualGroupDMs: explicitlyRequested, explicitMutualGroupDMIds: explicitlyRequested.map((group) => group.id) };
 }
 
 /**
