@@ -52,10 +52,8 @@ export function buildConversationContext(
   const older = history.slice(0, Math.max(0, history.length - selected.length));
   const messages: LLMMessage[] = [{ role: 'developer', content: systemContent }];
   if (older.length) {
-    messages.push({
-      role: 'system',
-      content: `[Deterministic summary of older session history]\n${summarizeHistory(older).slice(0, 3000)}`,
-    });
+    messages.push({ role: 'system',
+      content: `[Deterministic summary of older session history]\n${summarizeHistory(older).slice(0, 3000)}` });
   }
   selected.forEach((message) => messages.push({ role: message.role, content: message.content }));
   messages.push({ role: 'user', content: userPrompt });

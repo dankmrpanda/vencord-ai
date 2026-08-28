@@ -4,11 +4,9 @@
  */
 
 import { ProviderCapabilities, ProviderPreset } from '../types';
-
 const CONSERVATIVE: ProviderCapabilities = {
   strictSchemas: false, streamingTools: true, parallelToolCalls: false, developerMessages: false, vision: false,
 };
-
 const PRESETS: Record<ProviderPreset, ProviderCapabilities> = {
   openai: { strictSchemas: true, streamingTools: true, parallelToolCalls: true, developerMessages: true, vision: true },
   openrouter: { ...CONSERVATIVE, vision: true },
@@ -18,6 +16,5 @@ const PRESETS: Record<ProviderPreset, ProviderCapabilities> = {
   lmstudio: { ...CONSERVATIVE },
   custom: { ...CONSERVATIVE },
 };
-
 export const getProviderCapabilities = (preset: ProviderPreset | string): ProviderCapabilities =>
   ({ ...(PRESETS[preset as ProviderPreset] || CONSERVATIVE) });

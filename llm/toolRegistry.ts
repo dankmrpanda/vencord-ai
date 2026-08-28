@@ -89,7 +89,7 @@ const searchMessages = registered('search_messages', 'discord', async (args, con
     guildWide: args.guild_wide as boolean | undefined,
     authorId: args.author_id as string | undefined,
     has: args.has as any,
-    date: (args.date || args.during_date) as string | undefined,
+    date: args.date as string | undefined,
     afterDate: args.after_date as string | undefined,
     beforeDate: args.before_date as string | undefined,
     sortBy: args.sort_by as any,

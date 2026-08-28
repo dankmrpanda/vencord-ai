@@ -62,11 +62,6 @@ export async function runMessageSearch(
   if (channelId && !isChannelAllowedInScope(channelId, scope)) {
     return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted Discord scope.' };
   }
-  if (scope.isDM && request.channelId && request.channelId !== scope.channelId
-    && !scope.mutualGroupDMs?.some((group) => group.id === request.channelId)) {
-    return { ok: false, code: 'dm_scope_denied', summary: 'Only the active DM or an explicitly requested mutual group DM may be searched.' };
-  }
-
   let query = request.query?.trim();
   let pattern = request.pattern?.trim();
   if (query) {
