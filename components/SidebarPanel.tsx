@@ -16,6 +16,7 @@ import {
 } from '../storage/chatHistory';
 import {
   AgentStep,
+  AssistantLaunchRequest,
   AssistantChatMessage,
   ChatSession,
   CitationItem,
@@ -31,6 +32,8 @@ interface SidebarPanelProps {
   onClose: () => void;
   onOpenSettings?: () => void;
   logs?: Array<{ time: string; level: string; message: string }>;
+  launchRequest?: AssistantLaunchRequest | null;
+  onLaunchConsumed?: () => void;
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -52,6 +55,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   onClose,
   onOpenSettings,
   logs = [],
+  launchRequest,
+  onLaunchConsumed,
 }) => {
   const [currentScope, setCurrentScope] = React.useState<CurrentScopeContext | null>(() => {
     try {
@@ -99,6 +104,12 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     agentRef.current?.updateSettings(settings);
   }, [settings]);
 
+  React.useEffect(() => {
+    if (!launchRequest) return;
+    setInputText(launchRequest.initialPrompt);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [launchRequest]);
+
   const loadChannelScopeAndSessions = (channelId: string | null) => {
     try {
       const scope = getCurrentScopeContext();
@@ -135,6 +146,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         try {
           const currentChId = getCurrentChannelId();
           if (currentChId && currentChId !== lastChannelIdRef.current) {
+            onLaunchConsumed?.();
             lastChannelIdRef.current = currentChId;
             loadChannelScopeAndSessions(currentChId);
           }
@@ -163,7 +175,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     } catch (err) {
       console.error('[VencordAI] Error setting up channel change listener:', err);
     }
-  }, []);
+  }, [onLaunchConsumed]);
 
   React.useEffect(() => {
     // Only auto-scroll if the user hasn't explicitly scrolled up to read earlier messages
@@ -269,6 +281,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     };
 
     try {
+      const activeLaunchRequest = launchRequest;
+      onLaunchConsumed?.();
       const result = await agentRef.current.run(
         promptToSend,
         session.messages,
@@ -278,7 +292,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
           onStepUpdated: (step: AgentStep) => updateAssistantMessage((m) => { m.steps = (m.steps || []).map((s) => (s.id === step.id ? step : s)); }),
           onCitationsUpdated: (citations: CitationItem[]) => updateAssistantMessage((m) => { m.citations = citations; }),
         },
-        controller.signal
+        controller.signal,
+        activeLaunchRequest || undefined,
       );
 
       setSession((prev) => {
@@ -304,7 +319,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         return savedSession;
       });
     } catch (err: any) {
-      if (err.message !== 'Agent execution cancelled.') {
+      if (!String(err?.message || '').startsWith('Agent execution cancelled')) {
         setSession((prev) => {
           if (!prev) return prev;
           const msgs = [...prev.messages];
