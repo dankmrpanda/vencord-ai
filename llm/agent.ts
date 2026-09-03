@@ -107,7 +107,7 @@ export class AIAssistantAgent {
     };
 
     const currentUser = scope.currentUser || getCurrentUser();
-    const mentions = resolvePromptMentions(userPrompt, scope.channelId, scope.guildId);
+    const mentions = resolvePromptMentions(userPrompt, scope, scope.guildId);
     const scopeRuleText = scope.isGuild
       ? scope.scopeMode === 'server'
         ? `searching across all accessible guild channels is permitted.`

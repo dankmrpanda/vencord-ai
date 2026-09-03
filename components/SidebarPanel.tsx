@@ -219,7 +219,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     if (match) {
       const channelId = currentScope?.channelId || getCurrentChannelId() || undefined;
       const guildId = currentScope?.guildId || undefined;
-      const results = searchMentionableUsers(match[1], channelId, guildId);
+      const results = searchMentionableUsers(match[1], currentScope || channelId, guildId);
       if (results.length > 0) {
         setMentionSuggestions(results);
         setMentionSelectedIndex(0);

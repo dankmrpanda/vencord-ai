@@ -203,6 +203,167 @@ export function runMentionAndScopeTests() {
     'Unrelated DM remains blocked'
   );
 
+  // =========================================================================
+  // 6. Conversation Scope Isolation and Recency Ordering in searchMentionableUsers
+  // =========================================================================
+
+  const mockMessages: Record<string, any[]> = {
+    ch_general_1: [
+      {
+        id: 'msg_1',
+        author: { id: 'usr_alice', username: 'alice', globalName: 'Alice' },
+        timestamp: '2026-01-01T10:00:00Z', // 10:00
+      },
+      {
+        id: 'msg_2',
+        author: { id: 'usr_bob', username: 'bob', globalName: 'Bobby' },
+        timestamp: '2026-01-01T10:05:00Z', // 10:05
+      },
+      {
+        id: 'msg_3',
+        author: { id: 'usr_charlie', username: 'charlie', globalName: 'Charlie' },
+        timestamp: '2026-01-01T10:10:00Z', // 10:10
+      },
+    ],
+    ch_dev_2: [
+      {
+        id: 'msg_4',
+        author: { id: 'usr_dave', username: 'dave', globalName: 'Dave Dev' },
+        timestamp: '2026-01-01T10:15:00Z', // 10:15
+      },
+    ],
+  };
+
+  const mockChannels: Record<string, any> = {
+    ch_general_1: { id: 'ch_general_1', name: 'general', type: ChannelType.GUILD_TEXT, guild_id: 'guild_test' },
+    ch_dev_2: { id: 'ch_dev_2', name: 'dev-chat', type: ChannelType.GUILD_TEXT, guild_id: 'guild_test' },
+    ch_random_3: { id: 'ch_random_3', name: 'random', type: ChannelType.GUILD_TEXT, guild_id: 'guild_test' },
+    dm_bob: { id: 'dm_bob', name: 'Bob', type: ChannelType.DM, recipients: ['usr_bob'] },
+    gdm_project_alpha: {
+      id: 'gdm_project_alpha',
+      name: 'Project Alpha',
+      type: ChannelType.GROUP_DM,
+      recipients: ['usr_bob', 'usr_carol'],
+      rawRecipients: [
+        { id: 'usr_bob', username: 'bob', globalName: 'Bobby' },
+        { id: 'usr_carol', username: 'carol', globalName: 'Carol' },
+      ],
+    },
+  };
+
+  const mockUsers: Record<string, any> = {
+    usr_alice: { id: 'usr_alice', username: 'alice', globalName: 'Alice' },
+    usr_bob: { id: 'usr_bob', username: 'bob', globalName: 'Bobby' },
+    usr_charlie: { id: 'usr_charlie', username: 'charlie', globalName: 'Charlie' },
+    usr_dave: { id: 'usr_dave', username: 'dave', globalName: 'Dave Dev' },
+    usr_carol: { id: 'usr_carol', username: 'carol', globalName: 'Carol' },
+    usr_external_friend: { id: 'usr_external_friend', username: 'friend_guy' },
+    usr_guild_lurker: { id: 'usr_guild_lurker', username: 'lurker' },
+  };
+
+  const mockStores: Record<string, any> = {
+    MessageStore: {
+      getMessages: (channelId: string) => mockMessages[channelId] || [],
+    },
+    ChannelStore: {
+      getChannel: (id: string) => mockChannels[id] || null,
+    },
+    UserStore: {
+      getUser: (id: string) => mockUsers[id] || null,
+      getCurrentUser: () => ({ id: 'usr_me', username: 'current_user' }),
+      getUsers: () => mockUsers,
+    },
+    RelationshipStore: {
+      getFriendIDs: () => ['usr_external_friend'],
+    },
+    GuildMemberStore: {
+      getMembers: () => [{ userId: 'usr_guild_lurker', nick: 'Lurker' }],
+    },
+  };
+
+  (globalThis as any).window = {
+    Vencord: {
+      Webpack: {
+        findStore: (name: string) => mockStores[name] ?? null,
+        findByProps: (...props: string[]) => null,
+      },
+    },
+  };
+
+  // Test 6: In default single channel scope, results are strictly ordered by recent message recency
+  const recencyResults = searchMentionableUsers('', guildScopeDefault);
+  assert(recencyResults.length === 3, `Expected 3 users in general channel, got ${recencyResults.length}`);
+  assert(recencyResults[0].id === 'usr_charlie', `Expected most recent author Charlie first, got ${recencyResults[0].username}`);
+  assert(recencyResults[1].id === 'usr_bob', `Expected second most recent author Bob second, got ${recencyResults[1].username}`);
+  assert(recencyResults[2].id === 'usr_alice', `Expected oldest author Alice third, got ${recencyResults[2].username}`);
+
+  // Test 7: Updating recency when a user sends a newer message
+  mockMessages.ch_general_1.push({
+    id: 'msg_5',
+    author: { id: 'usr_alice', username: 'alice', globalName: 'Alice' },
+    timestamp: '2026-01-01T10:20:00Z', // Alice now at 10:20 (newest!)
+  });
+
+  const updatedRecencyResults = searchMentionableUsers('', guildScopeDefault);
+  assert(updatedRecencyResults[0].id === 'usr_alice', `Alice should now be #1 after newer message, got ${updatedRecencyResults[0].username}`);
+  assert(updatedRecencyResults[1].id === 'usr_charlie', `Charlie should now be #2, got ${updatedRecencyResults[1].username}`);
+  assert(updatedRecencyResults[2].id === 'usr_bob', `Bob should now be #3, got ${updatedRecencyResults[2].username}`);
+
+  // Test 8: Scope boundary isolation - out-of-scope users must NOT appear
+  const idsInScope = updatedRecencyResults.map((u) => u.id);
+  assert(!idsInScope.includes('usr_dave'), 'Dave from sister channel ch_dev_2 must NOT appear in channel-scoped mentions');
+  assert(!idsInScope.includes('usr_external_friend'), 'External friend from RelationshipStore must NOT appear');
+  assert(!idsInScope.includes('usr_guild_lurker'), 'Non-participating guild member must NOT appear');
+
+  // Test 9: Server-wide scope mode includes authors across all accessible server channels
+  const serverScopeResults = searchMentionableUsers('', guildScopeServer);
+  const serverScopeIds = serverScopeResults.map((u) => u.id);
+  assert(serverScopeIds.includes('usr_dave'), 'Dave from ch_dev_2 must appear when scope is server-wide');
+  // Order: Alice (10:20) > Dave (10:15) > Charlie (10:10) > Bob (10:05)
+  assert(serverScopeResults[0].id === 'usr_alice', `Expected Alice (10:20) first in server scope, got ${serverScopeResults[0].username}`);
+  assert(serverScopeResults[1].id === 'usr_dave', `Expected Dave (10:15) second in server scope, got ${serverScopeResults[1].username}`);
+  assert(serverScopeResults[2].id === 'usr_charlie', `Expected Charlie (10:10) third in server scope, got ${serverScopeResults[2].username}`);
+  assert(serverScopeResults[3].id === 'usr_bob', `Expected Bob (10:05) fourth in server scope, got ${serverScopeResults[3].username}`);
+
+  // Test 10: Custom scope mode restricts to only selected channels
+  const customScopeResults = searchMentionableUsers('', guildScopeCustom);
+  const customScopeIds = customScopeResults.map((u) => u.id);
+  assert(!customScopeIds.includes('usr_dave'), 'Dave from unselected ch_dev_2 must NOT appear in custom scope');
+  assert(customScopeIds.includes('usr_alice') && customScopeIds.includes('usr_bob') && customScopeIds.includes('usr_charlie'), 'Selected channel authors must appear');
+
+  // Test 11: Query filtering preserves recency order among matching users
+  mockMessages.ch_general_1.push({
+    id: 'msg_6',
+    author: { id: 'usr_aaron', username: 'aaron', globalName: 'Aaron' },
+    timestamp: '2026-01-01T10:02:00Z', // Aaron at 10:02
+  });
+  const filteredResults = searchMentionableUsers('a', guildScopeDefault);
+  // Both Alice (10:20) and Aaron (10:02) match 'a'
+  assert(filteredResults.length >= 2, `Expected at least 2 results matching 'a', got ${filteredResults.length}`);
+  const aaronIdx = filteredResults.findIndex((u) => u.id === 'usr_aaron');
+  const aliceIdx = filteredResults.findIndex((u) => u.id === 'usr_alice');
+  assert(aliceIdx !== -1 && aaronIdx !== -1, 'Both Alice and Aaron must match query');
+  assert(aliceIdx < aaronIdx, `Alice (10:20) must be ordered before Aaron (10:02), got aliceIdx=${aliceIdx}, aaronIdx=${aaronIdx}`);
+
+  // Test 12: DM Scope shows DM recipient even with 0 loaded messages
+  const dmResults = searchMentionableUsers('', dmScopeDefault);
+  assert(dmResults.some((u) => u.id === 'usr_bob'), 'Bob must appear as recipient in dmScopeDefault');
+  assert(!dmResults.some((u) => u.id === 'usr_alice'), 'Alice must NOT appear in Bob DM');
+
+  // Test 13: Group DM Scope includes group recipients
+  const gdmResults = searchMentionableUsers('', {
+    channelId: 'gdm_project_alpha',
+    channelName: 'Project Alpha',
+    channelType: ChannelType.GROUP_DM,
+    isGuild: false,
+    isDM: false,
+    isGroupDM: true,
+  });
+  const gdmIds = gdmResults.map((u) => u.id);
+  assert(gdmIds.includes('usr_bob'), 'Bob must appear in Project Alpha group DM');
+  assert(gdmIds.includes('usr_carol'), 'Carol must appear in Project Alpha group DM');
+  assert(!gdmIds.includes('usr_alice'), 'Alice must NOT appear in Project Alpha group DM');
+
   console.log('✅ Member Mention Matching & Manual Scope Modification Tests Passed Successfully!');
 }
 
