@@ -7,6 +7,7 @@
     "build": "tsc --project tsconfig.dev.json --noEmit",
     "typecheck": "tsc --project tsconfig.dev.json --noEmit",
     "test": "tsx --tsconfig tsconfig.dev.json test/run.ts",
+    "test:benchmark": "tsx --tsconfig tsconfig.dev.json test/retrievalBenchmark.ts",
     "sync": "rsync -av --exclude=node_modules --exclude=.git --exclude=graphify-out --exclude=AGENTS.md ./ /Users/raymond/Documents/Vencord/src/userplugins/vencord-ai/",
     "build:vencord": "pnpm run sync && pnpm --dir /Users/raymond/Documents/Vencord build",
     "inject": "pnpm run sync && pnpm --dir /Users/raymond/Documents/Vencord build && pnpm --dir /Users/raymond/Documents/Vencord inject"

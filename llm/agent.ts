@@ -16,7 +16,7 @@ import {
   ToolExecutionContext,
   ToolExecutionResult,
 } from '../types';
-import { buildConversationContext, compactToolResult, estimateTokens } from './contextBuilder';
+import { buildConversationContext, compactToolResult, estimateTokens } from './compression';
 import { buildSystemPrompt } from './prompts';
 import { OpenAICompatibleClient } from './provider';
 import { AgentBudgetTracker, DEFAULT_AGENT_RUN_BUDGET } from './runBudget';

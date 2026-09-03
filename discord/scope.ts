@@ -11,6 +11,11 @@ import {
   DiscordUser,
 } from '../types';
 import {
+  PERMITTED_TEXT_CHANNEL_TYPES,
+  validateChannelPermission,
+  validateScopeBoundary,
+} from './guardrails';
+import {
   getChannel,
   getChannelStore,
   getCurrentChannelId,
@@ -47,27 +52,11 @@ export function getMutualGroupDMs(otherUserId: string): DiscordChannel[] {
   }
 }
 
-const TEXT_CHANNEL_TYPES = new Set([
-  ChannelType.GUILD_TEXT,
-  ChannelType.GUILD_ANNOUNCEMENT,
-  ChannelType.PUBLIC_THREAD,
-  ChannelType.PRIVATE_THREAD,
-  ChannelType.GUILD_FORUM,
-  ChannelType.GUILD_MEDIA,
-]);
-
-export function canReadChannel(permissionStore: any, channel: DiscordChannel): boolean {
-  if (typeof permissionStore?.can !== 'function') return false;
-  try {
-    return Boolean(permissionStore.can(1024n, channel));
-  } catch {
-    try {
-      return Boolean(permissionStore.can(1024, channel));
-    } catch {
-      return false;
-    }
-  }
-}
+/**
+ * Re-exported fail-closed permission check delegating to guardrails.
+ */
+export const canReadChannel = (permissionStore: any, channel: DiscordChannel): boolean =>
+  validateChannelPermission(channel, permissionStore);
 
 /**
  * Gets accessible text channels for a guild
@@ -89,7 +78,7 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
     return flattened
       .map((entry) => entry?.channel ?? entry)
       .filter((ch: DiscordChannel): ch is DiscordChannel => {
-        if (!ch?.id || !TEXT_CHANNEL_TYPES.has(ch.type)) return false;
+        if (!ch?.id || !PERMITTED_TEXT_CHANNEL_TYPES.has(ch.type)) return false;
         return canReadChannel(permStore, ch);
       });
   } catch (err) {
@@ -98,11 +87,58 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
   }
 }
 
+/**
+ * Post-filters any collection of items with a `channel_id` property against the active scope.
+ */
 export function filterMessagesToScope<T extends { channel_id: string }>(
   messages: T[],
   context: CurrentScopeContext,
 ): T[] {
+  if (!Array.isArray(messages)) return [];
   return messages.filter((message) => isChannelAllowedInScope(message.channel_id, context));
+}
+
+/**
+ * Returns an array of permitted channel IDs for the active scope context.
+ */
+export function getPermittedChannelIdsForScope(context: CurrentScopeContext): string[] {
+  if (!context) return [];
+  if (context.isGuild && context.accessibleGuildChannels) {
+    return context.accessibleGuildChannels.map((c) => c.id);
+  }
+  if (context.isDM) {
+    const explicitGroupDMs = context.explicitMutualGroupDMIds || [];
+    return [context.channelId, ...explicitGroupDMs];
+  }
+  return [context.channelId];
+}
+
+/**
+ * Pre-filters an IndexSearchQuery so unpermitted channels are never searched.
+ */
+export function filterIndexQueryToScope<T extends { channelIds?: string[]; guildId?: string; [key: string]: any }>(
+  query: T,
+  context: CurrentScopeContext,
+): T {
+  const permittedChannelIds = getPermittedChannelIdsForScope(context);
+  const permittedSet = new Set(permittedChannelIds);
+
+  let scopedChannelIds: string[];
+  if (query.channelIds && query.channelIds.length > 0) {
+    scopedChannelIds = query.channelIds.filter((id) => permittedSet.has(id));
+    if (scopedChannelIds.length === 0) {
+      // Requested channel was explicitly unpermitted -> fail-closed with empty sentinel
+      scopedChannelIds = ['__FORBIDDEN_SCOPE_BLOCKED__'];
+    }
+  } else {
+    scopedChannelIds = permittedChannelIds;
+  }
+
+  return {
+    ...query,
+    channelIds: scopedChannelIds,
+    guildId: context.isGuild ? context.guildId : undefined,
+  };
 }
 
 /**
@@ -184,6 +220,7 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
 function normalizedLabel(value: string): string {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
+
 export function restrictScopeForUserPrompt(
   context: CurrentScopeContext,
   userPrompt: string,
@@ -204,23 +241,7 @@ export function restrictScopeForUserPrompt(
  */
 export function isChannelAllowedInScope(
   targetChannelId: string,
-  context: CurrentScopeContext
+  context: CurrentScopeContext,
 ): boolean {
-  if (targetChannelId === context.channelId) {
-    return true;
-  }
-
-  if (context.isGuild && context.guildId) {
-    // Must belong to the same guild and be in the accessible list
-    return context.accessibleGuildChannels?.some((c) => c.id === targetChannelId) ?? false;
-  }
-
-  if (context.isDM) {
-    return Boolean(
-      context.explicitMutualGroupDMIds?.includes(targetChannelId)
-      && context.mutualGroupDMs?.some((group) => group.id === targetChannelId),
-    );
-  }
-
-  return false;
+  return validateScopeBoundary(targetChannelId, context).allowed;
 }
