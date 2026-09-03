@@ -366,3 +366,89 @@ export const disabledSendButtonStyle: React.CSSProperties = {
   color: 'var(--text-muted, #949ba4)',
   cursor: 'not-allowed',
 };
+
+export const scopeEditButtonStyle: React.CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
+  borderRadius: '4px',
+  color: 'var(--text-normal, #dbdee1)',
+  padding: '2px 8px',
+  fontSize: '11px',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  marginLeft: 'auto',
+  transition: 'background-color 0.15s ease',
+};
+
+export const scopeDropdownContainerStyle: React.CSSProperties = {
+  marginTop: '8px',
+  paddingTop: '8px',
+  borderTop: '1px solid var(--background-modifier-accent, #3f4147)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '8px',
+};
+
+export const scopeModeRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '6px',
+  flexWrap: 'wrap',
+};
+
+export const scopeModePillStyle: React.CSSProperties = {
+  padding: '4px 8px',
+  borderRadius: '4px',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
+  backgroundColor: 'var(--background-secondary, #2b2d31)',
+  color: 'var(--text-muted, #949ba4)',
+  fontSize: '11px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  transition: 'all 0.15s ease',
+};
+
+export const scopeModeActivePillStyle: React.CSSProperties = {
+  ...scopeModePillStyle,
+  backgroundColor: 'var(--brand-experiment, #5865f2)',
+  borderColor: 'var(--brand-experiment, #5865f2)',
+  color: '#ffffff',
+  fontWeight: 600,
+};
+
+export const scopeChannelListStyle: React.CSSProperties = {
+  maxHeight: '140px',
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '3px',
+  padding: '4px',
+  backgroundColor: 'var(--background-secondary, #2b2d31)',
+  borderRadius: '4px',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
+};
+
+export const scopeChannelItemStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  padding: '3px 6px',
+  borderRadius: '3px',
+  fontSize: '11px',
+  color: 'var(--text-normal, #dbdee1)',
+  cursor: 'pointer',
+  userSelect: 'none',
+};
+
+export const scopeSearchInputStyle: React.CSSProperties = {
+  backgroundColor: 'var(--background-tertiary, #1e1f22)',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
+  borderRadius: '4px',
+  padding: '4px 8px',
+  color: 'var(--text-normal, #dbdee1)',
+  fontSize: '11px',
+  outline: 'none',
+  width: '100%',
+  boxSizing: 'border-box',
+};

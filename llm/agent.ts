@@ -10,6 +10,7 @@ import {
   AssistantLaunchRequest,
   AssistantChatMessage,
   CitationItem,
+  CurrentScopeContext,
   DiscordMessage,
   LLMMessage,
   PluginSettings,
@@ -75,13 +76,14 @@ export class AIAssistantAgent {
     callbacks?: AgentRunCallbacks,
     signal?: AbortSignal,
     launchRequest?: AssistantLaunchRequest,
+    customScope?: CurrentScopeContext,
   ): Promise<{ content: string; steps: AgentStep[]; citations: CitationItem[] }> {
     const startedAt = Date.now();
     const steps: AgentStep[] = [];
     const citationMap = new Map<string, CitationItem>();
-    const currentScope = getCurrentScopeContext();
-    if (!currentScope) throw new Error('Could not determine current Discord channel context.');
-    const scope = restrictScopeForUserPrompt(currentScope, userPrompt, launchRequest?.targetChannelId);
+    const baseScope = customScope || getCurrentScopeContext();
+    if (!baseScope) throw new Error('Could not determine current Discord channel context.');
+    const scope = restrictScopeForUserPrompt(baseScope, userPrompt, launchRequest?.targetChannelId);
 
     const addCitation = (message: DiscordMessage, channelName?: string) => {
       const existing = citationMap.get(message.id);
@@ -106,10 +108,22 @@ export class AIAssistantAgent {
 
     const currentUser = scope.currentUser || getCurrentUser();
     const mentions = resolvePromptMentions(userPrompt, scope.channelId, scope.guildId);
+    const scopeRuleText = scope.isGuild
+      ? scope.scopeMode === 'server'
+        ? `searching across all accessible guild channels is permitted.`
+        : scope.scopeMode === 'custom'
+          ? `strictly restricted to custom selected channels (${scope.selectedChannelIds?.join(', ')}).`
+          : `strictly restricted to current channel #${scope.channelName} (${scope.channelId}). Do not search guild-wide.`
+      : scope.isDM
+        ? scope.includeMutualGroupDMs
+          ? `DM and mutual group DMs are permitted.`
+          : `strictly restricted to the active DM.`
+        : `strictly restricted to active group DM.`;
+
     const runtimeContext = [
       `[Current System Time]: ${new Date().toString()} (${new Date().toISOString()})`,
-      `[Active Scope]: channel=${scope.channelName} (${scope.channelId}), guild=${scope.guildName || 'none'} (${scope.guildId || 'none'})`,
-      `[Scope Rules]: guild results must belong to accessible channels; DMs stay in the active DM unless the user explicitly identifies a mutual group DM.`,
+      `[Active Scope]: mode=${scope.scopeMode || 'channel'}, channel=${scope.channelName} (${scope.channelId}), guild=${scope.guildName || 'none'} (${scope.guildId || 'none'})`,
+      `[Scope Rules]: ${scopeRuleText}`,
       currentUser ? `[Current User]: ${currentUser.globalName || currentUser.username} (${currentUser.id})` : '',
       mentions.length ? `[Prompt Mentions]: ${mentions.map((user) => `${user.globalName || user.username} (${user.id})`).join(', ')}` : '',
       launchRequest

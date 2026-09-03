@@ -103,10 +103,24 @@ export function filterMessagesToScope<T extends { channel_id: string }>(
  */
 export function getPermittedChannelIdsForScope(context: CurrentScopeContext): string[] {
   if (!context) return [];
-  if (context.isGuild && context.accessibleGuildChannels) {
-    return context.accessibleGuildChannels.map((c) => c.id);
+  if (context.isGuild) {
+    if (context.scopeMode === 'channel') {
+      return [context.channelId];
+    }
+    if (context.scopeMode === 'custom' && context.selectedChannelIds) {
+      const accessibleSet = new Set((context.accessibleGuildChannels || []).map((c) => c.id));
+      const valid = context.selectedChannelIds.filter((id) => accessibleSet.has(id));
+      return Array.from(new Set([context.channelId, ...valid]));
+    }
+    if (context.accessibleGuildChannels) {
+      return context.accessibleGuildChannels.map((c) => c.id);
+    }
+    return [context.channelId];
   }
   if (context.isDM) {
+    if (context.includeMutualGroupDMs && context.mutualGroupDMs) {
+      return [context.channelId, ...context.mutualGroupDMs.map((g) => g.id)];
+    }
     const explicitGroupDMs = context.explicitMutualGroupDMIds || [];
     return [context.channelId, ...explicitGroupDMs];
   }
@@ -214,6 +228,9 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
     mutualGroupDMs,
     explicitMutualGroupDMIds: [],
     accessibleGuildChannels,
+    scopeMode: 'channel',
+    selectedChannelIds: [channelId],
+    includeMutualGroupDMs: false,
   };
 }
 
@@ -227,6 +244,12 @@ export function restrictScopeForUserPrompt(
   launchTargetChannelId?: string,
 ): CurrentScopeContext {
   if (!context.isDM || !context.mutualGroupDMs?.length) return context;
+  if (context.includeMutualGroupDMs) {
+    return {
+      ...context,
+      explicitMutualGroupDMIds: context.mutualGroupDMs.map((group) => group.id),
+    };
+  }
   const normalizedPrompt = normalizedLabel(userPrompt);
   const explicitlyRequested = context.mutualGroupDMs.filter((group) => {
     if (launchTargetChannelId === group.id || userPrompt.includes(group.id)) return true;

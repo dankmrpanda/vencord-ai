@@ -98,8 +98,14 @@ export function getLoadedMessages(channelId: string): DiscordMessage[] {
     if (Array.isArray(raw)) {
       return raw;
     }
+    if (Array.isArray((raw as any)._ordered)) {
+      return (raw as any)._ordered;
+    }
     if (typeof raw.values === 'function') {
       return Array.from(raw.values());
+    }
+    if (typeof raw === 'object') {
+      return Object.values(raw);
     }
     return [];
   } catch (err) {
@@ -108,7 +114,12 @@ export function getLoadedMessages(channelId: string): DiscordMessage[] {
   }
 }
 
-export const getGuildMemberStore = () => findStore('GuildMemberStore') ?? findByProps('getMember', 'getMembers');
+export const getGuildMemberStore = () => {
+  if (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.Common?.GuildMemberStore) {
+    return (window as any).Vencord?.Webpack?.Common?.GuildMemberStore;
+  }
+  return findStore('GuildMemberStore') ?? findByProps('getMember', 'getMembers');
+};
 
 /**
  * Retrieves the current logged-in Discord user
@@ -141,26 +152,49 @@ export function searchMentionableUsers(query: string, channelId?: string, guildI
   const queryLower = query.trim().toLowerCase();
   const userMap = new Map<string, DiscordUser>();
 
-  const addUser = (u: any) => {
-    if (!u || !u.id || userMap.has(u.id)) return;
+  const addUser = (u: any, nick?: string | null) => {
+    if (!u) return;
+    const id = u.id || u.userId;
+    if (!id) return;
+
+    const existing = userMap.get(id);
+    const resolvedUsername =
+      (u.username && u.username !== 'Member' && u.username !== 'User' ? u.username : undefined) ??
+      existing?.username ??
+      (nick && nick !== 'Member' ? nick : undefined) ??
+      `user_${id.slice(-4)}`;
+
+    const resolvedGlobalName =
+      u.globalName ??
+      u.global_name ??
+      (nick && nick !== resolvedUsername ? nick : null) ??
+      existing?.globalName ??
+      null;
+
     const userObj: DiscordUser = {
-      id: u.id,
-      username: u.username || 'User',
-      globalName: u.globalName ?? u.global_name ?? null,
-      avatar: u.avatar || null,
-      bot: Boolean(u.bot),
+      id,
+      username: resolvedUsername,
+      globalName: resolvedGlobalName,
+      avatar: u.avatar ?? existing?.avatar ?? null,
+      bot: Boolean(u.bot ?? existing?.bot),
     };
-    userMap.set(u.id, userObj);
+    userMap.set(id, userObj);
   };
 
   try {
     // 1. Channel recipients (for DMs / Group DMs)
     if (channelId) {
       const ch = getChannel(channelId);
+      if (ch?.rawRecipients && Array.isArray(ch.rawRecipients)) {
+        for (const r of ch.rawRecipients) {
+          addUser(r);
+        }
+      }
       if (ch?.recipients && Array.isArray(ch.recipients)) {
         for (const rId of ch.recipients) {
-          const u = getUser(rId) || { id: rId, username: 'User' };
-          addUser(u);
+          const u = getUser(rId);
+          if (u) addUser(u);
+          else addUser({ id: rId });
         }
       }
     }
@@ -169,7 +203,7 @@ export function searchMentionableUsers(query: string, channelId?: string, guildI
     if (channelId) {
       const loaded = getLoadedMessages(channelId);
       for (const msg of loaded) {
-        if (msg.author) addUser(msg.author);
+        if (msg.author) addUser(msg.author, (msg as any).nick);
       }
     }
 
@@ -178,17 +212,48 @@ export function searchMentionableUsers(query: string, channelId?: string, guildI
     if (effectiveGuildId) {
       const memberStore = getGuildMemberStore();
       const rawMembers = memberStore?.getMembers?.(effectiveGuildId);
-      if (Array.isArray(rawMembers)) {
-        for (const m of rawMembers) {
-          if (m.userId) {
-            const u = getUser(m.userId) || { id: m.userId, username: m.nick || 'Member' };
-            addUser(u);
+      const memberList: any[] = Array.isArray(rawMembers)
+        ? rawMembers
+        : rawMembers && typeof rawMembers === 'object'
+          ? Object.values(rawMembers)
+          : [];
+
+      if (memberList.length > 0) {
+        for (const m of memberList) {
+          const memberUser = m.user || getUser(m.userId || m.id);
+          if (memberUser) {
+            addUser(memberUser, m.nick);
+          } else if (m.userId || m.id) {
+            addUser({ id: m.userId || m.id, username: m.nick }, m.nick);
+          }
+        }
+      } else if (memberStore?.getMemberIds) {
+        const memberIds = memberStore.getMemberIds(effectiveGuildId);
+        if (Array.isArray(memberIds)) {
+          for (const id of memberIds.slice(0, 100)) {
+            const u = getUser(id);
+            const nick = memberStore.getNick?.(effectiveGuildId, id);
+            if (u) addUser(u, nick);
+            else if (nick) addUser({ id, username: nick }, nick);
           }
         }
       }
     }
 
-    // 4. Cached users from UserStore
+    // 4. Friends from RelationshipStore
+    const relStore = getRelationshipStore();
+    if (relStore?.getFriendIDs) {
+      const friendIds = relStore.getFriendIDs();
+      if (Array.isArray(friendIds)) {
+        for (const fId of friendIds.slice(0, 50)) {
+          const u = getUser(fId);
+          const nick = relStore.getNickname?.(fId);
+          if (u) addUser(u, nick);
+        }
+      }
+    }
+
+    // 5. Cached users from UserStore
     const userStore = getUserStore();
     const allUsers = userStore?.getUsers?.();
     if (allUsers) {
@@ -210,7 +275,7 @@ export function searchMentionableUsers(query: string, channelId?: string, guildI
   return users
     .filter((u) => {
       const matchUsername = u.username.toLowerCase().includes(queryLower);
-      const matchGlobal = u.globalName?.toLowerCase().includes(queryLower);
+      const matchGlobal = Boolean(u.globalName?.toLowerCase().includes(queryLower));
       const matchId = u.id === queryLower;
       return matchUsername || matchGlobal || matchId;
     })
@@ -253,7 +318,7 @@ export function resolvePromptMentions(
   }
 
   // 2. Match text mentions: @username or @display_name
-  const nameMatches = prompt.matchAll(/@([a-zA-Z0-9_.]+)/g);
+  const nameMatches = prompt.matchAll(/@([a-zA-Z0-9_.-]+)/g);
   for (const match of nameMatches) {
     const nameQuery = match[1].toLowerCase();
     // Ignore special discord tags like @everyone or @here

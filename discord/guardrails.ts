@@ -118,6 +118,17 @@ export function validateScopeBoundary(
 
   // 2. Guild scope: channel must belong to current guild and be in accessibleGuildChannels
   if (context.isGuild && context.guildId) {
+    if (context.scopeMode === 'channel') {
+      return { allowed: false, reason: 'unpermitted_channel' };
+    }
+    if (context.scopeMode === 'custom') {
+      const isSelected = context.selectedChannelIds?.includes(targetChannelId);
+      const isAccessible = context.accessibleGuildChannels?.some((c) => c.id === targetChannelId);
+      if (isSelected && isAccessible) {
+        return { allowed: true, reason: 'accessible_guild_channel' };
+      }
+      return { allowed: false, reason: 'unpermitted_channel' };
+    }
     const isAccessible = context.accessibleGuildChannels?.some((c) => c.id === targetChannelId);
     if (isAccessible) {
       return { allowed: true, reason: 'accessible_guild_channel' };
@@ -125,13 +136,13 @@ export function validateScopeBoundary(
     return { allowed: false, reason: 'unpermitted_channel' };
   }
 
-  // 3. 1-on-1 DM scope: only explicitly requested mutual group DMs are allowed
+  // 3. 1-on-1 DM scope: only explicitly requested mutual group DMs or enabled mutual group DMs are allowed
   if (context.isDM) {
-    const isExplicitMutual = Boolean(
-      context.explicitMutualGroupDMIds?.includes(targetChannelId) &&
+    const isAllowedMutual = Boolean(
+      (context.includeMutualGroupDMs || context.explicitMutualGroupDMIds?.includes(targetChannelId)) &&
       context.mutualGroupDMs?.some((g) => g.id === targetChannelId)
     );
-    if (isExplicitMutual) {
+    if (isAllowedMutual) {
       return { allowed: true, reason: 'explicit_mutual_group_dm' };
     }
     return { allowed: false, reason: 'dm_boundary_isolation' };

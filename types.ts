@@ -80,6 +80,7 @@ export interface DiscordChannel {
   topic?: string;
   guild_id?: string;
   recipients?: string[];
+  rawRecipients?: any[];
   ownerId?: string;
   parent_id?: string | null;
   last_message_id?: string | null;
@@ -280,4 +281,7 @@ export interface CurrentScopeContext {
   mutualGroupDMs?: { id: string; name: string; recipientNames: string[] }[];
   explicitMutualGroupDMIds?: string[];
   accessibleGuildChannels?: { id: string; name: string; topic?: string }[];
+  scopeMode?: 'channel' | 'server' | 'custom';
+  selectedChannelIds?: string[];
+  includeMutualGroupDMs?: boolean;
 }

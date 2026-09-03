@@ -60,7 +60,8 @@ export async function runMessageSearch(
   scope: CurrentScopeContext,
 ): Promise<ToolExecutionResult<MessageSearchData>> {
   // 1. Fail-Closed Scope Pre-Check
-  const guildWide = Boolean(request.guildWide && scope.isGuild);
+  const isGuildWideAllowed = Boolean(scope.isGuild && (scope.scopeMode === 'server' || scope.scopeMode === undefined));
+  const guildWide = Boolean(request.guildWide && isGuildWideAllowed);
   const channelId = guildWide ? undefined : (request.channelId || scope.channelId);
 
   if (channelId && !isChannelAllowedInScope(channelId, scope)) {

@@ -14,8 +14,8 @@ function runTests() {
   assert(!canReadChannel(null, { id: 'x', type: ChannelType.GUILD_TEXT }), 'Missing permission discovery must fail closed');
   assert(!canReadChannel({ can: () => { throw new Error('unavailable'); } }, { id: 'x', type: ChannelType.GUILD_TEXT }), 'Permission errors must fail closed');
 
-  // Test 1: Guild context boundary
-  const guildContext: CurrentScopeContext = {
+  // Test 1: Guild context boundary - Server-wide mode
+  const guildContextServer: CurrentScopeContext = {
     channelId: '1001',
     channelName: 'general',
     channelType: ChannelType.GUILD_TEXT,
@@ -24,6 +24,7 @@ function runTests() {
     isGuild: true,
     guildId: 'guild_999',
     guildName: 'Test Guild',
+    scopeMode: 'server',
     accessibleGuildChannels: [
       { id: '1001', name: 'general' },
       { id: '1002', name: 'dev-chat' },
@@ -32,16 +33,56 @@ function runTests() {
   };
 
   assert(
-    isChannelAllowedInScope('1001', guildContext) === true,
-    'Active guild channel should be allowed'
+    isChannelAllowedInScope('1001', guildContextServer) === true,
+    'Active guild channel should be allowed in server mode'
   );
   assert(
-    isChannelAllowedInScope('1002', guildContext) === true,
-    'Accessible sister guild channel should be allowed'
+    isChannelAllowedInScope('1002', guildContextServer) === true,
+    'Accessible sister guild channel should be allowed in server mode'
   );
   assert(
-    isChannelAllowedInScope('9999', guildContext) === false,
-    'Inaccessible / external channel should be blocked'
+    isChannelAllowedInScope('9999', guildContextServer) === false,
+    'Inaccessible / external channel should be blocked in server mode'
+  );
+
+  // Test 1b: Default Guild context boundary - Single Channel mode
+  const guildContextDefault: CurrentScopeContext = {
+    ...guildContextServer,
+    scopeMode: 'channel',
+    selectedChannelIds: ['1001'],
+  };
+
+  assert(
+    isChannelAllowedInScope('1001', guildContextDefault) === true,
+    'Active guild channel must be allowed in default channel mode'
+  );
+  assert(
+    isChannelAllowedInScope('1002', guildContextDefault) === false,
+    'Sister guild channel must be blocked in default channel mode'
+  );
+  assert(
+    isChannelAllowedInScope('9999', guildContextDefault) === false,
+    'External channel must be blocked in default channel mode'
+  );
+
+  // Test 1c: Custom Guild context boundary - Custom Channel mode
+  const guildContextCustom: CurrentScopeContext = {
+    ...guildContextServer,
+    scopeMode: 'custom',
+    selectedChannelIds: ['1001', '1003'],
+  };
+
+  assert(
+    isChannelAllowedInScope('1001', guildContextCustom) === true,
+    'Active channel in custom scope must be allowed'
+  );
+  assert(
+    isChannelAllowedInScope('1003', guildContextCustom) === true,
+    'Selected sister channel in custom scope must be allowed'
+  );
+  assert(
+    isChannelAllowedInScope('1002', guildContextCustom) === false,
+    'Unselected sister channel in custom scope must be blocked'
   );
 
   // Test 2: DM Context with mutual group DMs
@@ -83,6 +124,24 @@ function runTests() {
   assert(
     isChannelAllowedInScope('gdm_unrelated', dmContext) === false,
     'Non-mutual group DM must be blocked'
+  );
+
+  // Test 2b: DM Context with manually enabled mutual group chats
+  const enabledMutualDmContext: CurrentScopeContext = {
+    ...dmContext,
+    includeMutualGroupDMs: true,
+  };
+  assert(
+    isChannelAllowedInScope('gdm_project', enabledMutualDmContext) === true,
+    'Mutual group DM must be allowed when manually enabled in scope'
+  );
+  assert(
+    isChannelAllowedInScope('gdm_gaming', enabledMutualDmContext) === true,
+    'Second mutual group DM must also be allowed when manually enabled'
+  );
+  assert(
+    isChannelAllowedInScope('dm_bob', enabledMutualDmContext) === false,
+    'Unrelated DM must remain blocked even when mutual groups enabled'
   );
 
   // Test 3: Simulating category bucket flattening logic for Discord ChannelStore
@@ -135,7 +194,7 @@ function runTests() {
     mentions: [],
   };
 
-  const resolvedGuildId = mockMsg.guild_id || guildContext.guildId;
+  const resolvedGuildId = mockMsg.guild_id || guildContextServer.guildId;
   assert(resolvedGuildId === 'guild_999', 'Resolved guildId should fall back to active guildContext');
 
   console.log('✅ All Tests Passed Successfully!');

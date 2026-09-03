@@ -19,6 +19,7 @@ import {
   AssistantLaunchRequest,
   ChatSession,
   CitationItem,
+  CurrentScopeContext,
   PluginSettings,
 } from '../types';
 
@@ -142,7 +143,11 @@ export class ChatService {
     this.notify();
   }
 
-  async sendMessage(prompt: string, launchRequest?: AssistantLaunchRequest | null): Promise<void> {
+  async sendMessage(
+    prompt: string,
+    launchRequest?: AssistantLaunchRequest | null,
+    customScope?: CurrentScopeContext | null,
+  ): Promise<void> {
     const trimmed = prompt.trim();
     if (!trimmed || this.generating) return;
 
@@ -205,6 +210,7 @@ export class ChatService {
         },
         controller.signal,
         launchRequest || undefined,
+        customScope || undefined,
       );
 
       const finalMsg = session.messages.find((m) => m.id === assistantMsgId);

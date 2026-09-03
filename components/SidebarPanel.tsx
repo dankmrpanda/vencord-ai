@@ -208,16 +208,18 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const req = launchRequest;
     if (req) onLaunchConsumed?.();
 
-    await chatService.sendMessage(promptToSend, req);
+    await chatService.sendMessage(promptToSend, req, currentScope || undefined);
     const targetId = getCurrentChannelId() || 'global';
     loadChannelScopeAndHistory(targetId);
   };
 
   const checkMentionTrigger = (text: string, cursorPosition: number) => {
     const textBeforeCursor = text.slice(0, cursorPosition);
-    const match = textBeforeCursor.match(/(?:^|\s)@([a-zA-Z0-9_.]*)$/);
+    const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
     if (match) {
-      const results = searchMentionableUsers(match[1], currentScope?.channelId, currentScope?.guildId);
+      const channelId = currentScope?.channelId || getCurrentChannelId() || undefined;
+      const guildId = currentScope?.guildId || undefined;
+      const results = searchMentionableUsers(match[1], channelId, guildId);
       if (results.length > 0) {
         setMentionSuggestions(results);
         setMentionSelectedIndex(0);
@@ -231,7 +233,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const cursorPosition = textareaRef.current?.selectionStart ?? inputText.length;
     const textBeforeCursor = inputText.slice(0, cursorPosition);
     const textAfterCursor = inputText.slice(cursorPosition);
-    const match = textBeforeCursor.match(/(?:^|\s)@([a-zA-Z0-9_.]*)$/);
+    const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
     if (match) {
       const hasLeadingSpace = match[0].startsWith(' ');
       const prefix = textBeforeCursor.slice(0, match.index! + (hasLeadingSpace ? 1 : 0));
@@ -264,7 +266,10 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        insertMention(mentionSuggestions[mentionSelectedIndex]);
+        const selected = mentionSuggestions[mentionSelectedIndex] || mentionSuggestions[0];
+        if (selected) {
+          insertMention(selected);
+        }
         return;
       }
       if (e.key === 'Escape') {
@@ -330,7 +335,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
       </div>
 
       {/* Scope Indicator */}
-      <ScopeIndicator context={currentScope} />
+      <ScopeIndicator context={currentScope} onScopeChange={setCurrentScope} />
 
       {/* Debug Diagnostics Drawer */}
       <DebugDrawer
@@ -407,6 +412,10 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                 <div
                   key={u.id}
                   style={idx === mentionSelectedIndex ? mentionItemActiveStyle : mentionItemStyle}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    insertMention(u);
+                  }}
                   onClick={() => insertMention(u)}
                   onMouseEnter={() => setMentionSelectedIndex(idx)}
                 >

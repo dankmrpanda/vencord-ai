@@ -1,4 +1,5 @@
 import './scope.test';
+import './mentionMatching.test';
 import './search.test';
 import './agent.test';
 import './challenger2_empirical';
