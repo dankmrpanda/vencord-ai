@@ -121,6 +121,71 @@ export async function deleteSession(sessionId: string): Promise<void> {
   } catch {}
 }
 
+export async function getSessionById(id: string): Promise<ChatSession | null> {
+  try {
+    const db = await openDB();
+    const session = await new Promise<ChatSession | null>((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+    if (session) return session;
+  } catch {}
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(`${LS_PREFIX}${id}`);
+      if (raw) return JSON.parse(raw);
+    }
+  } catch {}
+
+  return null;
+}
+
+export async function getLatestSession(): Promise<ChatSession | null> {
+  try {
+    const db = await openDB();
+    const session = await new Promise<ChatSession | null>((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const index = store.index('updatedAt');
+      const req = index.openCursor(null, 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        resolve(cursor ? (cursor.value as ChatSession) : null);
+      };
+      req.onerror = () => resolve(null);
+    });
+    if (session) return session;
+  } catch {}
+
+  return null;
+}
+
+const ACTIVE_SESSION_KEY = 'vencord_ai_active_session_id';
+let inMemoryActiveSessionId: string | null = null;
+
+export function getStoredActiveSessionId(): string | null {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(ACTIVE_SESSION_KEY);
+    }
+  } catch {}
+  return inMemoryActiveSessionId;
+}
+
+export function setStoredActiveSessionId(id: string | null): void {
+  inMemoryActiveSessionId = id;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (id) localStorage.setItem(ACTIVE_SESSION_KEY, id);
+      else localStorage.removeItem(ACTIVE_SESSION_KEY);
+    }
+  } catch {}
+}
+
 export function createNewSession(channelId: string, title?: string): ChatSession {
   return {
     id: `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -131,3 +196,4 @@ export function createNewSession(channelId: string, title?: string): ChatSession
     messages: [],
   };
 }
+

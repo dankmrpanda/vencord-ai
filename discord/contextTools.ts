@@ -7,16 +7,44 @@ import { CurrentScopeContext, DiscordChannel, DiscordMessage, ToolExecutionResul
 import { isChannelAllowedInScope } from './scope';
 import { getAuthToken, getChannel, getHTTP } from './stores';
 
-async function discordGet(path: string, query: Record<string, string> = {}): Promise<any> {
+function extractRetrySec(target: any): number | null {
+  if (!target) return null;
+  const status = target.status ?? target.statusCode;
+  const retryVal = target.headers?.get?.('Retry-After') ?? target.body?.retry_after ?? target.retry_after;
+  if (retryVal) {
+    const sec = Number(retryVal);
+    return isNaN(sec) ? 2 : Math.max(sec, 1);
+  }
+  if (status === 429) return 2;
+  return null;
+}
+
+async function discordGet(path: string, query: Record<string, string> = {}, retriesRemaining = 3): Promise<any> {
   const http = getHTTP();
   if (http?.get) {
-    const response = await http.get({ url: path, query });
-    return response?.body ?? response;
+    try {
+      const response = await http.get({ url: path, query });
+      return response?.body ?? response;
+    } catch (err: any) {
+      const retrySec = extractRetrySec(err);
+      if (retrySec !== null && retriesRemaining > 0) {
+        console.warn(`[VencordAI] Discord 429 rate limit on ${path}, retrying after ${retrySec}s...`);
+        await new Promise((resolve) => setTimeout(resolve, retrySec * 1000 + 300));
+        return discordGet(path, query, retriesRemaining - 1);
+      }
+      throw err;
+    }
   }
   const suffix = new URLSearchParams(query).toString();
   const response = await fetch(`https://discord.com/api/v9${path}${suffix ? `?${suffix}` : ''}`, {
     headers: { Authorization: getAuthToken() || '', 'Content-Type': 'application/json' },
   });
+  if (response.status === 429 && retriesRemaining > 0) {
+    const retrySec = extractRetrySec(response) || 2;
+    console.warn(`[VencordAI] Discord 429 rate limit on ${path}, retrying after ${retrySec}s...`);
+    await new Promise((resolve) => setTimeout(resolve, retrySec * 1000 + 300));
+    return discordGet(path, query, retriesRemaining - 1);
+  }
   if (!response.ok) throw new Error(`Discord read failed (${response.status}).`);
   return response.json();
 }

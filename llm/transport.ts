@@ -146,16 +146,32 @@ export class OpenAICompatibleTransport {
       payload.tool_choice = request.toolChoice || 'auto';
       if (this.capabilities.parallelToolCalls) payload.parallel_tool_calls = true;
     }
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.settings.apiKey?.trim() || 'local-no-auth'}`,
-      },
-      body: JSON.stringify(payload),
-      signal,
-    });
-    if (!response.ok) throw new Error(`LLM completion failed (${response.status}).`);
+    const maxRetries = 3;
+    let response: Response | null = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (signal?.aborted) throw new Error('LLM completion cancelled.');
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.settings.apiKey?.trim() || 'local-no-auth'}`,
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (response.status === 429 && attempt < maxRetries) {
+        const retryHeader = response.headers.get('Retry-After');
+        const retrySec = retryHeader ? parseFloat(retryHeader) : NaN;
+        const delayMs = !isNaN(retrySec) && retrySec > 0
+          ? retrySec * 1000 + 200
+          : Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 400;
+        console.warn(`[VencordAI] LLM rate limit (429). Retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      break;
+    }
+    if (!response || !response.ok) throw new Error(`LLM completion failed (${response?.status || 'unknown'}).`);
     if (request.stream !== false) {
       if (!response.body) throw new Error('LLM completion returned no stream.');
       return consumeChatCompletionStream(response.body, callbacks);

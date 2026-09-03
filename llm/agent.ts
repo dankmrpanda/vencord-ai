@@ -118,9 +118,11 @@ export class AIAssistantAgent {
     ].filter(Boolean).join('\n');
     const systemContent = `${buildSystemPrompt(this.settings.systemPrompt)}\n\n${runtimeContext}`;
     const messages = buildConversationContext(systemContent, history, userPrompt, this.settings);
+    const maxTurns = Math.min(Math.max(this.settings.maxSearchIterations || 10, 1), 20);
     const budget = new AgentBudgetTracker({
       ...DEFAULT_AGENT_RUN_BUDGET,
-      maxModelTurns: Math.min(Math.max(this.settings.maxSearchIterations || 6, 1), 6),
+      maxModelTurns: maxTurns,
+      maxToolCalls: Math.max(DEFAULT_AGENT_RUN_BUDGET.maxToolCalls, maxTurns * 4),
     });
     const toolContext: ToolExecutionContext = {
       scope,

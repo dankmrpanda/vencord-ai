@@ -20,7 +20,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   enableVision: true,
   maxContextMessages: 10,
   searchLimitPerQuery: 10,
-  maxSearchIterations: 6,
+  maxSearchIterations: 10,
 };
 
 export const settings = definePluginSettings({
@@ -67,8 +67,8 @@ export const settings = definePluginSettings({
   maxSearchIterations: {
     type: OptionType.SLIDER,
     description: 'Max Search Tool Iterations',
-    default: 6,
-    markers: [1, 2, 4, 6, 8, 10],
+    default: 10,
+    markers: [1, 3, 6, 10, 15],
   },
   systemPrompt: {
     type: OptionType.STRING,
@@ -355,7 +355,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         <input
           type="range"
           min="1"
-          max="10"
+          max="15"
           step="1"
           value={localSettings.maxSearchIterations}
           onChange={(e) => updateSetting((prev) => ({ ...prev, maxSearchIterations: parseInt(e.target.value, 10) }))}

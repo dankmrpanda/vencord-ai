@@ -19,6 +19,7 @@ import { runMilestone3Challenger2Tests } from './challenger_m3_2_empirical';
 import { runGuardrailsTests } from './guardrails.test';
 import { runMilestone4AdversarialTests } from './challenger_m4_adversarial';
 import { runMilestone4StressTests } from './challenger_m4_2_stress';
+import { runChatServiceTests } from './chatService.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -38,6 +39,7 @@ async function runAsyncFixtures(): Promise<void> {
   await runM2Challenger2Tests();
   await runRetrievalUnitAndIntegrationTests();
   await runMilestone3Challenger2Tests();
+  await runChatServiceTests();
   await run100kRetrievalBenchmark();
 }
 

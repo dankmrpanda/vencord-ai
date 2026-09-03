@@ -5,11 +5,11 @@
 
 import { AgentRunBudget } from '../types';
 export const DEFAULT_AGENT_RUN_BUDGET: AgentRunBudget = {
-  maxModelTurns: 6,
-  maxToolCalls: 12,
-  maxElapsedMs: 90_000,
-  maxReturnedRecords: 200,
-  maxEstimatedInputTokens: 32_000,
+  maxModelTurns: 10,
+  maxToolCalls: 30,
+  maxElapsedMs: 180_000,
+  maxReturnedRecords: 400,
+  maxEstimatedInputTokens: 48_000,
   finalizationCalls: 1,
 };
 const normalize = (value: unknown): unknown => Array.isArray(value)

@@ -301,7 +301,8 @@ export function filterMessagesLocally(
  */
 export async function fetchDiscordMessagesApi(
   channelId: string,
-  queryObj: Record<string, string>
+  queryObj: Record<string, string>,
+  retriesRemaining = 3
 ): Promise<DiscordMessage[]> {
   const relativeEndpoint = `/channels/${channelId}/messages`;
   const http = getHTTP();
@@ -311,7 +312,15 @@ export async function fetchDiscordMessagesApi(
       const res = await http.get({ url: relativeEndpoint, query: queryObj });
       const body = res?.body ?? res;
       if (Array.isArray(body)) return body;
-    } catch (httpErr) {
+    } catch (httpErr: any) {
+      const status = httpErr?.status ?? httpErr?.statusCode;
+      const retryVal = httpErr?.headers?.get?.('Retry-After') ?? httpErr?.body?.retry_after ?? httpErr?.retry_after;
+      const retrySec = retryVal ? Number(retryVal) : status === 429 ? 2 : null;
+      if (retrySec !== null && retriesRemaining > 0) {
+        console.warn(`[VencordAI] Discord 429 on ${relativeEndpoint}, retrying after ${retrySec}s...`);
+        await new Promise((resolve) => setTimeout(resolve, retrySec * 1000 + 300));
+        return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1);
+      }
       console.warn('[VencordAI] RestAPI.get failed, falling back to fetch:', httpErr);
     }
   }
@@ -326,6 +335,13 @@ export async function fetchDiscordMessagesApi(
         'Content-Type': 'application/json',
       },
     });
+    if (response.status === 429 && retriesRemaining > 0) {
+      const retryHeader = response.headers.get('Retry-After');
+      const retrySec = retryHeader ? parseFloat(retryHeader) : 2;
+      console.warn(`[VencordAI] Discord 429 on fetch ${relativeEndpoint}, retrying after ${retrySec}s...`);
+      await new Promise((resolve) => setTimeout(resolve, retrySec * 1000 + 300));
+      return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1);
+    }
     if (response.ok) {
       const data = await response.json();
       if (Array.isArray(data)) return data;

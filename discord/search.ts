@@ -528,6 +528,7 @@ export async function searchDiscordMessages(
     if (retrySec !== null && retriesRemaining > 0) {
       console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
       await sleep(retrySec * 1000 + 500);
+      lastRequestTime = Date.now();
       return searchDiscordMessages(options, retriesRemaining - 1);
     }
   } catch (err: any) {
@@ -535,6 +536,7 @@ export async function searchDiscordMessages(
     if (retrySec !== null && retriesRemaining > 0) {
       console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
       await sleep(retrySec * 1000 + 500);
+      lastRequestTime = Date.now();
       return searchDiscordMessages(options, retriesRemaining - 1);
     }
     console.error('[VencordAI] Search error', { status: err?.status ?? err?.statusCode ?? 'unknown' });
