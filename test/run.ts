@@ -25,6 +25,7 @@ import { runModelLifecycleTests } from './modelLifecycle.test';
 import { runRegressionFixTests } from './regressionFixes.test';
 import { runRuntimeLifecycleTests } from './runtimeLifecycle.test';
 import { runModelSettingsTests } from './modelSettings.test';
+import { runMessageLaunchTests } from './messageLaunch.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -38,6 +39,7 @@ async function runAsyncFixtures(): Promise<void> {
   await runMilestone4StressTests();
   await runProviderTests();
   await runRegressionFixTests();
+  await runMessageLaunchTests();
   await runModelLifecycleTests();
   await runModelSettingsTests();
   await runRuntimeLifecycleTests();

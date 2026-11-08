@@ -24,7 +24,7 @@ Run the same applicable prompts once with a configured local provider and once w
 8. Right-click a reply or edited message and choose **Ask AI about this message**.
    - Before sending, pass if the sidebar opens, the prompt is prefilled and focused, and nothing auto-submits.
    - Send: `Explain this message, its reply chain, reactions, edits, embeds, attachments, poll, and thread metadata. Cite the relevant messages.`
-   - Pass: uses `get_message_details`, respects reply depth, and reports unavailable fields honestly.
+   - Pass: fetches `get_message_details` and `fetch_surrounding_messages` before the first model response, even if the model selects no tools; respects reply depth, cites the selected message and nearby context, and reports unavailable fields honestly.
 9. Repeat the context-menu action, then switch channels before sending.
    - Pass: the ephemeral target is cleared and is not used from the new channel.
 

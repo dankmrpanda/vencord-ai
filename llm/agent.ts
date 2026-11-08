@@ -12,7 +12,7 @@ import {
   CitationItem,
   CurrentScopeContext,
   DiscordMessage,
-  LLMMessage,
+  LLMToolCall,
   PluginSettings,
   ToolExecutionContext,
   ToolExecutionResult,
@@ -154,31 +154,7 @@ export class AIAssistantAgent {
     const tools = availableToolDefinitions(toolContext);
     let stoppingReason = 'completed';
 
-    while (true) {
-      budget.estimatedInputTokens = estimateTokens(messages.map((message) => String(message.content || '')).join('\n'));
-      if (!budget.canModelTurn()) break;
-      if (signal?.aborted) throw new Error('Agent execution cancelled by user.');
-      budget.modelTurns++;
-      const thought = step('thought', 'Selecting the next read-only action.');
-      steps.push(thought);
-      callbacks?.onStepAdded?.(thought);
-      const response = await this.client.complete({
-        messages,
-        tools,
-        toolChoice: 'auto',
-        temperature: 0.2,
-      }, undefined, signal);
-      thought.content = response.content.trim() || 'Selected Discord context tools.';
-      callbacks?.onStepUpdated?.(thought);
-
-      if (!response.toolCalls?.length) {
-        if (response.content) messages.push({ role: 'assistant', content: response.content });
-        stoppingReason = 'model_ready';
-        break;
-      }
-      const toolCalls = response.toolCalls;
-      messages.push({ role: 'assistant', content: response.content || null, tool_calls: toolCalls });
-
+    const executeToolCalls = async (toolCalls: LLMToolCall[]): Promise<void> => {
       const executions = toolCalls.map(async (call) => {
         const toolStep = step('tool_call', `Executing ${call.function.name}`, `tool_${call.id}`);
         toolStep.toolName = call.function.name;
@@ -237,6 +213,64 @@ export class AIAssistantAgent {
           });
         }
       });
+    };
+
+    // A context-menu launch must provide evidence even if the model answers
+    // without selecting a tool. Reuse the validated, scoped tool execution path.
+    if (launchRequest?.mode === 'message' && launchRequest.targetMessageId) {
+      if (signal?.aborted) throw new Error('Agent execution cancelled by user.');
+      const targetArgs = {
+        channel_id: launchRequest.targetChannelId,
+        message_id: launchRequest.targetMessageId,
+      };
+      const launchCalls: LLMToolCall[] = [
+        {
+          id: 'launch_message_details',
+          type: 'function',
+          function: {
+            name: 'get_message_details',
+            arguments: JSON.stringify({ ...targetArgs, reply_depth: 3 }),
+          },
+        },
+        {
+          id: 'launch_surrounding_messages',
+          type: 'function',
+          function: {
+            name: 'fetch_surrounding_messages',
+            arguments: JSON.stringify({ ...targetArgs, limit: 10 }),
+          },
+        },
+      ];
+      messages.push({ role: 'assistant', content: null, tool_calls: launchCalls });
+      await executeToolCalls(launchCalls);
+    }
+
+    while (true) {
+      budget.estimatedInputTokens = estimateTokens(messages.map((message) => String(message.content || '')).join('\n'));
+      if (!budget.canModelTurn()) break;
+      if (signal?.aborted) throw new Error('Agent execution cancelled by user.');
+      budget.modelTurns++;
+      const thought = step('thought', 'Selecting the next read-only action.');
+      steps.push(thought);
+      callbacks?.onStepAdded?.(thought);
+      const response = await this.client.complete({
+        messages,
+        tools,
+        toolChoice: 'auto',
+        temperature: 0.2,
+      }, undefined, signal);
+      thought.content = response.content.trim() || 'Selected Discord context tools.';
+      callbacks?.onStepUpdated?.(thought);
+
+      if (!response.toolCalls?.length) {
+        if (response.content) messages.push({ role: 'assistant', content: response.content });
+        stoppingReason = 'model_ready';
+        break;
+      }
+      const toolCalls = response.toolCalls;
+      messages.push({ role: 'assistant', content: response.content || null, tool_calls: toolCalls });
+
+      await executeToolCalls(toolCalls);
       if (budget.returnedRecords >= budget.limits.maxReturnedRecords) {
         stoppingReason = 'record_budget';
         break;
