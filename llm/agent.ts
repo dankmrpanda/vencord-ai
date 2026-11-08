@@ -48,6 +48,12 @@ function countRecords(result: ToolExecutionResult): number {
   return 1;
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Tool execution failed.';
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Tool execution timed out.')), timeoutMs);
@@ -170,9 +176,10 @@ export class AIAssistantAgent {
         stoppingReason = 'model_ready';
         break;
       }
-      messages.push({ role: 'assistant', content: response.content || null, tool_calls: response.toolCalls });
+      const toolCalls = response.toolCalls;
+      messages.push({ role: 'assistant', content: response.content || null, tool_calls: toolCalls });
 
-      const executions = response.toolCalls.map(async (call) => {
+      const executions = toolCalls.map(async (call) => {
         const toolStep = step('tool_call', `Executing ${call.function.name}`, `tool_${call.id}`);
         toolStep.toolName = call.function.name;
         steps.push(toolStep);
@@ -193,11 +200,11 @@ export class AIAssistantAgent {
             if (result.truncation?.truncated) budget.truncations++;
             budget.returnedRecords += countRecords(result);
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
           result = {
             ok: false,
             code: error instanceof ToolArgumentError ? 'invalid_arguments' : 'tool_error',
-            summary: error?.message || 'Tool execution failed.',
+            summary: errorMessage(error),
           };
         }
         toolStep.type = result.ok ? 'tool_result' : 'error';
@@ -212,8 +219,23 @@ export class AIAssistantAgent {
         };
       });
       const settled = await Promise.allSettled(executions);
-      settled.forEach((entry) => {
-        if (entry.status === 'fulfilled') messages.push(entry.value);
+      settled.forEach((entry, idx) => {
+        if (entry.status === 'fulfilled') {
+          messages.push(entry.value);
+        } else {
+          const call = toolCalls[idx];
+          const result: ToolExecutionResult = {
+            ok: false,
+            code: 'tool_error',
+            summary: errorMessage(entry.reason),
+          };
+          messages.push({
+            role: 'tool' as const,
+            tool_call_id: call.id,
+            name: call.function.name,
+            content: compactToolResult(JSON.stringify(result)),
+          });
+        }
       });
       if (budget.returnedRecords >= budget.limits.maxReturnedRecords) {
         stoppingReason = 'record_budget';

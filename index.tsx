@@ -10,6 +10,7 @@ import { createRoot as vcCreateRoot, Menu, React } from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from './assistantLaunch';
 import { getPluginErrorBoundary } from './components/PluginErrorBoundary';
 import { SidebarPanel } from './components/SidebarPanel';
+import { DiagnosticLogEntry, renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
 import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
 import { find, findByCode, findByProps } from './discord/stores';
 import { getChatService } from './services/chatService';
@@ -149,11 +150,11 @@ function injectPluginStyles() {
   stylesheetInjected = true;
 }
 
-const pluginLogs: Array<{ time: string; level: 'info' | 'warn' | 'error'; message: string }> = [];
+const pluginLogs: DiagnosticLogEntry[] = [];
 
 export function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...args: any[]) {
   const time = new Date().toLocaleTimeString();
-  const fullMsg = `${message} ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')}`.trim();
+  const fullMsg = `${message} ${args.map(serializeLogArgument).join(' ')}`.trim();
   pluginLogs.push({ time, level, message: fullMsg });
   if (pluginLogs.length > 60) pluginLogs.shift();
   if (level === 'error') console.error(`[VencordAI] ${message}`, ...args);
@@ -287,12 +288,7 @@ function renderSidebar() {
 
     // All React render methods failed — show diagnostic HTML fallback
     logPlugin('error', 'All ReactDOM render methods failed. Showing HTML fallback.');
-    const logsHtml = pluginLogs
-      .map(
-        (l) =>
-          `<div style="color: ${l.level === 'error' ? '#f23f43' : l.level === 'warn' ? '#f0b232' : '#949ba4'}; margin-bottom: 3px;">[${l.time}] ${l.message}</div>`
-      )
-      .join('');
+    const logsHtml = pluginLogs.map(renderDiagnosticLogEntry).join('');
 
     rootContainer.innerHTML = `
       <div style="padding: 20px; color: var(--text-normal, #dbdee1); background-color: var(--background-primary, #313338); height: 100vh; box-sizing: border-box; overflow-y: auto; font-family: var(--font-primary, sans-serif); display: flex; flex-direction: column;">
@@ -503,7 +499,7 @@ export default definePlugin({
       onChange={(newSettings) => {
         persistSettings(newSettings);
         currentSettings = newSettings;
-        getChatService().updateSettings(newSettings);
+        getChatService(newSettings).updateSettings(newSettings);
         renderSidebar();
       }}
     />

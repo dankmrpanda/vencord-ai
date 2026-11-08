@@ -248,9 +248,11 @@ export class ChatService {
 
 let globalChatService: ChatService | null = null;
 
-export function getChatService(settings?: PluginSettings): ChatService {
+export function getChatService(settings: PluginSettings): ChatService;
+export function getChatService(): ChatService | null;
+export function getChatService(settings?: PluginSettings): ChatService | null {
   if (!globalChatService && settings) {
     globalChatService = new ChatService(settings);
   }
-  return globalChatService!;
+  return globalChatService;
 }
