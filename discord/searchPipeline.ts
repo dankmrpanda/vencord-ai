@@ -7,9 +7,12 @@ import { CurrentScopeContext, DiscordMessage, ToolExecutionResult } from '../typ
 import {
   detectPatternFromQuery,
   generateRelaxedQueries,
+  resolveDateSnowflakeBounds,
   searchDiscordMessages,
+  snowflakeToDate,
 } from './search';
 import {
+  compileRegexSafely,
   fetchRecentMessages,
   filterMessagesLocally,
   scoreMessageRelevance,
@@ -17,6 +20,7 @@ import {
 import { filterIndexQueryToScope, filterMessagesToScope, isChannelAllowedInScope } from './scope';
 import { getChannel } from './stores';
 import { retrievalEngine } from '../storage/retrieval';
+import { MESSAGE_FLAGS } from '../storage/index/types';
 
 export interface MessageSearchRequest {
   query?: string;
@@ -82,6 +86,14 @@ export async function runMessageSearch(
     pattern ||= detected.pattern || undefined;
     query = detected.cleanedQuery || (detected.pattern ? undefined : query);
   }
+  if (pattern && !compileRegexSafely(pattern)) {
+    return {
+      ok: false,
+      code: 'invalid_pattern',
+      summary: 'The search pattern is invalid or failed regex safety analysis.',
+      untrustedData: true,
+    };
+  }
 
   const variants = query
     ? [query, ...generateRelaxedQueries(query)].slice(0, 3)
@@ -133,8 +145,15 @@ export async function runMessageSearch(
 
   // 4. Seamless Hybrid Search Fallback (Local Inverted Index)
   if (remoteSearchFailed || candidates.length < request.limit) {
-    if (query || pattern || request.authorId || request.date) {
+    // Compact index records do not retain mention identities or full media metadata.
+    // Use Discord/recent-message results when those filters cannot be verified.
+    if (!request.has && !request.mentions && (query || pattern || request.authorId || request.date || request.afterDate || request.beforeDate || request.pinned !== undefined)) {
       try {
+        const bounds = resolveDateSnowflakeBounds({
+          duringDate: request.date,
+          afterDate: request.afterDate,
+          beforeDate: request.beforeDate,
+        });
         const indexQuery = filterIndexQueryToScope(
           {
             query,
@@ -142,6 +161,10 @@ export async function runMessageSearch(
             channelIds: channelId ? [channelId] : undefined,
             authorId: request.authorId,
             date: request.date,
+            minTimestamp: bounds.minId ? snowflakeToDate(bounds.minId).getTime() : undefined,
+            maxTimestamp: bounds.maxId ? snowflakeToDate(bounds.maxId).getTime() : undefined,
+            flagsRequired: request.pinned === true ? MESSAGE_FLAGS.IS_PINNED : undefined,
+            flagsExcluded: request.pinned === false ? MESSAGE_FLAGS.IS_PINNED : undefined,
             limit: request.limit * 2,
           },
           scope,
@@ -156,6 +179,7 @@ export async function runMessageSearch(
             author: { id: h.record.authorId, username: h.record.authorName },
             content: h.record.content,
             timestamp: new Date(h.record.timestamp).toISOString(),
+            pinned: Boolean(h.record.flags & MESSAGE_FLAGS.IS_PINNED),
             attachments: (h.record.attachmentNames || []).map((fn) => ({
               id: '0',
               filename: fn,
@@ -203,8 +227,21 @@ export async function runMessageSearch(
   }
 
   // 6. Deduplication, Ranking & Fail-Closed Post-Filtering
-  const scoped = filterMessagesToScope(deduplicate(candidates), scope);
+  const scoped = filterMessagesToScope(filterMessagesLocally(deduplicate(candidates), {
+    pattern,
+    authorId: request.authorId,
+    has: request.has,
+    duringDate: request.date,
+    afterDate: request.afterDate,
+    beforeDate: request.beforeDate,
+    pinned: request.pinned,
+    mentions: request.mentions,
+  }), scope);
   const ranked = scoped.sort((a, b) => {
+    if (request.sortBy === 'timestamp') {
+      const timeDifference = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      return request.sortOrder === 'asc' ? timeDifference : -timeDifference;
+    }
     const score = scoreMessageRelevance(b, query || '') - scoreMessageRelevance(a, query || '');
     return score || new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
   });

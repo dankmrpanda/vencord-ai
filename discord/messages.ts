@@ -5,6 +5,7 @@
  */
 
 import { DiscordMessage } from '../types';
+import { compileSafeRegex } from '../storage/regex';
 import { getAuthToken, getHTTP, getLoadedMessages } from './stores';
 
 export interface LocalMessageFilter {
@@ -24,24 +25,7 @@ export interface LocalMessageFilter {
  * Compiles a string or RegExp pattern safely with global flag
  */
 export function compileRegexSafely(pattern?: string | RegExp): RegExp | null {
-  if (!pattern) return null;
-  try {
-    if (pattern instanceof RegExp) {
-      const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g';
-      return new RegExp(pattern.source, flags);
-    }
-    const trimmed = pattern.trim();
-    if (!trimmed) return null;
-    const match = trimmed.match(/^\/(.+)\/([gimsuy]*)$/);
-    if (match) {
-      const flags = match[2].includes('g') ? match[2] : match[2] + 'g';
-      return new RegExp(match[1], flags);
-    }
-    return new RegExp(trimmed, 'g');
-  } catch (err) {
-    console.warn('[VencordAI] Invalid regex pattern:', pattern, err);
-    return null;
-  }
+  return pattern ? compileSafeRegex(pattern).regex : null;
 }
 
 /**
@@ -170,6 +154,7 @@ export function filterMessagesLocally(
 
   // Prepare pattern regex if present
   const patternRegex = compileRegexSafely(filter.pattern);
+  if (filter.pattern && !patternRegex) return [];
   const dateTime = (value: string | Date): number => {
     const normalized = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
       ? `${value}T00:00:00`

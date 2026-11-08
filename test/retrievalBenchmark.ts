@@ -266,20 +266,25 @@ export async function run100kRetrievalBenchmark(messageCount: number = 100_000):
   console.log(`======================================================================`);
   console.log(`| Metric                         | Measured Value    | Production Target  | Status |`);
   console.log(`|--------------------------------|-------------------|--------------------|--------|`);
-  console.log(`| Corpus Scale                   | ${corpus.messages.length.toLocaleString().padEnd(17)} | 100,000+ messages  | PASS   |`);
-  console.log(`| Indexing Throughput            | ${(throughputMsgsSec.toLocaleString() + ' msgs/s').padEnd(17)} | > 20,000 msgs/s    | ${throughputMsgsSec >= 20000 ? 'PASS  ' : 'ACCEPT'} |`);
-  console.log(`| Index Heap Memory Delta        | ${(heapDeltaMB.toFixed(2) + ' MB').padEnd(17)} | < 50.0 MB RAM      | PASS   |`);
-  console.log(`| Needle Recall@1                | ${(needleRecall1.toFixed(1) + '%').padEnd(17)} | > 90.0%            | PASS   |`);
-  console.log(`| Needle Recall@5                | ${(needleRecall5.toFixed(1) + '%').padEnd(17)} | > 90.0%            | PASS   |`);
-  console.log(`| Needle Recall@10               | ${(needleRecall10.toFixed(1) + '%').padEnd(17)} | > 95.0%            | PASS   |`);
-  console.log(`| Thematic Cluster Recall        | ${(thematicRecall.toFixed(1) + '%').padEnd(17)} | > 90.0%            | PASS   |`);
-  console.log(`| Pattern Extraction Accuracy    | ${(patternAccuracy.toFixed(1) + '%').padEnd(17)} | 100.0%             | PASS   |`);
-  console.log(`| Scope Isolation Leakage        | ${(scopeIsolationLeaks + ' messages').padEnd(17)} | 0 messages (0%)    | PASS   |`);
-  console.log(`| Query Latency (Min)            | ${(minLatency.toFixed(2) + ' ms').padEnd(17)} | < 5.0 ms           | PASS   |`);
-  console.log(`| Query Latency (Mean)           | ${(meanLatency.toFixed(2) + ' ms').padEnd(17)} | < 10.0 ms          | PASS   |`);
-  console.log(`| Query Latency (p50)            | ${(p50.toFixed(2) + ' ms').padEnd(17)} | < 10.0 ms          | PASS   |`);
-  console.log(`| Query Latency (p95)            | ${(p95.toFixed(2) + ' ms').padEnd(17)} | < 50.0 ms (< 1.0s) | PASS   |`);
-  console.log(`| Query Latency (p99)            | ${(p99.toFixed(2) + ' ms').padEnd(17)} | < 100.0 ms         | PASS   |`);
+  const targets: Array<[string, string, string, boolean]> = [
+    ['Corpus Scale', corpus.messages.length.toLocaleString(), '100,000+ messages', corpus.messages.length >= 100_000],
+    ['Indexing Throughput', `${throughputMsgsSec.toLocaleString()} msgs/s`, '> 20,000 msgs/s', throughputMsgsSec > 20_000],
+    ['Index Heap Memory Delta', `${heapDeltaMB.toFixed(2)} MB`, '< 50.0 MB RAM', heapDeltaMB < 50],
+    ['Needle Recall@1', `${needleRecall1.toFixed(1)}%`, '> 90.0%', needleRecall1 > 90],
+    ['Needle Recall@5', `${needleRecall5.toFixed(1)}%`, '> 90.0%', needleRecall5 > 90],
+    ['Needle Recall@10', `${needleRecall10.toFixed(1)}%`, '> 95.0%', needleRecall10 > 95],
+    ['Thematic Cluster Recall', `${thematicRecall.toFixed(1)}%`, '> 90.0%', thematicRecall > 90],
+    ['Pattern Extraction Accuracy', `${patternAccuracy.toFixed(1)}%`, '100.0%', patternAccuracy === 100],
+    ['Scope Isolation Leakage', `${scopeIsolationLeaks} messages`, '0 messages (0%)', scopeIsolationLeaks === 0],
+    ['Query Latency (Min)', `${minLatency.toFixed(2)} ms`, '< 5.0 ms', minLatency < 5],
+    ['Query Latency (Mean)', `${meanLatency.toFixed(2)} ms`, '< 10.0 ms', meanLatency < 10],
+    ['Query Latency (p50)', `${p50.toFixed(2)} ms`, '< 10.0 ms', p50 < 10],
+    ['Query Latency (p95)', `${p95.toFixed(2)} ms`, '< 50.0 ms (< 1.0s)', p95 < 50],
+    ['Query Latency (p99)', `${p99.toFixed(2)} ms`, '< 100.0 ms', p99 < 100],
+  ];
+  for (const [metric, measured, target, passed] of targets) {
+    console.log(`| ${metric.padEnd(30)} | ${measured.padEnd(17)} | ${target.padEnd(18)} | ${passed ? 'PASS' : 'MISS'}   |`);
+  }
   console.log(`======================================================================\n`);
 
   assert(p95 < 1000, `p95 Query latency (${p95.toFixed(2)}ms) must be < 1000ms`);
@@ -303,7 +308,7 @@ export async function run100kRetrievalBenchmark(messageCount: number = 100_000):
     latencyP95Ms: p95,
     latencyP99Ms: p99,
     queryCount: latencies.length,
-    passedAllCriteria: true,
+    passedAllCriteria: targets.every(([, , , passed]) => passed),
   };
 }
 

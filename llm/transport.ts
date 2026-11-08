@@ -67,6 +67,22 @@ function materialize(target: Map<number, { id: string; name: string; arguments: 
     }));
 }
 
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(signal?.reason || new Error('LLM completion cancelled.'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export async function consumeChatCompletionStream(
   stream: ReadableStream<Uint8Array>,
   callbacks: TransportCallbacks = {},
@@ -76,13 +92,22 @@ export async function consumeChatCompletionStream(
   const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
   let buffer = '';
   let content = '';
+  let finished = false;
   let finishReason: string | undefined;
   const consumeLine = (line: string) => {
     const trimmed = line.trim();
-    if (!trimmed || trimmed === 'data: [DONE]' || trimmed.startsWith(':')) return;
+    if (finished || !trimmed || trimmed.startsWith(':')) return;
     const raw = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+    if (raw === '[DONE]') {
+      finished = true;
+      return;
+    }
     let parsed: any;
     try { parsed = JSON.parse(raw); } catch { return; }
+    if (parsed?.error) {
+      const message = typeof parsed.error === 'string' ? parsed.error : parsed.error.message;
+      throw new Error(typeof message === 'string' ? message : 'LLM stream returned an error.');
+    }
     const choice = parsed.choices?.[0];
     if (!choice) return;
     finishReason = choice.finish_reason || finishReason;
@@ -98,7 +123,7 @@ export async function consumeChatCompletionStream(
     }
   };
   try {
-    while (true) {
+    while (!finished) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -109,6 +134,7 @@ export async function consumeChatCompletionStream(
     buffer += decoder.decode();
     if (buffer.trim()) consumeLine(buffer);
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
   const calls = materialize(toolCalls);
@@ -162,13 +188,14 @@ export class OpenAICompatibleTransport {
         signal,
       });
       if (response.status === 429 && attempt < maxRetries) {
+        await response.body?.cancel().catch(() => undefined);
         const retryHeader = response.headers.get('Retry-After');
         const retrySec = retryHeader ? parseFloat(retryHeader) : NaN;
         const delayMs = !isNaN(retrySec) && retrySec > 0
           ? retrySec * 1000 + 200
           : Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 400;
         console.warn(`[VencordAI] LLM rate limit (429). Retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})...`);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await waitForRetry(delayMs, signal);
         continue;
       }
       break;
