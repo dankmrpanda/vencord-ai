@@ -21,6 +21,7 @@ import { runGuardrailsTests } from './guardrails.test';
 import { runMilestone4AdversarialTests } from './challenger_m4_adversarial';
 import { runMilestone4StressTests } from './challenger_m4_2_stress';
 import { runChatServiceTests } from './chatService.test';
+import { runModelLifecycleTests } from './modelLifecycle.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -33,6 +34,7 @@ async function runAsyncFixtures(): Promise<void> {
   await runMilestone4AdversarialTests();
   await runMilestone4StressTests();
   await runProviderTests();
+  await runModelLifecycleTests();
   await runSearchPipelineTests();
   await runIndexStorageTests();
   await runMilestone1ChallengerTests();

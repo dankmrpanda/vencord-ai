@@ -4,6 +4,7 @@
  */
 
 import { AIAssistantAgent } from '../llm/agent';
+import { modelLifecycle } from '../llm/modelLifecycle';
 import {
   createNewSession,
   deleteSession as deleteSessionStorage,
@@ -27,18 +28,15 @@ export class ChatService {
   private activeSession: ChatSession | null = null;
   private generating = false;
   private abortController: AbortController | null = null;
-  private agent: AIAssistantAgent;
   private listeners = new Set<() => void>();
   private settings: PluginSettings;
 
   constructor(initialSettings: PluginSettings) {
     this.settings = initialSettings;
-    this.agent = new AIAssistantAgent(initialSettings);
   }
 
   updateSettings(newSettings: PluginSettings): void {
     this.settings = newSettings;
-    this.agent.updateSettings(newSettings);
   }
 
   subscribe(listener: () => void): () => void {
@@ -156,14 +154,15 @@ export class ChatService {
     }
 
     const session = this.activeSession!;
+    const turnId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const userMessage: AssistantChatMessage = {
-      id: `usr_${Date.now()}`,
+      id: `usr_${turnId}`,
       role: 'user',
       content: trimmed,
       timestamp: Date.now(),
     };
 
-    const assistantMsgId = `ast_${Date.now()}`;
+    const assistantMsgId = `ast_${turnId}`;
     const assistantMessage: AssistantChatMessage = {
       id: assistantMsgId,
       role: 'assistant',
@@ -196,8 +195,12 @@ export class ChatService {
       }
     };
 
+    const runSettings = { ...this.settings };
+    let releaseModel: (() => void) | undefined;
     try {
-      const result = await this.agent.run(
+      releaseModel = await modelLifecycle.acquire(runSettings);
+      controller.signal.throwIfAborted();
+      const result = await new AIAssistantAgent(runSettings).run(
         trimmed,
         session.messages.slice(0, -2), // History before current turn
         {
@@ -223,18 +226,21 @@ export class ChatService {
       session.updatedAt = Date.now();
       await saveSession(session);
     } catch (err: any) {
-      if (!String(err?.message || '').includes('Agent execution cancelled')) {
-        const finalMsg = session.messages.find((m) => m.id === assistantMsgId);
-        if (finalMsg) {
+      const finalMsg = session.messages.find((m) => m.id === assistantMsgId);
+      if (finalMsg) {
+        if (!controller.signal.aborted && !String(err?.message || '').includes('Agent execution cancelled')) {
           finalMsg.content = `⚠️ **Error**: ${err.message || String(err)}`;
-          finalMsg.isStreaming = false;
         }
-        session.updatedAt = Date.now();
-        await saveSession(session);
+        finalMsg.isStreaming = false;
       }
+      session.updatedAt = Date.now();
+      await saveSession(session);
     } finally {
-      this.generating = false;
-      this.abortController = null;
+      releaseModel?.();
+      if (this.abortController === controller) {
+        this.generating = false;
+        this.abortController = null;
+      }
       this.notify();
     }
   }

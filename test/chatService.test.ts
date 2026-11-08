@@ -4,6 +4,8 @@
  */
 
 import { ChatService, getChatService } from '../services/chatService';
+import { AIAssistantAgent } from '../llm/agent';
+import { modelLifecycle } from '../llm/modelLifecycle';
 import { getSessionById, getStoredActiveSessionId } from '../storage/chatHistory';
 import { ChannelType, CurrentScopeContext, PluginSettings } from '../types';
 import { assert } from './assert';
@@ -56,6 +58,48 @@ export async function runChatServiceTests(): Promise<void> {
   const countBefore = notificationCount;
   service.newSession('chan_notify_2');
   assert(notificationCount === countBefore, 'Unsubscribed listener must not receive further notifications');
+
+  const originalAcquire = modelLifecycle.acquire;
+  const originalRun = AIAssistantAgent.prototype.run;
+  const events: string[] = [];
+  let failRun = false;
+  let failLoad = false;
+  let cancelDuringLoad = false;
+  modelLifecycle.acquire = async () => {
+    events.push('load');
+    if (failLoad) throw new Error('Fixture load failure');
+    if (cancelDuringLoad) service.stopGenerating();
+    return () => { events.push('release'); };
+  };
+  AIAssistantAgent.prototype.run = async () => {
+    events.push('run');
+    if (failRun) throw new Error('Fixture agent failure');
+    return { content: 'Fixture reply', steps: [], citations: [] };
+  };
+  try {
+    await service.sendMessage('Fixture message');
+    assert(events.join(',') === 'load,run,release', 'Chat loads before running and releases after the full reply');
+    events.length = 0;
+    failRun = true;
+    await service.sendMessage('Fixture failure');
+    assert(events.join(',') === 'load,run,release', 'Failed replies still release their model lease');
+    failRun = false;
+    events.length = 0;
+    failLoad = true;
+    await service.sendMessage('Fixture load failure');
+    assert(events.join(',') === 'load', 'A failed load prevents sending inference requests');
+    assert(!service.isGenerating(), 'A failed load clears the generating state');
+    failLoad = false;
+    events.length = 0;
+    cancelDuringLoad = true;
+    await service.sendMessage('Fixture cancelled load');
+    assert(events.join(',') === 'load,release', 'Cancelling while loading skips inference and releases the model');
+    const lastMessage = service.getActiveSession()!.messages.at(-1)!;
+    assert(!lastMessage.isStreaming && !lastMessage.content.includes('Error'), 'Cancelled loads stop streaming without an error message');
+  } finally {
+    modelLifecycle.acquire = originalAcquire;
+    AIAssistantAgent.prototype.run = originalRun;
+  }
 
   console.log('✅ ChatService & Background Persistence Tests Passed!');
 }

@@ -7,6 +7,8 @@ A powerful client-side AI assistant plugin for **Vencord**, **Vesktop**, and **E
 
 Supports locally-hosted models (**omlx** on Apple Silicon, **Ollama**, **LM Studio**, **vLLM**) as well as cloud providers (**OpenAI**, **OpenRouter**, **Groq**).
 
+For the **omlx**, **Ollama**, and **LM Studio** presets, sending an assistant chat message automatically loads the selected model. The plugin unloads it after **60 seconds of inactivity** following completion, failure, or cancellation. The model stays loaded throughout the reply and tool calls; another message resets the idle timer. The local model server must already be running and the model must be downloaded. omlx needs the public `/v1/models/{model_id}/load` and `/unload` APIs; LM Studio needs its native `/api/v1/models/load` and `/unload` APIs (0.4.0 or later). Cloud and Custom presets do not receive model-management requests. Closing the sidebar does not interrupt a reply or idle cleanup. Idle unloading affects the selected model on the server, including other apps sharing that model.
+
 ---
 
 ## 🌟 Key Features
