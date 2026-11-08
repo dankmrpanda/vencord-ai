@@ -14,6 +14,7 @@ import { DiagnosticLogEntry, renderDiagnosticLogEntry, serializeLogArgument } fr
 import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
 import { find, findByCode, findByProps } from './discord/stores';
 import { getChatService } from './services/chatService';
+import { startAssistantRuntime, stopAssistantRuntime } from './services/runtimeLifecycle';
 import {
   DEFAULT_SETTINGS,
   loadSavedSettings,
@@ -438,6 +439,7 @@ export function startPlugin() {
   try {
     currentSettings = loadSavedSettings();
     getChatService(currentSettings);
+    startAssistantRuntime(window);
     window.addEventListener('keydown', handleKeyDown);
 
     headerInjectionTimeout = setTimeout(injectHeaderButton, 500);
@@ -450,6 +452,8 @@ export function startPlugin() {
 }
 
 export function stopPlugin() {
+  // Start cleanup before DOM teardown so a rendering error cannot skip model unloading.
+  void stopAssistantRuntime();
   try {
     window.removeEventListener('keydown', handleKeyDown);
     if (headerInjectionTimeout) {

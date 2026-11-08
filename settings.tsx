@@ -7,6 +7,7 @@
 import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
 import { React } from '@webpack/common';
+import { modelLifecycle } from './llm/modelLifecycle';
 import { PluginSettings, ProviderPreset } from './types';
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -187,6 +188,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [testStatus, setTestStatus] = React.useState<string | null>(null);
   const [isTesting, setIsTesting] = React.useState(false);
+  const connectionController = React.useRef<AbortController | null>(null);
+
+  React.useEffect(() => () => connectionController.current?.abort(), []);
 
   const updateSetting = (updater: (prev: PluginSettings) => PluginSettings) => {
     setLocalSettings((prev) => {
@@ -211,11 +215,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
     setIsTesting(true);
     setTestStatus('Testing connection...');
 
+    const testSettings = { ...localSettings };
+    const controller = new AbortController();
+    connectionController.current = controller;
+    const signal = AbortSignal.any([controller.signal, modelLifecycle.signal]);
+    let releaseModel: (() => void) | undefined;
     try {
-      let cleanUrl = localSettings.baseUrl.trim();
+      releaseModel = await modelLifecycle.acquire(testSettings, signal);
+      let cleanUrl = testSettings.baseUrl.trim();
       if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
 
-      const authKey = localSettings.apiKey?.trim() || 'local-no-auth';
+      const authKey = testSettings.apiKey?.trim() || 'local-no-auth';
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${authKey}`,
@@ -225,10 +235,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: localSettings.model?.trim() || 'default',
+          model: testSettings.model?.trim() || 'default',
           messages: [{ role: 'user', content: 'Say "connected" if you hear me.' }],
           max_tokens: 10,
         }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });
 
       if (!response.ok) {
@@ -240,6 +251,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
     } catch (err: any) {
       setTestStatus(`❌ Network error: ${err.message || String(err)}`);
     } finally {
+      releaseModel?.();
+      if (connectionController.current === controller) connectionController.current = null;
       setIsTesting(false);
     }
   };

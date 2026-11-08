@@ -23,6 +23,7 @@ import { runMilestone4StressTests } from './challenger_m4_2_stress';
 import { runChatServiceTests } from './chatService.test';
 import { runModelLifecycleTests } from './modelLifecycle.test';
 import { runRegressionFixTests } from './regressionFixes.test';
+import { runRuntimeLifecycleTests } from './runtimeLifecycle.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -37,6 +38,7 @@ async function runAsyncFixtures(): Promise<void> {
   await runProviderTests();
   await runRegressionFixTests();
   await runModelLifecycleTests();
+  await runRuntimeLifecycleTests();
   await runSearchPipelineTests();
   await runIndexStorageTests();
   await runMilestone1ChallengerTests();

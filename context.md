@@ -44,6 +44,10 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - Fetches target messages and retrieves context (conversational turns before and after a specific message).
 
 ### 3. AI Agent Loop & Prompts (`/llm`)
+- **`llm/modelLifecycle.ts` / `services/runtimeLifecycle.ts`**:
+  - Load local models on demand and reuse warm models. Leases cover complete chat/tool runs and connection tests; the last release starts a five-minute idle timeout.
+  - Serialize load/unload requests, retry failed idle unloads, and let cancelled callers stop waiting without cancelling a shared server load.
+  - Plugin stop cancels generation and starts cleanup. Page exit dispatches keepalive unload requests; cleanup after renderer termination or an unreturned load is best effort.
 - **`llm/transport.ts` / `llm/capabilities.ts`**:
   - One OpenAI-compatible transport with fragmented SSE handling and conservative capability presets for strict schemas, parallel calls, developer messages, streaming tools, and vision.
 - **`llm/toolRegistry.ts`**:

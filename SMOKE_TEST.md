@@ -63,6 +63,20 @@ Use this unchanged for both the local and cloud provider in a channel with a rel
 
 Pass if both providers select valid read-only tools, tolerate the tool-result stream, produce working citations, and avoid unsupported or duplicate calls. Differences in prose are acceptable.
 
+## Local model residency and app shutdown
+
+With omlx, Ollama, and LM Studio separately, monitor the server's loaded-model view and request log:
+
+1. Start Discord and open the sidebar. No model should load until a chat or connection test is submitted.
+2. Send two messages less than five minutes apart. The first loads the model; the second reuses it without another explicit load request. The model stays resident throughout tool calls.
+3. Wait five minutes after the final response. Verify an unload request and released model memory. Send another message and verify it loads again.
+4. Press Stop during a slow load. The chat should stop waiting promptly. If loading completes on the server, idle cleanup must still unload it.
+5. Close the sidebar or minimize Discord during a reply. Generation continues, and idle cleanup still runs after completion.
+6. Use Test Connection without chatting. Verify that it also unloads after five idle minutes.
+7. Disable the plugin with a loaded model, then while a load is in progress. Verify cancellation and cleanup once any pending load finishes. Re-enable and verify another chat works.
+8. Quit and reload Discord with a loaded model. Verify an immediate unload request. Repeat during a slow load and note whether the server completes unloading; renderer exit before a load response is a documented best-effort case.
+9. Temporarily reject an idle unload on the server. Restore it and verify a retry after 30 seconds unloads the original model.
+
 ## Result template
 
 ```text

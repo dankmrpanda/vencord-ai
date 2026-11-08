@@ -65,8 +65,9 @@ export async function runChatServiceTests(): Promise<void> {
   let failRun = false;
   let failLoad = false;
   let cancelDuringLoad = false;
-  modelLifecycle.acquire = async () => {
+  modelLifecycle.acquire = async (_settings, signal) => {
     events.push('load');
+    assert(signal instanceof AbortSignal, 'Chat passes cancellation through model acquisition');
     if (failLoad) throw new Error('Fixture load failure');
     if (cancelDuringLoad) service.stopGenerating();
     return () => { events.push('release'); };
@@ -96,6 +97,35 @@ export async function runChatServiceTests(): Promise<void> {
     assert(events.join(',') === 'load,release', 'Cancelling while loading skips inference and releases the model');
     const lastMessage = service.getActiveSession()!.messages.at(-1)!;
     assert(!lastMessage.isStreaming && !lastMessage.content.includes('Error'), 'Cancelled loads stop streaming without an error message');
+
+    cancelDuringLoad = false;
+    events.length = 0;
+    const pendingSave = service.sendMessage('Cancel before model loading.');
+    service.stopGenerating();
+    await pendingSave;
+    assert(events.length === 0, 'Cancellation during persistence prevents loading or inference');
+    assert(!service.getActiveSession()!.messages.at(-1)!.isStreaming, 'Early cancellation clears the streaming placeholder');
+
+    const messageCount = service.getActiveSession()!.messages.length;
+    await Promise.all([service.sendMessage('First pending send.'), service.sendMessage('Duplicate pending send.')]);
+    assert(service.getActiveSession()!.messages.length === messageCount + 2, 'Rapid submissions share the synchronous generation guard');
+
+    events.length = 0;
+    let entered!: () => void;
+    const running = new Promise<void>((resolve) => { entered = resolve; });
+    AIAssistantAgent.prototype.run = async (_prompt, _history, callbacks, signal) => {
+      entered();
+      await new Promise<void>((resolve) => signal!.addEventListener('abort', () => resolve(), { once: true }));
+      callbacks?.onToken?.('late token');
+      return { content: 'late result', steps: [], citations: [] };
+    };
+    const activeRun = service.sendMessage('Cancel active generation.');
+    await running;
+    service.stopGenerating();
+    await activeRun;
+    assert(events.join(',') === 'load,release', 'Cancelling active inference releases its lease');
+    const cancelledReply = service.getActiveSession()!.messages.at(-1)!;
+    assert(!cancelledReply.isStreaming && !cancelledReply.content.includes('late'), 'Cancelled inference cannot overwrite the reply with late tokens or results');
   } finally {
     modelLifecycle.acquire = originalAcquire;
     AIAssistantAgent.prototype.run = originalRun;

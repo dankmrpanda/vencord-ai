@@ -149,60 +149,57 @@ export class ChatService {
     const trimmed = prompt.trim();
     if (!trimmed || this.generating) return;
 
-    if (!this.activeSession) {
-      await this.initSession();
-    }
-
-    const session = this.activeSession!;
-    const turnId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    const userMessage: AssistantChatMessage = {
-      id: `usr_${turnId}`,
-      role: 'user',
-      content: trimmed,
-      timestamp: Date.now(),
-    };
-
-    const assistantMsgId = `ast_${turnId}`;
-    const assistantMessage: AssistantChatMessage = {
-      id: assistantMsgId,
-      role: 'assistant',
-      content: '',
-      steps: [],
-      citations: [],
-      timestamp: Date.now(),
-      isStreaming: true,
-    };
-
-    session.messages.push(userMessage, assistantMessage);
-    if (session.messages.length === 2 && session.title === 'New Conversation') {
-      session.title = trimmed.slice(0, 32);
-    }
-    session.updatedAt = Date.now();
-
-    // Persist immediately so accidental sidebar exit or refresh NEVER loses the user query
-    await saveSession(session);
-
-    this.generating = true;
     const controller = new AbortController();
     this.abortController = controller;
-    this.notify();
-
-    const updateAssistant = (updater: (msg: AssistantChatMessage) => void) => {
-      const currentAssistant = session.messages.find((m) => m.id === assistantMsgId);
-      if (currentAssistant) {
-        updater(currentAssistant);
-        this.notify();
-      }
-    };
-
+    this.generating = true;
+    // Register cancellation before persistence so shutdown cannot miss a pending send.
     const runSettings = { ...this.settings };
     let releaseModel: (() => void) | undefined;
+    let session: ChatSession | undefined;
+    let assistantMessage: AssistantChatMessage | undefined;
     try {
-      releaseModel = await modelLifecycle.acquire(runSettings);
+      if (!this.activeSession) await this.initSession();
+      controller.signal.throwIfAborted();
+      session = this.activeSession!;
+      const history = session.messages.slice();
+      const turnId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      const userMessage: AssistantChatMessage = {
+        id: `usr_${turnId}`,
+        role: 'user',
+        content: trimmed,
+        timestamp: Date.now(),
+      };
+      const reply: AssistantChatMessage = {
+        id: `ast_${turnId}`,
+        role: 'assistant',
+        content: '',
+        steps: [],
+        citations: [],
+        timestamp: Date.now(),
+        isStreaming: true,
+      };
+      assistantMessage = reply;
+      session.messages.push(userMessage, reply);
+      if (session.messages.length === 2 && session.title === 'New Conversation') {
+        session.title = trimmed.slice(0, 32);
+      }
+      session.updatedAt = Date.now();
+
+      // Persist the query before loading a model or issuing inference requests.
+      await saveSession(session);
+      controller.signal.throwIfAborted();
+      this.notify();
+
+      const updateAssistant = (updater: (msg: AssistantChatMessage) => void) => {
+        if (controller.signal.aborted) return;
+        updater(reply);
+        this.notify();
+      };
+      releaseModel = await modelLifecycle.acquire(runSettings, controller.signal);
       controller.signal.throwIfAborted();
       const result = await new AIAssistantAgent(runSettings).run(
         trimmed,
-        session.messages.slice(0, -2), // History before current turn
+        history,
         {
           onToken: (token) => updateAssistant((m) => { m.content += token; }),
           onStepAdded: (step: AgentStep) => updateAssistant((m) => { m.steps = [...(m.steps || []), step]; }),
@@ -215,33 +212,31 @@ export class ChatService {
         launchRequest || undefined,
         customScope || undefined,
       );
-
-      const finalMsg = session.messages.find((m) => m.id === assistantMsgId);
-      if (finalMsg) {
-        finalMsg.content = result.content;
-        finalMsg.steps = result.steps;
-        finalMsg.citations = result.citations;
-        finalMsg.isStreaming = false;
-      }
-      session.updatedAt = Date.now();
-      await saveSession(session);
+      controller.signal.throwIfAborted();
+      reply.content = result.content;
+      reply.steps = result.steps;
+      reply.citations = result.citations;
     } catch (err: any) {
-      const finalMsg = session.messages.find((m) => m.id === assistantMsgId);
-      if (finalMsg) {
+      if (assistantMessage) {
         if (!controller.signal.aborted && !String(err?.message || '').includes('Agent execution cancelled')) {
-          finalMsg.content = `⚠️ **Error**: ${err.message || String(err)}`;
+          assistantMessage.content = `⚠️ **Error**: ${err.message || String(err)}`;
         }
-        finalMsg.isStreaming = false;
+      } else if (!controller.signal.aborted) {
+        throw err;
       }
-      session.updatedAt = Date.now();
-      await saveSession(session);
     } finally {
+      // Persistence must not extend a model lease or prevent cancellation cleanup.
       releaseModel?.();
+      if (assistantMessage) assistantMessage.isStreaming = false;
       if (this.abortController === controller) {
         this.generating = false;
         this.abortController = null;
       }
       this.notify();
+      if (session) {
+        session.updatedAt = Date.now();
+        await saveSession(session);
+      }
     }
   }
 }
