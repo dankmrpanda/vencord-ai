@@ -13,6 +13,8 @@ Disabling the plugin cancels active work and starts immediate model cleanup, inc
 
 The local model server must already be running and the model must be downloaded. omlx needs the public `/v1/models/{model_id}/load` and `/unload` APIs; LM Studio needs its native `/api/v1/models/load` and `/unload` APIs (0.4.0 or later). Cloud and Custom presets do not receive model-management requests. Closing the sidebar or minimizing Discord does not interrupt a reply or idle cleanup. Unloading affects the selected model on the server, including other apps sharing that model.
 
+Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen2.5-32B-Instruct-4bit`. Existing repository-prefixed names such as `mlx-community/Qwen2.5-32B-Instruct-4bit` are resolved against that list when they identify one model unambiguously. Loading, inference, and cleanup all use that same ID. Lookups are cached for five minutes; exact short IDs need no discovery request.
+
 ---
 
 ## 🌟 Key Features
@@ -64,7 +66,7 @@ Open the plugin settings under **Discord Settings → Plugins → AIAssistant (G
 ### 1. Local with `omlx` (Apple Silicon / Mac)
 - **Preset**: `omlx (Local Apple Silicon / MLX)`
 - **API Base URL**: `http://localhost:8000/v1`
-- **Model**: `mlx-community/Qwen2.5-7B-Instruct-4bit` (or your loaded MLX model)
+- **Model**: `Qwen2.5-32B-Instruct-4bit` (use the exact ID returned by your server's `/v1/models` list)
 - **API Key**: *(leave blank)*
 
 ### 2. Local with `Ollama`

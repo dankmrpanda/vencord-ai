@@ -8,13 +8,14 @@ import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
 import { React } from '@webpack/common';
 import { modelLifecycle } from './llm/modelLifecycle';
+import { resolveModelIdentifier } from './llm/modelSettings';
 import { PluginSettings, ProviderPreset } from './types';
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
   baseUrl: 'http://localhost:8000/v1',
   apiKey: '',
-  model: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
+  model: 'Qwen2.5-32B-Instruct-4bit',
   temperature: 0.7,
   maxTokens: 2048,
   systemPrompt: '',
@@ -52,7 +53,7 @@ export const settings = definePluginSettings({
   model: {
     type: OptionType.STRING,
     description: 'Model Identifier',
-    default: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
+    default: 'Qwen2.5-32B-Instruct-4bit',
   },
   temperature: {
     type: OptionType.SLIDER,
@@ -135,7 +136,7 @@ const PRESET_CONFIGS: Record<
   omlx: {
     name: 'omlx (Local Apple Silicon / MLX)',
     defaultBaseUrl: 'http://localhost:8000/v1',
-    defaultModel: 'mlx-community/Qwen2.5-32B-Instruct-4bit',
+    defaultModel: 'Qwen2.5-32B-Instruct-4bit',
     needsKey: false,
   },
   ollama: {
@@ -235,7 +236,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         method: 'POST',
         headers,
         body: JSON.stringify({
-          model: testSettings.model?.trim() || 'default',
+          model: await resolveModelIdentifier(testSettings),
           messages: [{ role: 'user', content: 'Say "connected" if you hear me.' }],
           max_tokens: 10,
         }),

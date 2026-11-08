@@ -11,6 +11,7 @@ import {
   ProviderCapabilities,
   ToolDefinition,
 } from '../types';
+import { resolveModelIdentifier } from './modelSettings';
 
 export interface TransportCallbacks {
   onToken?: (token: string) => void;
@@ -130,12 +131,13 @@ export class OpenAICompatibleTransport {
     callbacks: TransportCallbacks = {},
     signal?: AbortSignal,
   ): Promise<CompletionResult> {
+    signal?.throwIfAborted();
     const baseUrl = (this.settings.baseUrl || 'http://localhost:8000/v1').trim().replace(/\/$/, '');
     const messages = request.messages.map((message) => message.role === 'developer' && !this.capabilities.developerMessages
       ? { ...message, role: 'system' as const }
       : message);
     const payload: Record<string, unknown> = {
-      model: this.settings.model || 'default',
+      model: await resolveModelIdentifier(this.settings),
       messages,
       temperature: request.temperature ?? this.settings.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? this.settings.maxTokens ?? 2048,

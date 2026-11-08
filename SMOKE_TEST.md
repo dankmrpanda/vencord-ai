@@ -76,6 +76,7 @@ With omlx, Ollama, and LM Studio separately, monitor the server's loaded-model v
 7. Disable the plugin with a loaded model, then while a load is in progress. Verify cancellation and cleanup once any pending load finishes. Re-enable and verify another chat works.
 8. Quit and reload Discord with a loaded model. Verify an immediate unload request. Repeat during a slow load and note whether the server completes unloading; renderer exit before a load response is a documented best-effort case.
 9. Temporarily reject an idle unload on the server. Restore it and verify a retry after 30 seconds unloads the original model.
+10. With omlx, set the identifier to `mlx-community/[downloaded-model-name]` while `/v1/models` lists only `[downloaded-model-name]`. Verify chat and Test Connection both work, and load/unload requests use the exact advertised ID. A missing or ambiguous model must produce a clear identifier error without loading another model.
 
 ## Result template
 

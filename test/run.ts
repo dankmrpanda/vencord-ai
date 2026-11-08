@@ -24,6 +24,7 @@ import { runChatServiceTests } from './chatService.test';
 import { runModelLifecycleTests } from './modelLifecycle.test';
 import { runRegressionFixTests } from './regressionFixes.test';
 import { runRuntimeLifecycleTests } from './runtimeLifecycle.test';
+import { runModelSettingsTests } from './modelSettings.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -38,6 +39,7 @@ async function runAsyncFixtures(): Promise<void> {
   await runProviderTests();
   await runRegressionFixTests();
   await runModelLifecycleTests();
+  await runModelSettingsTests();
   await runRuntimeLifecycleTests();
   await runSearchPipelineTests();
   await runIndexStorageTests();

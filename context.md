@@ -48,6 +48,9 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - Load local models on demand and reuse warm models. Leases cover complete chat/tool runs and connection tests; the last release starts a five-minute idle timeout.
   - Serialize load/unload requests, retry failed idle unloads, and let cancelled callers stop waiting without cancelling a shared server load.
   - Plugin stop cancels generation and starts cleanup. Page exit dispatches keepalive unload requests; cleanup after renderer termination or an unreturned load is best effort.
+- **`llm/modelSettings.ts`**:
+  - Resolve repository-prefixed omlx identifiers against the server's `/v1/models` list. Preserve exact IDs, require a unique basename match for aliases, and cache successful lookups for five minutes.
+  - Lifecycle leases, inference, and connection tests use the same resolved ID. Other providers retain their configured identifiers.
 - **`llm/transport.ts` / `llm/capabilities.ts`**:
   - One OpenAI-compatible transport with fragmented SSE handling and conservative capability presets for strict schemas, parallel calls, developer messages, streaming tools, and vision.
 - **`llm/toolRegistry.ts`**:
