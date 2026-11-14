@@ -192,7 +192,14 @@ async function srch06QueryMangling(): Promise<string | null> {
     ({ url, query }) => { if (isSearch(url)) sent.push(String(query.content)); return isSearch(url) ? { total_results: 0, messages: [] } : []; },
     () => runMessageSearch({ query: 'café', guildWide: true, limit: 10, scanLimit: 10 }, guildScope()),
   );
-  return sent[0] === 'café' ? null : `query "café" was sent to Discord as content=${JSON.stringify(sent[0])}`;
+  const problems: string[] = [];
+  if (sent[0] !== 'café') problems.push(`query "café" was sent to Discord as content=${JSON.stringify(sent[0])}`);
+  const expected: Array<[string, string]> = [['naïve plan', 'naïve plan'], ['東京 meetup', '東京 meetup'], ['Привет мир', 'привет мир']];
+  for (const [query, want] of expected) {
+    const got = detectPatternFromQuery(query).cleanedQuery;
+    if (got !== want) problems.push(`cleanedQuery(${JSON.stringify(query)}) = ${JSON.stringify(got)} (expected ${JSON.stringify(want)})`);
+  }
+  return problems.length ? problems.join('; ') : null;
 }
 
 /** SRCH-08: unparseable after/before dates silently drop the bound everywhere. */

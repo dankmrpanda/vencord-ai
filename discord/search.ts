@@ -244,7 +244,7 @@ export function detectPatternFromQuery(query?: string): DetectedPatternInfo {
   }
 
   // Clean remaining words from workQuery (strip stopwords, meta words, punctuation)
-  const cleaned = workQuery.toLowerCase().replace(/[^\w\s-]/g, ' ');
+  const cleaned = workQuery.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ');
   const words = cleaned.split(/\s+/).filter(Boolean);
   const nonStopwords = words.filter((w) => !COMMON_CONVERSATIONAL_STOPWORDS.has(w));
   const cleanedQuery = nonStopwords.join(' ').trim();
@@ -272,7 +272,7 @@ export function extractAnchorKeywords(query: string): string[] {
   if (!query || typeof query !== 'string') return [];
 
   // Remove common punctuation except hyphens
-  const cleaned = query.toLowerCase().replace(/[^\w\s-]/g, ' ');
+  const cleaned = query.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ');
   const words = cleaned.split(/\s+/).filter(Boolean);
 
   const nonStopwords = words.filter((w) => !COMMON_CONVERSATIONAL_STOPWORDS.has(w));
