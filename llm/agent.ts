@@ -54,6 +54,12 @@ function errorMessage(error: unknown): string {
   return 'Tool execution failed.';
 }
 
+/** Serializes the model-facing view of a tool result; UI-only fields such as citations are left out. */
+function toolMessageContent(result: ToolExecutionResult): string {
+  const { citations: _citations, ...modelView } = result;
+  return compactToolResult(JSON.stringify(modelView));
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Tool execution timed out.')), timeoutMs);
@@ -191,7 +197,7 @@ export class AIAssistantAgent {
           role: 'tool' as const,
           tool_call_id: call.id,
           name: call.function.name,
-          content: compactToolResult(JSON.stringify(result)),
+          content: toolMessageContent(result),
         };
       });
       const settled = await Promise.allSettled(executions);
@@ -209,7 +215,7 @@ export class AIAssistantAgent {
             role: 'tool' as const,
             tool_call_id: call.id,
             name: call.function.name,
-            content: compactToolResult(JSON.stringify(result)),
+            content: toolMessageContent(result),
           });
         }
       });

@@ -66,15 +66,32 @@ export function compactToolResult(content: string, maxChars = 12_000): string {
       return value;
     };
 
+    // Trim records in a way that keeps the most useful ones: the newest of an ascending
+    // (chronological) list, the records nearest the anchor of a surrounding-context window,
+    // and the top of a ranked/newest-first list.
+    const records = parsed?.data?.messages || parsed?.data?.hits;
+    const time = (record: any) => Date.parse(record?.timestamp ?? '');
+    const policy = parsed?.code === 'surrounding_messages'
+      ? 'edges'
+      : Array.isArray(records) && records.length > 1 && time(records[0]) < time(records[records.length - 1])
+        ? 'oldest'
+        : 'tail';
+    const dropOne = (list: any[]) => {
+      if (policy === 'oldest' || (policy === 'edges' && list.length % 2 === 0)) list.shift();
+      else list.pop();
+    };
+    if (Array.isArray(records)) while (records.length > 20) dropOne(records);
+
     const safe = compactNode(parsed);
     safe.truncation = { ...(safe.truncation || {}), truncated: true };
+    const messagesArray = safe?.data?.messages || safe?.data?.hits;
+    if (Array.isArray(messagesArray)) safe.truncation.returned = messagesArray.length;
     let serialized = JSON.stringify(safe);
 
-    // Progressively pop message records from data array if still exceeding character limit
-    const messagesArray = safe?.data?.messages || safe?.data?.hits;
+    // Progressively drop message records if still exceeding the character limit
     while (serialized.length > maxChars && Array.isArray(messagesArray) && messagesArray.length > 1) {
-      messagesArray.pop();
-      if (safe.truncation) safe.truncation.returned = messagesArray.length;
+      dropOne(messagesArray);
+      safe.truncation.returned = messagesArray.length;
       serialized = JSON.stringify(safe);
     }
 
