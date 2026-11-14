@@ -7,7 +7,7 @@ import { RestAPI } from '@webpack/common';
 import { getMessageDetails } from '../discord/contextTools';
 import { formatUntrustedEvidence, sanitizeUntrustedContent, validateChannelPermission } from '../discord/guardrails';
 import { getPermittedChannelIdsForScope, isChannelAllowedInScope, restrictScopeForUserPrompt } from '../discord/scope';
-import { ChannelType, CurrentScopeContext, DiscordMessage, PluginSettings } from '../types';
+import { ChannelType, CurrentScopeContext, DiscordMessage } from '../types';
 import { assert } from './assert';
 
 const ACTIVE_DM = '100000000000000001';
