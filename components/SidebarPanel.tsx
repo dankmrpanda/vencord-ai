@@ -22,7 +22,10 @@ import { HistoryDrawer } from './HistoryDrawer';
 import { ScopeIndicator } from './ScopeIndicator';
 import {
   deleteHistorySession,
+  escapeLayer,
+  isEscapeForPanel,
   isNearBottom,
+  isUnhandledEscape,
   keepScopeForChannel,
   selectHistorySession,
   streamScrollKey,
@@ -98,6 +101,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const isUserScrolledUpRef = React.useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
   const lastChannelIdRef = React.useRef<string | null>(null);
   // index.tsx passes a new arrow on every render; a ref keeps the channel listener effect from re-running.
   const onLaunchConsumedRef = React.useRef(onLaunchConsumed);
@@ -173,6 +177,28 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
   const session = chatService.getActiveSession();
   const isGenerating = chatService.isGenerating();
+
+  // UI-Q09: Escape closes the mention popup, then an open drawer, before index.tsx closes the panel. Capture phase
+  // runs before the window bubble listener in index.tsx, which skips events marked handled here.
+  const popupOpen = mentionSuggestions.length > 0;
+  const drawerOpen = showHistory || showDebug;
+  React.useEffect(() => {
+    if (!popupOpen && !drawerOpen) return;
+    const onEscape = (e: KeyboardEvent) => {
+      if (!isUnhandledEscape(e) || !isEscapeForPanel(e.target, panelRef.current, document.body)) return;
+      const layer = escapeLayer(popupOpen, drawerOpen);
+      if (layer === 'panel') return;
+      e.preventDefault();
+      if (layer === 'popup') {
+        setMentionSuggestions([]);
+      } else {
+        setShowHistory(false);
+        setShowDebug(false);
+      }
+    };
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
+  }, [popupOpen, drawerOpen]);
 
   // SEC-09: sessions are per channel. Whenever no run is in progress, show the viewed channel's session: after a
   // channel change, when the panel reopens in another channel, and when a run ends after the user moved.
@@ -317,11 +343,6 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         }
         return;
       }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setMentionSuggestions([]);
-        return;
-      }
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -340,7 +361,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   };
 
   return (
-    <div style={panelContainerStyle}>
+    <div style={panelContainerStyle} ref={panelRef}>
       {/* Panel Top Header */}
       <div style={panelHeaderStyle}>
         <div style={headerTitleGroupStyle}>
@@ -350,7 +371,10 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         <div style={headerActionsStyle}>
           <button
             style={showDebug ? activeIconButtonStyle : iconButtonStyle}
-            onClick={() => setShowDebug(!showDebug)}
+            onClick={() => {
+              if (!showDebug) setShowHistory(false);
+              setShowDebug(!showDebug);
+            }}
             title="Debug Diagnostics & Live Logs"
           >
             🐞
@@ -360,6 +384,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             onClick={() => {
               if (isGenerating && !showHistory) return;
               refreshSessions(getCurrentChannelId());
+              if (!showHistory) setShowDebug(false);
               setShowHistory(!showHistory);
             }}
             title={isGenerating && !showHistory ? 'Chat History (stop generating first)' : 'Chat History'}

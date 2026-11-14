@@ -14,7 +14,10 @@ import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
 import {
   deleteHistorySession,
+  escapeLayer,
+  isEscapeForPanel,
   isNearBottom,
+  isUnhandledEscape,
   keepScopeForChannel,
   selectHistorySession,
   sessionChannelTarget,
@@ -296,6 +299,26 @@ async function ui03ScrollFollowsStream(): Promise<void> {
     'UI-Q01 near-bottom threshold (80 px)');
 }
 
+/** UI-04 / UI-Q09: Escape is ignored once handled, during IME composition, or outside the panel; inner layers go first. */
+async function ui04EscapeLayering(): Promise<void> {
+  const esc = (over: Record<string, unknown> = {}) => ({ key: 'Escape', defaultPrevented: false, isComposing: false, keyCode: 27, ...over });
+  assert(isUnhandledEscape(esc()), 'UI-04 plain Escape counts');
+  assert(!isUnhandledEscape(esc({ defaultPrevented: true })), 'UI-04 Escape already handled (popup, Discord) must be ignored');
+  assert(!isUnhandledEscape(esc({ isComposing: true })), 'UI-04 Escape during IME composition must be ignored');
+  assert(!isUnhandledEscape(esc({ keyCode: 229 })), 'UI-04 IME keyCode 229 must be ignored');
+  assert(!isUnhandledEscape(esc({ key: 'Enter' })), 'UI-04 other keys ignored');
+  const inside = { id: 'inside' };
+  const outside = { id: 'discord-composer' };
+  const body = { id: 'body' };
+  const panel = { contains: (node: any) => node === inside };
+  assert(isEscapeForPanel(inside, panel, body), 'UI-04 focus inside panel');
+  assert(isEscapeForPanel(body, panel, body), 'UI-04 nothing focused (body)');
+  assert(!isEscapeForPanel(outside, panel, body), 'UI-04 focus in Discord must not close the panel');
+  assert(!isEscapeForPanel(outside, null, body), 'UI-04 no panel mounted');
+  assert(escapeLayer(true, true) === 'popup' && escapeLayer(false, true) === 'drawer' && escapeLayer(false, false) === 'panel',
+    'UI-Q09 innermost layer first: popup, drawer, panel');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -307,6 +330,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-01 scope kept until channel change', ui01ScopeKeptUntilChannelChange],
   ['UI-11 base URL redacted in debug drawer', ui11BaseUrlRedacted],
   ['UI-03 scroll follows stream', ui03ScrollFollowsStream],
+  ['UI-04 Escape layering', ui04EscapeLayering],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

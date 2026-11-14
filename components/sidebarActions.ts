@@ -77,3 +77,27 @@ export function streamScrollKey(session: Pick<ChatSession, 'id' | 'messages'> | 
   const last = session.messages[session.messages.length - 1];
   return `${session.id}:${session.messages.length}:${last?.content?.length ?? 0}:${last?.steps?.length ?? 0}`;
 }
+
+export interface EscapeKeyLike {
+  key: string;
+  defaultPrevented: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
+}
+
+/** UI-04: an Escape that a popup, Discord, or an IME composition already used must not close anything else. */
+export function isUnhandledEscape(e: EscapeKeyLike): boolean {
+  return e.key === 'Escape' && !e.defaultPrevented && !e.isComposing && e.keyCode !== 229;
+}
+
+/** UI-04: Escape closes the sidebar only when focus is in it, or nowhere in particular (the page body). */
+export function isEscapeForPanel(target: unknown, panel: { contains(node: any): boolean } | null, body: unknown): boolean {
+  if (!target || target === body) return true;
+  return Boolean(panel?.contains(target));
+}
+
+/** UI-Q09: Escape closes the innermost open layer first. */
+export function escapeLayer(popupOpen: boolean, drawerOpen: boolean): 'popup' | 'drawer' | 'panel' {
+  if (popupOpen) return 'popup';
+  return drawerOpen ? 'drawer' : 'panel';
+}

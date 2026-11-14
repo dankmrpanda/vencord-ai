@@ -10,6 +10,7 @@ import { createRoot as vcCreateRoot, Menu, React } from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from './assistantLaunch';
 import { getPluginErrorBoundary } from './components/PluginErrorBoundary';
 import { SidebarPanel } from './components/SidebarPanel';
+import { isEscapeForPanel, isUnhandledEscape } from './components/sidebarActions';
 import { DiagnosticLogEntry, renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
 import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
 import { find, findByCode, findByProps } from './discord/stores';
@@ -429,7 +430,8 @@ function handleKeyDown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
     e.preventDefault();
     toggleAIAssistant();
-  } else if (e.key === 'Escape' && isSidebarOpen) {
+  } else if (isSidebarOpen && isUnhandledEscape(e) && isEscapeForPanel(e.target, rootContainer, document.body)) {
+    // UI-04: the panel's own layers (mention popup, drawers) handle Escape first and mark it handled.
     e.preventDefault();
     toggleAIAssistant();
   }
