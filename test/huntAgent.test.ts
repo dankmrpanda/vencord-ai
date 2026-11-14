@@ -11,7 +11,8 @@ import { getSessionById } from '../storage/chatHistory';
 import { buildConversationContext, compactToolResult, estimateTokens } from '../llm/compression';
 import { OpenAICompatibleClient } from '../llm/provider';
 import { availableToolDefinitions, TOOL_REGISTRY } from '../llm/toolRegistry';
-import { consumeChatCompletionStream } from '../llm/transport';
+import { consumeChatCompletionStream, OpenAICompatibleTransport } from '../llm/transport';
+import { getProviderCapabilities } from '../llm/capabilities';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
 import { assert } from './assert';
@@ -441,6 +442,41 @@ async function sec09SessionFollowsScopeChannel(): Promise<void> {
   }
 }
 
+/** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
+async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const requested: string[] = [];
+  try {
+    globalThis.fetch = (async (input: any) => {
+      requested.push(String(input));
+      return new Response('data: [DONE]\n\n', { status: 200 });
+    }) as typeof fetch;
+    // A blank base URL falls back to the absolute default endpoint, never a page-relative path.
+    for (const baseUrl of ['', '   ']) {
+      const runSettings = settings({ baseUrl, apiKey: 'local-server-key' });
+      await new OpenAICompatibleTransport(runSettings, getProviderCapabilities(runSettings.providerPreset))
+        .complete({ messages: [{ role: 'user', content: 'hi' }], stream: false }).catch(() => undefined);
+    }
+    assert(requested.every((url) => url.startsWith('http://localhost:8000/v1/')), `LIFE-07 blank base URL requested ${requested.join(', ')}`);
+    requested.length = 0;
+    for (const baseUrl of ['127.0.0.1:8000/v1', '/proxy-path', 'ftp://llm.test/v1', 'http://user:hunter2@llm.test/v1']) {
+      const runSettings = settings({ baseUrl, apiKey: 'local-server-key' });
+      const transport = new OpenAICompatibleTransport(runSettings, getProviderCapabilities(runSettings.providerPreset));
+      let message = '';
+      try {
+        await transport.complete({ messages: [{ role: 'user', content: 'hi' }], stream: false });
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      assert(requested.length === 0, `LIFE-07 base URL ${JSON.stringify(baseUrl)} produced a request to ${requested.join(', ')}`);
+      assert(message !== '', `LIFE-07 base URL ${JSON.stringify(baseUrl)} did not raise an error`);
+      assert(!message.includes('hunter2') && !message.includes(baseUrl), `LIFE-07 error echoes the base URL: ${message}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 /** LLM-12: a provider error on a later loop turn throws out of the run, discarding evidence instead of finalizing. */
 async function llm12LoopTurnFailureSkipsFinalization(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -537,6 +573,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-05 history summary not system', sec05HistorySummaryNotSystem],
   ['LLM-11 deleted session resurrected by run', llm11DeletedSessionResurrected],
   ['SEC-09 session follows scope channel', sec09SessionFollowsScopeChannel],
+  ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],
 ];

@@ -11,7 +11,7 @@ import {
   ProviderCapabilities,
   ToolDefinition,
 } from '../types';
-import { resolveModelIdentifier } from './modelSettings';
+import { normalizeBaseUrl, resolveModelIdentifier } from './modelSettings';
 
 export interface TransportCallbacks {
   onToken?: (token: string) => void;
@@ -158,7 +158,8 @@ export class OpenAICompatibleTransport {
     signal?: AbortSignal,
   ): Promise<CompletionResult> {
     signal?.throwIfAborted();
-    const baseUrl = (this.settings.baseUrl || 'http://localhost:8000/v1').trim().replace(/\/$/, '');
+    // Throws a fixed message before any request unless the URL is absolute http(s) without credentials.
+    const baseUrl = normalizeBaseUrl(this.settings.baseUrl);
     const messages = request.messages.map((message) => message.role === 'developer' && !this.capabilities.developerMessages
       ? { ...message, role: 'system' as const }
       : message);
