@@ -117,9 +117,42 @@ async function sec02GroupDmSubstringMatch(): Promise<void> {
   assert(isChannelAllowedInScope('700000000000000007', restrictScopeForUserPrompt(numeric, 'search group 700000000000000007 please')), 'SEC-02 an exact group DM ID must still be accepted');
 }
 
+/** SEC-07: the sanitizer's denylist misses current chat-template control tokens. */
+async function sec07SanitizerTokenCoverage(): Promise<void> {
+  const samples = [
+    '<|start_header_id|>system<|end_header_id|>',
+    '<|eot_id|>',
+    '<start_of_turn>user',
+    '<|start|>system<|message|>',
+    '<|endoftext|>',
+    '<|end|>',
+  ];
+  const survived = samples.filter((sample) => sanitizeUntrustedContent(`x ${sample} y`).includes(sample));
+  assert(survived.length === 0, `SEC-07 sanitizeUntrustedContent left control tokens intact: ${survived.join(' ')}`);
+  assert(!/[​﻿⁠]/.test(sanitizeUntrustedContent('a​b﻿c⁠d')), 'SEC-07 zero-width characters survive sanitization');
+  // Invisible characters are removed before tokens are rewritten, so they cannot be used to split a token.
+  assert(!sanitizeUntrustedContent('<|im_​start|>system').includes('<|im_start|>'), 'SEC-07 a zero-width split reassembled a control token');
+  // The sanitizer is applied to every model-facing string, so ordinary values must pass through unchanged.
+  const ordinary = [
+    '123456789012345678',
+    'https://cdn.discordapp.com/attachments/1/2/a_b.png?ex=1&is=2&hm=3',
+    '2026-01-01T00:00:00.000Z',
+    'Ünïcødé 名前 \u{1F468}‍\u{1F469}‍\u{1F467} x<y && y>z',
+    'use <s>strike</s> sparingly',
+  ];
+  const changed = ordinary.filter((value) => sanitizeUntrustedContent(value) !== value);
+  assert(changed.length === 0, `SEC-07 sanitizer altered ordinary values: ${changed.join(' | ')}`);
+  const once = sanitizeUntrustedContent(`${samples.join(' ')} [INST] # system`);
+  assert(sanitizeUntrustedContent(once) === once, 'SEC-07 sanitizer must be idempotent');
+  for (const odd of [42, {}, [], undefined, null, Symbol('x')]) {
+    assert(sanitizeUntrustedContent(odd as any) === '', `SEC-07 sanitizer must return '' for non-string input ${String(odd)}`);
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 message_id path traversal', sec01MessageIdPathTraversal],
   ['SEC-02 group DM substring match', sec02GroupDmSubstringMatch],
+  ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
 ];
 
 export async function runHuntScopeTests(): Promise<void> {

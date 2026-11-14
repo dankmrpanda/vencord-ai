@@ -201,12 +201,14 @@ export function sanitizeUntrustedContent(text?: string | null): string {
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
     // 2. Remove Unicode directional formatting overrides (Trojan Source attacks: U+202A to U+202E, U+200E, U+200F, U+2066-U+2069)
     .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '')
-    // 3. Neutralize LLM special tokens / prompt hijacking markers
-    .replace(/<\|im_start\|>/gi, '[im_start]')
-    .replace(/<\|im_end\|>/gi, '[im_end]')
-    .replace(/<\|system\|>/gi, '[system]')
-    .replace(/<\|user\|>/gi, '[user]')
-    .replace(/<\|assistant\|>/gi, '[assistant]')
+    // 3. Remove zero-width / invisible characters (ZWSP, word joiner, invisible operators, BOM). ZWNJ/ZWJ
+    //    (U+200C/U+200D) are kept because emoji sequences and several scripts need them. All deletions run
+    //    before the token rewrites below, so an invisible character cannot be used to split a token.
+    .replace(/[\u200B\u2060-\u2064\uFEFF]/g, '')
+    // 4. Neutralize LLM special tokens / prompt hijacking markers. `<|name|>` covers ChatML, Llama 3,
+    //    harmony and similar templates; Gemma uses bare turn tags. Llama 2 `<s>` is left alone (ordinary HTML).
+    .replace(/<\|([a-z0-9_]{1,40})\|>/gi, '[$1]')
+    .replace(/<(\/?)(start_of_turn|end_of_turn)>/gi, '[$1$2]')
     .replace(/\[INST\]/gi, '[INST_TAG]')
     .replace(/\[\/INST\]/gi, '[/INST_TAG]')
     .replace(/<<SYS>>/gi, '<<SYS_TAG>>')
