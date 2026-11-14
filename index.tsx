@@ -343,6 +343,8 @@ export function toggleAIAssistant() {
   }
   isSidebarOpen = true;
   renderSidebar();
+  // UI-Q05: opening the panel puts the cursor in its input.
+  setTimeout(() => rootContainer?.querySelector('textarea')?.focus(), 0);
 }
 
 function launchAssistant(request: AssistantLaunchRequest): void {

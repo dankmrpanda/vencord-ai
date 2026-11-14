@@ -109,3 +109,8 @@ export function launchRequestForSend(
 ): AssistantLaunchRequest | null {
   return request && !customPrompt ? request : null;
 }
+
+/** UI-Q05: return focus to the input when a run ends, unless the user has since moved focus elsewhere in Discord. */
+export function shouldRefocusInput(wasGenerating: boolean, generating: boolean, focusInPanel: boolean): boolean {
+  return wasGenerating && !generating && focusInPanel;
+}

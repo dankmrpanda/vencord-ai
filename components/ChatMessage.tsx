@@ -179,6 +179,11 @@ function renderMarkdownContent(content: string): React.ReactNode {
   );
 }
 
+/** UI-Q05: a reply that finished (stopped or otherwise) without any text. */
+export function isEmptyFinishedReply(message: Pick<AssistantChatMessage, 'role' | 'content' | 'isStreaming'>): boolean {
+  return message.role !== 'user' && !message.isStreaming && !message.content?.trim();
+}
+
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSettings }) => {
   const isUser = message.role === 'user';
   const errorHint = isUser ? null : classifyChatError(message.content);
@@ -226,6 +231,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSetting
 
       <div style={contentBodyStyle}>
         {renderMarkdownContent(message.content)}
+        {isEmptyFinishedReply(message) && <em style={timeStyle}>Stopped before any answer.</em>}
         {message.isStreaming && <span style={streamingCursorStyle}>▋</span>}
       </div>
 

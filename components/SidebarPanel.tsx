@@ -29,6 +29,7 @@ import {
   keepScopeForChannel,
   launchRequestForSend,
   selectHistorySession,
+  shouldRefocusInput,
   streamScrollKey,
   syncSessionToChannel,
 } from './sidebarActions';
@@ -178,6 +179,14 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
   const session = chatService.getActiveSession();
   const isGenerating = chatService.isGenerating();
+
+  // UI-Q05: the textarea is disabled during a run; give focus back when it ends.
+  const wasGeneratingRef = React.useRef(isGenerating);
+  React.useEffect(() => {
+    const focusInPanel = isEscapeForPanel(document.activeElement, panelRef.current, document.body);
+    if (shouldRefocusInput(wasGeneratingRef.current, isGenerating, focusInPanel)) textareaRef.current?.focus();
+    wasGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
 
   // UI-Q09: Escape closes the mention popup, then an open drawer, before index.tsx closes the panel. Capture phase
   // runs before the window bubble listener in index.tsx, which skips events marked handled here.

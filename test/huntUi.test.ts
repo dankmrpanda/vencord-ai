@@ -9,7 +9,7 @@ import * as webpackCommon from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from '../assistantLaunch';
 import { classifyChatError } from '../components/chatErrors';
 import { classifyLink } from '../components/chatLinks';
-import { ChatMessage } from '../components/ChatMessage';
+import { ChatMessage, isEmptyFinishedReply } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
@@ -24,6 +24,7 @@ import {
   launchRequestForSend,
   selectHistorySession,
   sessionChannelTarget,
+  shouldRefocusInput,
   streamScrollKey,
   syncSessionToChannel,
 } from '../components/sidebarActions';
@@ -411,6 +412,20 @@ async function uiQ02ActionableErrors(): Promise<void> {
   assert(!user.includes('data-error-kind'), 'UI-Q02 user messages never get a hint');
 }
 
+/** UI-Q05: an empty finished reply says it stopped; focus returns to the input when a run ends. */
+async function uiQ05StopAndFocus(): Promise<void> {
+  const empty = { ...assistantMessage(''), isStreaming: false };
+  assert(isEmptyFinishedReply(empty), 'UI-Q05 empty finished reply detected');
+  assert(!isEmptyFinishedReply({ ...empty, isStreaming: true }), 'UI-Q05 still streaming');
+  assert(!isEmptyFinishedReply({ ...empty, content: 'answer' }), 'UI-Q05 has content');
+  assert(!isEmptyFinishedReply({ ...empty, role: 'user' }), 'UI-Q05 user message');
+  const html = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: empty }));
+  assert(html.includes('Stopped before any answer.'), 'UI-Q05 note rendered for an empty stopped reply');
+  assert(shouldRefocusInput(true, false, true), 'UI-Q05 refocus when the run ends');
+  assert(!shouldRefocusInput(true, false, false), 'UI-Q05 do not steal focus from Discord');
+  assert(!shouldRefocusInput(false, false, true) && !shouldRefocusInput(false, true, true), 'UI-Q05 only on the generating -> idle edge');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -426,6 +441,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-14 global toggle lifecycle', ui14GlobalToggleLifecycle],
   ['UI-13 launch request scoped to its prompt', ui13LaunchRequestScoped],
   ['UI-Q02 actionable errors', uiQ02ActionableErrors],
+  ['UI-Q05 stop note and focus', uiQ05StopAndFocus],
 ];
 
 export async function runHuntUiTests(): Promise<void> {
