@@ -8,12 +8,34 @@ import { PluginSettings } from '../types';
 const resolutions = new Map<string, { pending: Promise<string>; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 32;
+const DEFAULT_BASE_URL = 'http://localhost:8000/v1';
+
+/**
+ * Validates a configured API base URL before any request carries credentials to it.
+ * Empty values use the transport's default endpoint. Returns the trimmed URL without trailing
+ * slashes. Throws a fixed message, never echoing the input, unless the value is an absolute
+ * http(s) URL without embedded user:password credentials.
+ */
+export function normalizeBaseUrl(rawBaseUrl: string | undefined): string {
+  const baseUrl = (rawBaseUrl || '').trim().replace(/\/+$/, '') || DEFAULT_BASE_URL;
+  let parsed: URL | undefined;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {}
+  if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('The Base URL must be an absolute http:// or https:// URL, for example http://localhost:8000/v1.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('The Base URL must not contain a username or password. Use the API Key setting instead.');
+  }
+  return baseUrl;
+}
 
 /** Resolve repository names to server IDs without guessing a different model. */
 export async function resolveModelIdentifier(settings: PluginSettings): Promise<string> {
   const model = (settings.model || '').trim() || 'default';
   if (settings.providerPreset !== 'omlx' || !model.includes('/')) return model;
-  const baseUrl = settings.baseUrl.trim().replace(/\/+$/, '');
+  const baseUrl = normalizeBaseUrl(settings.baseUrl);
   const key = JSON.stringify([baseUrl, settings.apiKey, model]);
   const now = Date.now();
   for (const [cachedKey, cached] of resolutions) {

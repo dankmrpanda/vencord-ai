@@ -4,7 +4,7 @@
  */
 
 import { PluginSettings } from '../types';
-import { resolveModelIdentifier } from './modelSettings';
+import { normalizeBaseUrl, resolveModelIdentifier } from './modelSettings';
 
 export const MODEL_IDLE_TIMEOUT_MS = 5 * 60_000;
 const UNLOAD_RETRY_MS = 30_000;
@@ -69,7 +69,7 @@ export class ModelLifecycle {
     await waitFor(this.shutdownPromise, waitSignal);
     if (!['omlx', 'ollama', 'lmstudio'].includes(settings.providerPreset)) return () => {};
     // Snapshot the endpoint and credentials so settings changes cannot unload another model.
-    const snapshot = { ...settings, baseUrl: settings.baseUrl.trim().replace(/\/+$/, '') };
+    const snapshot = { ...settings, baseUrl: normalizeBaseUrl(settings.baseUrl) };
     snapshot.model = await waitFor(resolveModelIdentifier(snapshot), waitSignal);
     const key = JSON.stringify([snapshot.providerPreset, snapshot.baseUrl, snapshot.model, snapshot.apiKey]);
     let entry = this.entries.get(key);

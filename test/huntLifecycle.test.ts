@@ -1,0 +1,221 @@
+/*
+ * Phase 1 hunt repro tests for the model-lifecycle area (prefix LIFE).
+ * Every case here is expected to be RED until the matching finding is fixed.
+ */
+
+import { setImmediate as settle } from 'node:timers/promises';
+import { mock } from 'node:test';
+import { MODEL_IDLE_TIMEOUT_MS, ModelLifecycle } from '../llm/modelLifecycle';
+import { normalizeBaseUrl, resolveModelIdentifier } from '../llm/modelSettings';
+import { PluginSettings } from '../types';
+import { assert } from './assert';
+
+const RETRY_MS = 30_000;
+
+function fixtureSettings(overrides: Partial<PluginSettings>): PluginSettings {
+  return {
+    providerPreset: 'omlx', baseUrl: 'http://hunt-lifecycle.fixture/v1', apiKey: '',
+    model: 'fixture-model', temperature: 0, maxTokens: 10, systemPrompt: '',
+    enableVision: false, maxContextMessages: 10, searchLimitPerQuery: 10, maxSearchIterations: 3,
+    ...overrides,
+  };
+}
+
+interface Call { url: string; body: any; auth?: string }
+
+/** Runs a case with a stubbed fetch, fake setTimeout, and a fresh lifecycle; restores globals. */
+async function withLifecycle(
+  respond: (call: Call) => Response | Promise<Response>,
+  run: (lifecycle: ModelLifecycle, calls: Call[], advance: (ms: number) => Promise<void>) => Promise<void>,
+): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const calls: Call[] = [];
+  const lifecycle = new ModelLifecycle();
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const advance = async (ms: number) => {
+    mock.timers.tick(ms);
+    for (let i = 0; i < 5; i++) await settle();
+  };
+  globalThis.fetch = (async (url: any, init?: RequestInit) => {
+    const headers = (init?.headers || {}) as Record<string, string>;
+    const call = { url: String(url), body: init?.body ? JSON.parse(String(init.body)) : {}, auth: headers.Authorization };
+    calls.push(call);
+    return respond(call);
+  }) as typeof fetch;
+  try {
+    await run(lifecycle, calls, advance);
+  } finally {
+    await lifecycle.shutdown().catch(() => {});
+    mock.timers.reset();
+    globalThis.fetch = originalFetch;
+  }
+}
+
+const isUnload = (call: Call) => call.url.endsWith('/unload') || call.body.keep_alive === 0;
+
+/** LIFE-01: a failed idle unload is retried every 30 s forever, with no cap or backoff. */
+async function life01UnboundedUnloadRetry(): Promise<void> {
+  // Realistic trigger: a mistyped model ID; the server rejects both the load and the unload.
+  const settings = fixtureSettings({ baseUrl: 'http://life01.fixture/v1', model: 'typo-model' });
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await withLifecycle(() => Response.json({ detail: 'Not Found' }, { status: 404 }), async (lifecycle, calls, advance) => {
+      const failed = await lifecycle.acquire(settings).then(() => false, () => true);
+      assert(failed, 'precondition: the load fails');
+      await advance(MODEL_IDLE_TIMEOUT_MS);
+      for (let i = 0; i < 20; i++) await advance(RETRY_MS);
+      const unloads = calls.filter(isUnload).length;
+      assert(unloads <= 5, `LIFE-01 failed idle unloads must be capped (saw ${unloads} unload requests in 15 minutes)`);
+    });
+  } finally {
+    console.warn = warn;
+  }
+}
+
+/** LIFE-02: two entries naming one server model unload it under the other entry's active lease. */
+async function life02AliasedEntryUnloadsActiveModel(): Promise<void> {
+  const base = fixtureSettings({ baseUrl: 'http://life02.fixture/v1', model: 'shared-model' });
+  await withLifecycle(() => Response.json({}), async (lifecycle, calls, advance) => {
+    // A run with the old API key finishes, then the user edits the key and starts a long run.
+    (await lifecycle.acquire({ ...base, apiKey: 'old-key' }))();
+    const active = await lifecycle.acquire({ ...base, apiKey: 'new-key' });
+    calls.length = 0;
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    const unloads = calls.filter(isUnload);
+    active();
+    assert(unloads.length === 0, `LIFE-02 the server model must stay resident while a lease is active (saw ${unloads.length} unload: ${unloads.map((c) => c.url).join(', ')})`);
+  });
+}
+
+/** LIFE-03a: LM Studio load reached the server but returned no instance_id; cleanup never unloads. */
+async function life03aLmStudioMissingInstanceOrphan(): Promise<void> {
+  const settings = fixtureSettings({ providerPreset: 'lmstudio', baseUrl: 'http://life03a.fixture/v1' });
+  await withLifecycle((call) => Response.json(call.url.endsWith('/load') ? { status: 'loaded' } : {}), async (lifecycle, calls, advance) => {
+    const failed = await lifecycle.acquire(settings).then(() => false, () => true);
+    assert(failed, 'precondition: a load without instance_id is reported as a failure');
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    await lifecycle.shutdown();
+    assert(calls.some(isUnload), `LIFE-03a a model the server loaded must receive an unload request (calls: ${calls.map((c) => c.url).join(', ')})`);
+  });
+}
+
+/** LIFE-03b: LM Studio load response lost (timeout/network); cleanup never unloads. */
+async function life03bLmStudioLostResponseOrphan(): Promise<void> {
+  const settings = fixtureSettings({ providerPreset: 'lmstudio', baseUrl: 'http://life03b.fixture/v1' });
+  await withLifecycle((call) => {
+    if (call.url.endsWith('/load')) throw new DOMException('The operation timed out.', 'TimeoutError');
+    return Response.json({});
+  }, async (lifecycle, calls, advance) => {
+    const failed = await lifecycle.acquire(settings).then(() => false, () => true);
+    assert(failed, 'precondition: the load response is lost');
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    await lifecycle.shutdown();
+    assert(calls.some(isUnload), `LIFE-03b a load that may have reached the server must receive an unload request (calls: ${calls.map((c) => c.url).join(', ')})`);
+  });
+}
+
+const CREDENTIALED_URL = 'http://hunt-user:hunt-secret-pw@creds-host.fixture:9123/v1';
+const CREDENTIAL_PARTS = ['hunt-user', 'hunt-secret-pw', 'creds-host', '9123'];
+
+function leakedParts(message: string): string[] {
+  return CREDENTIAL_PARTS.filter((part) => message.includes(part));
+}
+
+/** LIFE-04: a baseUrl with user:pass@ must be rejected with a message that echoes no part of it. */
+async function life04CredentialsInErrorMessage(): Promise<void> {
+  await withLifecycle(() => Response.json({ data: [{ id: 'life04-model' }] }), async (_lifecycle, calls) => {
+    const settings = fixtureSettings({ baseUrl: CREDENTIALED_URL, model: 'org/life04-model' });
+    const message = await resolveModelIdentifier(settings).then(() => '', (error) => String(error?.message ?? error));
+    assert(message !== '', 'LIFE-04 resolution with a credentialed base URL must fail');
+    assert(leakedParts(message).length === 0, `LIFE-04 resolver errors must not echo the base URL (leaked: ${leakedParts(message).join(', ')})`);
+    assert(calls.length === 0, 'LIFE-04 no request may be sent to a credentialed base URL');
+  });
+}
+
+/** LIFE-04b: the same rejection on the lifecycle load path (no-slash omlx model, so no resolution). */
+async function life04bCredentialsInLoadError(): Promise<void> {
+  await withLifecycle(() => Response.json({}), async (lifecycle, calls) => {
+    for (const providerPreset of ['omlx', 'ollama', 'lmstudio'] as const) {
+      const settings = fixtureSettings({ providerPreset, baseUrl: CREDENTIALED_URL, model: 'life04b-model' });
+      const message = await lifecycle.acquire(settings).then(() => '', (error) => String(error?.message ?? error));
+      assert(message !== '', `LIFE-04b ${providerPreset} acquire with a credentialed base URL must fail`);
+      assert(leakedParts(message).length === 0, `LIFE-04b ${providerPreset} acquire errors must not echo the base URL (leaked: ${leakedParts(message).join(', ')})`);
+    }
+    assert(calls.length === 0, 'LIFE-04b no request may be sent to a credentialed base URL');
+  });
+}
+
+/** LIFE-07: an empty or scheme-less baseUrl yields a relative URL; in the browser it resolves to the Discord origin with the API key attached. */
+async function life07RelativeBaseUrlSendsKey(): Promise<void> {
+  const offenders: string[] = [];
+  for (const [preset, baseUrl, model] of [
+    ['omlx', '', 'life07-model'],
+    ['omlx', '127.0.0.1:8000/v1', 'life07-model'],
+    ['omlx', '127.0.0.1:8001/v1', 'org/life07-model'],
+    ['ollama', '', 'life07-model'],
+    ['lmstudio', '/v1', 'life07-model'],
+  ] as const) {
+    await withLifecycle(() => Response.json({ data: [{ id: 'life07-model' }], instance_id: 'life07-instance' }), async (lifecycle, calls) => {
+      await lifecycle.acquire(fixtureSettings({ providerPreset: preset, baseUrl, model, apiKey: 'local-server-key' })).then((r) => r(), () => {});
+      for (const call of calls) {
+        if (call.auth && !/^https?:\/\//.test(call.url)) offenders.push(`${preset} baseUrl=${JSON.stringify(baseUrl)} -> ${call.url}`);
+      }
+    });
+  }
+  assert(offenders.length === 0, `LIFE-07 authenticated lifecycle requests must target an absolute http(s) URL (relative: ${offenders.join('; ')})`);
+}
+
+/** LIFE-07: normalizeBaseUrl accepts only absolute http(s) URLs and never echoes rejected input. */
+async function life07NormalizeBaseUrlContract(): Promise<void> {
+  const accepted: Array<[string | undefined, string]> = [
+    ['http://localhost:8000/v1/', 'http://localhost:8000/v1'],
+    ['  https://api.example.test/v1//  ', 'https://api.example.test/v1'],
+    ['HTTP://127.0.0.1:11434/v1', 'HTTP://127.0.0.1:11434/v1'],
+    ['', 'http://localhost:8000/v1'],
+    ['   ', 'http://localhost:8000/v1'],
+    [undefined, 'http://localhost:8000/v1'],
+  ];
+  for (const [input, expected] of accepted) {
+    const actual = normalizeBaseUrl(input);
+    assert(actual === expected, `LIFE-07 normalizeBaseUrl(${JSON.stringify(input)}) should be ${expected} (got ${actual})`);
+  }
+  const rejected = [
+    'rejected-host.fixture:8000/v1', '127.0.0.1:8000/v1', 'localhost:8000/v1', '/v1', 'v1/models',
+    'ftp://rejected-host.fixture/v1', 'javascript:rejected-host', 'file:///rejected-host/v1',
+    'http://rejected-user@rejected-host.fixture/v1', 'http://:rejected-pass@rejected-host.fixture/v1', CREDENTIALED_URL,
+  ];
+  for (const input of rejected) {
+    let message = '';
+    try {
+      normalizeBaseUrl(input);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    assert(message !== '', `LIFE-07 normalizeBaseUrl must reject ${JSON.stringify(input)}`);
+    const echoed = ['rejected-host', 'rejected-user', 'rejected-pass', ...CREDENTIAL_PARTS].filter((part) => message.includes(part));
+    assert(echoed.length === 0, `LIFE-07 rejection text must not echo the input (echoed: ${echoed.join(', ')})`);
+  }
+}
+
+const CASES: Array<[string, () => Promise<void>]> = [
+  ['LIFE-04 credentials echoed in fetch error', life04CredentialsInErrorMessage],
+  ['LIFE-04b credentials echoed in acquire error', life04bCredentialsInLoadError],
+  ['LIFE-07 relative baseUrl sends API key', life07RelativeBaseUrlSendsKey],
+  ['LIFE-07 normalizeBaseUrl contract', life07NormalizeBaseUrlContract],
+];
+
+export async function runHuntLifecycleTests(): Promise<void> {
+  const failures: string[] = [];
+  for (const [name, run] of CASES) {
+    try {
+      await run();
+      console.log(`✅ huntLifecycle: ${name}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(message);
+      console.log(`❌ huntLifecycle: ${name}: ${message}`);
+    }
+  }
+  assert(failures.length === 0, `huntLifecycle: ${failures.length} failing case(s)`);
+}
