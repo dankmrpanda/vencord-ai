@@ -8,6 +8,7 @@ import { normalizeBaseUrl, resolveModelIdentifier } from './modelSettings';
 
 export const MODEL_IDLE_TIMEOUT_MS = 5 * 60_000;
 const UNLOAD_RETRY_MS = 30_000;
+const MAX_UNLOAD_ATTEMPTS = 5;
 
 interface ModelEntry {
   settings: PluginSettings;
@@ -17,6 +18,7 @@ interface ModelEntry {
   instanceId?: string;
   loaded: boolean;
   needsCleanup: boolean;
+  unloadFailures: number;
   loading: boolean;
   loadPending?: Promise<void>;
   unloading?: Promise<void>;
@@ -76,7 +78,7 @@ export class ModelLifecycle {
     if (!entry) {
       entry = {
         settings: snapshot, users: 0, pending: Promise.resolve(),
-        loaded: false, needsCleanup: false, loading: false,
+        loaded: false, needsCleanup: false, unloadFailures: 0, loading: false,
       };
       this.entries.set(key, entry);
     }
@@ -106,6 +108,7 @@ export class ModelLifecycle {
         try {
           await this.changeResidency(target, true);
           target.loaded = true;
+          target.unloadFailures = 0;
         } finally {
           target.loading = false;
         }
@@ -172,6 +175,7 @@ export class ModelLifecycle {
         entry.loaded = false;
         entry.needsCleanup = false;
         entry.instanceId = undefined;
+        entry.unloadFailures = 0;
       }
     };
     // A warm model can be unloaded synchronously on exit; pending loads must finish first.
@@ -181,7 +185,17 @@ export class ModelLifecycle {
     entry.unloading = pending.catch(() => {
       console.warn('[VencordAI] Could not unload the local model. Check the model server.');
       // Keep the target so a temporary server failure cannot orphan a resident model.
-      if (!this.stopped && entry.users === 0) this.scheduleUnload(key, entry, UNLOAD_RETRY_MS);
+      entry.unloadFailures++;
+      if (this.stopped || entry.users > 0) return;
+      if (entry.unloadFailures < MAX_UNLOAD_ATTEMPTS) {
+        this.scheduleUnload(key, entry, UNLOAD_RETRY_MS * 2 ** (entry.unloadFailures - 1));
+        return;
+      }
+      // Stop retrying a server that keeps rejecting the unload, such as a mistyped model ID.
+      entry.loaded = false;
+      entry.needsCleanup = false;
+      entry.instanceId = undefined;
+      entry.unloadFailures = 0;
     }).finally(() => {
       entry.unloading = undefined;
       this.forgetIfClean(key, entry);

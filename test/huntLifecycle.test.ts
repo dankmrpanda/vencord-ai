@@ -53,20 +53,48 @@ async function withLifecycle(
 
 const isUnload = (call: Call) => call.url.endsWith('/unload') || call.body.keep_alive === 0;
 
-/** LIFE-01: a failed idle unload is retried every 30 s forever, with no cap or backoff. */
+/** LIFE-01: a failed idle unload must back off and stop after a bounded number of attempts. */
 async function life01UnboundedUnloadRetry(): Promise<void> {
   // Realistic trigger: a mistyped model ID; the server rejects both the load and the unload.
   const settings = fixtureSettings({ baseUrl: 'http://life01.fixture/v1', model: 'typo-model' });
+  let status = 404;
   const warn = console.warn;
   console.warn = () => {};
   try {
-    await withLifecycle(() => Response.json({ detail: 'Not Found' }, { status: 404 }), async (lifecycle, calls, advance) => {
+    await withLifecycle(() => Response.json({}, { status }), async (lifecycle, calls, advance) => {
       const failed = await lifecycle.acquire(settings).then(() => false, () => true);
       assert(failed, 'precondition: the load fails');
+      let elapsed = 0;
+      const unloadTimes: number[] = [];
       await advance(MODEL_IDLE_TIMEOUT_MS);
-      for (let i = 0; i < 20; i++) await advance(RETRY_MS);
+      for (let second = 0; second < 60 * 60; second += 5) {
+        const before = calls.filter(isUnload).length;
+        await advance(5_000);
+        elapsed += 5_000;
+        if (calls.filter(isUnload).length > before) unloadTimes.push(elapsed);
+      }
       const unloads = calls.filter(isUnload).length;
-      assert(unloads <= 5, `LIFE-01 failed idle unloads must be capped (saw ${unloads} unload requests in 15 minutes)`);
+      assert(unloads === 5, `LIFE-01 failed idle unloads must stop after five attempts (saw ${unloads} in 65 minutes)`);
+      const gaps = unloadTimes.map((time, index) => time - (unloadTimes[index - 1] ?? 0));
+      assert(gaps.slice(1).join(',') === '60000,120000,240000', `LIFE-01 retries must back off exponentially after the first 30 s retry (gaps ${gaps.join(',')})`);
+
+      // Giving up must not poison the entry: the next run reloads and a recovered server is unloaded once.
+      status = 200;
+      calls.length = 0;
+      const release = await lifecycle.acquire(settings);
+      assert(calls.length === 1 && calls[0].url.endsWith('/load'), 'LIFE-01 a run after giving up reloads the model');
+      release();
+      await advance(MODEL_IDLE_TIMEOUT_MS);
+      assert(calls.filter(isUnload).length === 1, 'LIFE-01 a recovered server receives one idle unload');
+
+      // A success resets the backoff: the next failure retries after 30 s again.
+      calls.length = 0;
+      (await lifecycle.acquire(settings))();
+      status = 503;
+      await advance(MODEL_IDLE_TIMEOUT_MS);
+      status = 200;
+      await advance(RETRY_MS);
+      assert(calls.filter(isUnload).length === 2, 'LIFE-01 backoff restarts at 30 s after a successful load or unload');
     });
   } finally {
     console.warn = warn;
@@ -199,6 +227,7 @@ async function life07NormalizeBaseUrlContract(): Promise<void> {
 }
 
 const CASES: Array<[string, () => Promise<void>]> = [
+  ['LIFE-01 unbounded idle-unload retry', life01UnboundedUnloadRetry],
   ['LIFE-04 credentials echoed in fetch error', life04CredentialsInErrorMessage],
   ['LIFE-04b credentials echoed in acquire error', life04bCredentialsInLoadError],
   ['LIFE-07 relative baseUrl sends API key', life07RelativeBaseUrlSendsKey],
