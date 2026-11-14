@@ -49,7 +49,12 @@ function normalizeTools(tools: ToolDefinition[], capabilities: ProviderCapabilit
 }
 function mergeToolCalls(target: Map<number, { id: string; name: string; arguments: string }>, raw: any[]): void {
   for (const item of raw) {
-    const index = Number(item.index) || 0;
+    let index = Number(item.index) || 0;
+    if (item.index === undefined || item.index === null) {
+      // Non-conforming servers omit `index`: a new call id starts a new call, otherwise continue the latest one.
+      const latest = target.size ? Math.max(...target.keys()) : -1;
+      index = latest < 0 ? 0 : item.id && item.id !== target.get(latest)!.id ? latest + 1 : latest;
+    }
     const existing = target.get(index) || { id: item.id || `call_${index}`, name: '', arguments: '' };
     if (item.id) existing.id = item.id;
     const name = item.function?.name;

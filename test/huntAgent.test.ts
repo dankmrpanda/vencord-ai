@@ -185,6 +185,14 @@ async function llm03StreamToolCallsWithoutIndex(): Promise<void> {
   const calls = (result.toolCalls || []).map((call) => `${call.id}:${call.function.name}:${call.function.arguments}`);
   assert(calls.length === 2,
     `LLM-03 two index-less tool calls were merged into ${calls.length}: ${JSON.stringify(calls)}`);
+  const fragments = [
+    { choices: [{ delta: { tool_calls: [{ id: 'call_c', type: 'function', function: { name: 'search_messages', arguments: '{"query":' } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ function: { arguments: '"united"}' } }] } }] },
+  ];
+  const fragmentBody = `${fragments.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`;
+  const fragmented = await consumeChatCompletionStream(new Response(fragmentBody).body!);
+  assert(fragmented.toolCalls?.length === 1 && fragmented.toolCalls[0].function.arguments === '{"query":"united"}',
+    `LLM-03 index-less fragments of one call were split: ${JSON.stringify(fragmented.toolCalls)}`);
 }
 
 /** LLM-04: the tools-disabled finalization call is sent even when the input-token budget is already exceeded. */
