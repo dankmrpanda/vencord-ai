@@ -46,6 +46,11 @@ function registered(
   };
 }
 
+/** A whole number in [min, max]; missing, zero or non-numeric values use the fallback. */
+function intArg(value: unknown, fallback: number, min: number, max: number): number {
+  return Math.min(Math.max(Math.floor(Number(value)) || fallback, min), max);
+}
+
 function ok<T>(code: string, summary: string, data: T): ToolExecutionResult<T> {
   return { ok: true, code, summary, data };
 }
@@ -83,7 +88,7 @@ const listAvailableChannels = registered('list_available_channels', 'local', asy
 });
 
 const searchMessages = registered('search_messages', 'discord', async (args, context) => {
-  const limit = Math.min(Math.max(Number(args.limit) || context.settings.searchLimitPerQuery || 25, 1), 50);
+  const limit = intArg(args.limit, context.settings.searchLimitPerQuery || 25, 1, 50);
   const result = await runMessageSearch({
     query: args.query as string | undefined,
     pattern: args.pattern as string | undefined,
@@ -96,11 +101,11 @@ const searchMessages = registered('search_messages', 'discord', async (args, con
     beforeDate: args.before_date as string | undefined,
     sortBy: args.sort_by as any,
     sortOrder: args.sort_order as any,
-    offset: args.offset as number | undefined,
+    offset: args.offset === undefined ? undefined : Math.max(0, Math.floor(Number(args.offset) || 0)),
     pinned: args.pinned as boolean | undefined,
     mentions: args.mentions as string | undefined,
     limit,
-    scanLimit: Math.min(Math.max(Number(args.scan_limit) || 100, limit), 500),
+    scanLimit: intArg(args.scan_limit, 100, limit, 500),
     beforeMessageId: args.before_message_id as string | undefined,
   }, context.scope);
   result.citations = (result.data?.messages || []).map((message) => context.addCitation(message));
@@ -113,7 +118,7 @@ const surroundingMessages = registered('fetch_surrounding_messages', 'discord', 
   if (!isChannelAllowedInScope(channelId, context.scope)) {
     return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted scope.' };
   }
-  const messages = await fetchSurroundingMessages(channelId, String(args.message_id), Math.min(Number(args.limit) || 10, 25));
+  const messages = await fetchSurroundingMessages(channelId, String(args.message_id), intArg(args.limit, 10, 1, 25));
   const result = ok(messages.length ? 'surrounding_messages' : 'empty_results', `Retrieved ${messages.length} surrounding message${messages.length === 1 ? '' : 's'}.`, { messages });
   result.citations = messages.map((message) => context.addCitation(message));
   result.scope = { channelIds: [channelId], guildId: context.scope.guildId };
@@ -131,7 +136,8 @@ const recentMessages = registered('fetch_recent_messages', 'discord', async (arg
   if (compiled && !compiled.regex) {
     return { ok: false, code: 'invalid_pattern', summary: `The pattern was rejected: ${compiled.error || 'invalid regular expression'}.` };
   }
-  const fetched = await fetchRecentMessages(channelId, Math.min(Number(args.limit) || 25, 100));
+  const limit = intArg(args.limit, 25, 1, 100);
+  const fetched = await fetchRecentMessages(channelId, limit);
   const regex = compiled?.regex;
   const messages = regex
     ? fetched.filter((message) => {
@@ -145,7 +151,7 @@ const recentMessages = registered('fetch_recent_messages', 'discord', async (arg
   const result = ok(messages.length ? 'recent_messages' : 'empty_results', `Retrieved ${messages.length} recent message${messages.length === 1 ? '' : 's'}${label}.`, { messages });
   result.citations = messages.map((message) => context.addCitation(message));
   result.scope = { channelIds: [channelId], guildId: context.scope.guildId };
-  result.pagination = { nextBeforeMessageId: fetched.length === Math.min(Number(args.limit) || 25, 100) ? fetched[0]?.id : undefined };
+  result.pagination = { nextBeforeMessageId: fetched.length === limit ? fetched[0]?.id : undefined };
   result.truncation = { truncated: Boolean(result.pagination.nextBeforeMessageId), returned: messages.length };
   return result;
 });
@@ -164,13 +170,13 @@ const inspectImage = registered('inspect_image', 'discord', async (args, context
 }, (_, settings) => Boolean(settings.enableVision) && getProviderCapabilities(settings.providerPreset).vision, 30_000);
 
 const messageDetails = registered('get_message_details', 'discord', async (args, context) => {
-  const result = await getMessageDetails(context.scope, String(args.channel_id), String(args.message_id), Math.min(Math.max(Number(args.reply_depth) || 3, 0), 5));
+  const result = await getMessageDetails(context.scope, String(args.channel_id), String(args.message_id), intArg(args.reply_depth ?? 3, 0, 0, 5));
   if (result.data) result.citations = [result.data.message, ...result.data.replyChain].map((message) => context.addCitation(message));
   return result;
 });
 
 const channelPins = registered('list_channel_pins', 'discord', async (args, context) => {
-  const result = await listChannelPins(context.scope, String(args.channel_id || context.scope.channelId), Math.min(Math.max(Number(args.limit) || 25, 1), 50), args.before as string | undefined);
+  const result = await listChannelPins(context.scope, String(args.channel_id || context.scope.channelId), intArg(args.limit, 25, 1, 50), args.before as string | undefined);
   if (result.data) result.citations = result.data.messages.map((message) => context.addCitation(message));
   return result;
 });
@@ -179,7 +185,7 @@ const threads = registered('list_threads', 'discord', async (args, context) => {
   const result = await listThreads(
     context.scope,
     args.channel_id as string | undefined,
-    Math.min(Math.max(Number(args.limit) || 25, 1), 50),
+    intArg(args.limit, 25, 1, 50),
     Boolean(args.include_archived),
   );
   result.citations = result.data?.threads.flatMap((item) =>

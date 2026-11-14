@@ -310,6 +310,27 @@ async function sec01NonNumericMessageIdsRejected(): Promise<void> {
   assert(!('before_message_id' in optional), 'SEC-01 an empty optional before_message_id should be treated as absent');
 }
 
+/** LLM-15: negative or fractional numeric limits must be floored and clamped before reaching Discord. */
+async function llm15NumericLimitsClamped(): Promise<void> {
+  const context: ToolExecutionContext = {
+    scope: dmScope(),
+    settings: settings(),
+    addCitation: (entry: DiscordMessage) => ({ messageId: entry.id } as CitationItem),
+    analyzeImage: async () => '',
+  };
+  const limits: string[] = [];
+  const surrounding = TOOL_REGISTRY.get('fetch_surrounding_messages')!;
+  const recent = TOOL_REGISTRY.get('fetch_recent_messages')!;
+  await withRestGet((request) => { limits.push(String(request?.query?.limit)); return []; }, async () => {
+    await surrounding.execute(surrounding.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000041', limit: -5 }), context);
+    await surrounding.execute(surrounding.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000041', limit: 2.5 }), context);
+    await recent.execute(recent.parseArgs({ limit: -3 }), context);
+    await recent.execute(recent.parseArgs({ limit: 3.7 }), context);
+  });
+  const bad = limits.filter((limit) => !/^[1-9]\d*$/.test(limit));
+  assert(bad.length === 0, `LLM-15 non-positive or fractional limits reached Discord: ${JSON.stringify(limits)}`);
+}
+
 /** LLM-07: a call that failed transiently is marked as executed, so the identical retry is rejected as a duplicate. */
 async function llm07FailedCallCannotBeRetried(): Promise<void> {
   const tool = TOOL_REGISTRY.get('fetch_recent_messages')!;
@@ -630,6 +651,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-05 unavailable tool executes', llm05UnavailableToolStillExecutes],
   ['LLM-06 prototype-named args accepted', llm06PrototypeKeysAccepted],
   ['SEC-01 non-numeric message IDs rejected', sec01NonNumericMessageIdsRejected],
+  ['LLM-15 numeric limits clamped', llm15NumericLimitsClamped],
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],
   ['LLM-09 elapsed budget ignored during call', llm09ElapsedBudgetIgnoredDuringCall],
