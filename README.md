@@ -3,11 +3,11 @@
 > [!TIP]
 > **LLM Context**: If you are an AI assistant or developer agent working on this codebase, refer to [context.md](context.md) for the architecture and privacy boundaries.
 
-A powerful client-side AI assistant plugin for **Vencord**, **Vesktop**, and **Equicord** that allows you to ask questions about your Discord chat history (supporting **100k+ messages**), find attachments/images, and analyze conversations across channels and DMs.
+A powerful client-side AI assistant plugin for **Vencord**, **Vesktop**, and **Equicord** that allows you to ask questions about your Discord chat history (supporting **100k+ messages**), find attachments/images, and analyze conversations across channels and DMs. History at that scale is reached through Discord's own server-side search plus a bounded scan of recent channel messages; the plugin does not keep a local copy of your messages.
 
-Supports locally-hosted models (**omlx** on Apple Silicon, **Ollama**, **LM Studio**, **vLLM**) as well as cloud providers (**OpenAI**, **OpenRouter**, **Groq**).
+Supports locally-hosted models (**omlx** on Apple Silicon, **Ollama**, **LM Studio**, and **vLLM** through the Custom preset) as well as cloud providers (**OpenAI**, **OpenRouter**, **Groq**).
 
-For the **omlx**, **Ollama**, and **LM Studio** presets, sending an assistant chat message or testing the connection automatically loads the selected model. Warm models are reused between messages, and the plugin unloads them after **5 minutes of inactivity** following completion, failure, or cancellation. The model stays loaded throughout the reply and tool calls; another message resets the idle timer. Cancelling a slow load stops the chat's wait immediately while retaining cleanup for the server's eventual load result. Failed idle unloads retry every 30 seconds while the plugin is running.
+For the **omlx**, **Ollama**, and **LM Studio** presets, sending an assistant chat message or testing the connection automatically loads the selected model. Warm models are reused between messages, and the plugin unloads them after **5 minutes of inactivity** following completion, failure, or cancellation. The model stays loaded throughout the reply and tool calls; another message resets the idle timer. Cancelling a slow load stops the chat's wait immediately while retaining cleanup for the server's eventual load result. A failed idle unload is retried after 30 s, 60 s, 120 s and 240 s (five attempts in total) and then given up; the next chat loads the model again normally. A model is not unloaded while another settings entry that uses the same server model is still in use.
 
 Disabling the plugin cancels active work and starts immediate model cleanup, including models whose loads finish later. Quitting or reloading Discord dispatches unload requests with Fetch `keepalive` so already-dispatched requests can outlive the page. Exit cleanup is best effort: a force quit, server failure, or renderer exit before an in-flight load returns (especially LM Studio's instance ID) can prevent completion. Ollama preloads use a finite five-minute `keep_alive` instead of pinning the model indefinitely; subsequent inference follows the server's configured keep-alive behavior until plugin cleanup.
 
@@ -19,18 +19,20 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 
 ## 🌟 Key Features
 
-- 🔍 **Server-Side Message Search (100k+ Messages)**: Uses Discord's native search API through agentic tool calling to locate past messages, filter by authors, date ranges, and attachment types without crashing your client.
+- 🔍 **Server-Side Message Search (100k+ Messages)**: Uses Discord's native search API through agentic tool calling to locate past messages, filter by authors, date ranges, and attachment types without crashing your client. The repository also contains a local message index (`storage/index`, `storage/retrieval.ts`), but production code never populates it, so its search step never returns a hit in the shipped plugin.
 - 📜 **Context Reconstruction**: Automatically retrieves surrounding conversational turns around target messages to understand full conversational context.
 - 🧰 **Read-Only Discord Context Tools**: Retrieve message details/reply chains, channel pins, and active or archived threads/forum posts. No sending, reacting, editing, deleting, or pinning tools exist.
 - 🛡️ **Autonomous Scoping with Privacy Boundaries**:
   - **In Server Channels**: Restricted to channels in the active server you have permission to view.
-  - **In DMs**: Defaults to the active 1-on-1 DM. A mutual group DM is queried only when explicitly requested by the user.
+  - **In DMs**: Defaults to the active 1-on-1 DM. A mutual group DM is queried only when the prompt names it (its name or ID as a whole word).
+  - Message IDs supplied by the model are validated, and a fetched message must belong to the requested channel.
+- 🧯 **Untrusted Content Handling**: Every string in every tool result is sanitized before the model sees it, and channel, thread, server and user names are sanitized and quoted in the model's context. Links written by the model may only be `https:` or Discord links; external links show their real URL next to the link text.
 - 🖥️ **Local & Cloud Model Support**:
   - **Local**: `omlx` (Apple Silicon MLX), `Ollama`, `LM Studio`, `vLLM` via OpenAI-compatible endpoints (`/v1/chat/completions`).
   - **Cloud**: OpenAI (`gpt-4o-mini`, `gpt-4o`), OpenRouter, Groq (`llama-3.1-70b`), etc.
-- 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots.
+- 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots. It is offered only when vision is enabled in settings and the provider preset declares vision support (currently OpenAI and OpenRouter).
 - 📌 **Clickable Discord Jump Citations**: Referenced messages appear as rich preview cards with one-click jump buttons directly into your Discord chat stream.
-- 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management.
+- 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. A chat deleted while it is generating stays deleted.
 - 🎨 **Native Discord UI**: Sleek right-hand dockable sidebar toggled via the `✨` button in Discord's header bar or `Ctrl+Shift+A` (`Cmd+Shift+A` on macOS).
 
 ---
@@ -82,6 +84,8 @@ Open the plugin settings under **Discord Settings → Plugins → AIAssistant (G
 
 Click **⚡ Test Connection** in the settings panel to verify your endpoint.
 
+The API Base URL must be an absolute `http://` or `https://` URL and must not contain a username or password (use the API Key setting instead). The plugin checks this before sending any request, including load/unload calls and Test Connection, and shows the reason under the field when the value is invalid. Provider error messages are redacted so the API key is not shown or saved in chat history.
+
 ---
 
 ## 💡 Usage
@@ -96,7 +100,7 @@ Click **⚡ Test Connection** in the settings panel to verify your endpoint.
 
 You can also right-click a message and choose **Ask AI about this message**, or right-click a thread/forum channel and choose **Summarize this thread**. These actions only prefill and focus the sidebar; they never auto-submit.
 
-Search returns at most 50 ranked results per call and scans at most 500 local messages. Server-index results expose an offset cursor; local scans expose the next oldest message ID. Exact-date bounds use the user's local timezone while stored timestamps remain ISO.
+Search returns at most 50 ranked results per call and scans at most 500 recent channel messages. Discord search results expose an offset cursor that follows the primary query; recent-message scans expose the next oldest message ID. Exact-date bounds use the user's local timezone while stored timestamps remain ISO, and a date that cannot be parsed returns an `invalid_date` error instead of being ignored.
 
 ---
 
@@ -105,12 +109,15 @@ Search returns at most 50 ranked results per call and scans at most 500 local me
 ```
 vencord-ai/
 ├── index.tsx              # Plugin entry point (definePlugin, header bar icon, keybinds)
+├── assistantLaunch.ts     # Context-menu launch requests
+├── diagnostics.ts         # Debug-drawer log formatting
 ├── types.ts               # Discord & AI Assistant TypeScript types
 ├── settings.tsx           # Settings panel & provider presets
 ├── declarations.d.ts      # Vencord module type declarations
 ├── discord/
 │   ├── stores.ts          # Discord Webpack store finders & token access
 │   ├── scope.ts           # Privacy boundaries & mutual GDM filters
+│   ├── guardrails.ts      # Scope/permission checks & untrusted-content sanitizing
 │   ├── search.ts          # Rate-limited server-side message search API
 │   ├── searchPipeline.ts  # Normalize, vary, filter, dedupe, rerank, paginate
 │   ├── contextTools.ts    # Read-only message details, pins, threads/forums
@@ -121,17 +128,26 @@ vencord-ai/
 │   ├── capabilities.ts    # Conservative provider capability presets
 │   ├── toolRegistry.ts    # Typed read-only registry and executors
 │   ├── agent.ts           # Budgeted tool-calling agent loop
+│   ├── modelLifecycle.ts  # Local model load/reuse/idle unload
+│   ├── modelSettings.ts   # Base URL validation & omlx model ID resolution
 │   └── prompts.ts         # System instructions & function definitions
+├── services/
+│   ├── chatService.ts     # Per-channel sessions & agent runs
+│   └── runtimeLifecycle.ts # Plugin start/stop & page-exit cleanup
 ├── storage/
-│   └── chatHistory.ts     # Persistent IndexedDB multi-session store
+│   ├── chatHistory.ts     # Persistent IndexedDB multi-session store
+│   ├── retrieval.ts       # Local hybrid retrieval engine (not populated in production)
+│   └── index/             # Local inverted index & worker (not populated in production)
 ├── components/
 │   ├── SidebarPanel.tsx   # Dockable assistant drawer
 │   ├── ChatMessage.tsx    # Message bubble with steps & citations
 │   ├── ToolCallBadge.tsx  # Tool execution accordion
 │   ├── MessagePreview.tsx # Message citation card with jump button
+│   ├── chatLinks.ts       # Link scheme allowlist for chat markdown
 │   └── ScopeIndicator.tsx # Visual scope boundary badge
+├── test/                  # Test suites, run together by test/run.ts
 ├── package.json
-├── tsconfig.json
+├── tsconfig.dev.json
 ├── context.md             # Developer context & architecture guide for LLMs
 ├── SMOKE_TEST.md          # Manual Discord/provider smoke-test prompts
 └── README.md
@@ -152,6 +168,9 @@ Execute all scope, search, agent, and provider contract fixtures through one run
 ```bash
 npm run test
 ```
+`npm test` runs every suite registered in `test/run.ts`, including the bug-hunt suites (`scopePermission`, `huntScope`, `huntLifecycle`, `huntIndex`, `huntAgent`, `huntSearch`, `huntUi`, `challenger_m2_review`). Suites use the throwing `assert` from `test/assert.ts`, so any failed assertion fails the run.
+
+`npm run test:benchmark` runs the 100k-message retrieval benchmark. It measures a test-only index class in `test/benchmark100k.ts`, not the plugin's `storage/index`, and the plugin does not use a local index at runtime, so its numbers say nothing about in-app search speed.
 
 Use [SMOKE_TEST.md](SMOKE_TEST.md) for the interactive Discord and local/cloud provider checks.
 
