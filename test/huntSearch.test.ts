@@ -5,8 +5,8 @@
  */
 
 import { RestAPI } from '@webpack/common';
-import { compileRegexSafely, fetchRecentMessages, filterMessagesLocally } from '../discord/messages';
-import { detectPatternFromQuery } from '../discord/search';
+import { compileRegexSafely, fetchDiscordMessagesApi, fetchRecentMessages, filterMessagesLocally } from '../discord/messages';
+import { detectPatternFromQuery, searchDiscordMessages } from '../discord/search';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { STRUCTURED_PATTERNS } from '../storage/regex';
 import { HybridRetrievalEngine } from '../storage/retrieval';
@@ -287,6 +287,74 @@ async function srch09FractionalLimit(): Promise<string | null> {
   return bad.length ? `fetchRecentMessages(…, 150.5) sent limit=${JSON.stringify(limits)} (got ${got.length})` : null;
 }
 
+/** SRCH-10: 429 retries had no retry_after cap, ignored cancellation and slept outside the start queue. */
+async function srch10RateLimitRetries(): Promise<string | null> {
+  const problems: string[] = [];
+  const outerSetTimeout = globalThis.setTimeout;
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  const held: Array<() => void> = [];
+  let holdFrom = Infinity;
+  // Fake timers: record each delay, hold long ones when asked, fire the rest at once.
+  (globalThis as any).setTimeout = (handler: (...args: any[]) => void, ms?: number, ...args: any[]) => {
+    events.push(`timer:${ms}`);
+    const fire = () => { if (Number(ms) >= 3000) events.push('waited'); handler(...args); };
+    if (Number(ms) >= holdFrom) { held.push(fire); return 0; }
+    return outerSetTimeout(fire, 0);
+  };
+  (globalThis as any).fetch = async () => { throw new Error('network disabled in test'); };
+  const rateLimited = (retryAfter: unknown) => Object.assign(new Error('429'), { status: 429, body: { retry_after: retryAfter } });
+  const tick = (ms: number) => new Promise((resolve) => outerSetTimeout(resolve, ms));
+  try {
+    let searches = 0;
+    const capped = await withGet(({ url }) => { if (!isSearch(url)) return []; searches++; throw rateLimited(60); },
+      () => runMessageSearch({ query: 'cappedneedle', limit: 10, scanLimit: 10 }, dmScope()));
+    if (searches !== 1) problems.push(`retry_after=60 sent ${searches} search requests (expected 1, no retry)`);
+    if (!capped.ok) problems.push(`retry_after=60 did not fall back (code=${capped.code})`);
+
+    events.length = 0;
+    await withGet(({ url, query }) => {
+      if (!isSearch(url)) return [];
+      events.push(`req:${query.content}`);
+      if (events.filter((e) => e.startsWith('req:')).length === 1) throw rateLimited(3);
+      return { total_results: 0, messages: [] };
+    }, () => Promise.all(['queuedneedle', 'queuedother'].map((query) => searchDiscordMessages({ query, channelId: DM }))));
+    const afterLimit = events.slice(events.findIndex((e) => e.startsWith('req:')) + 1);
+    const nextReq = afterLimit.findIndex((e) => e.startsWith('req:'));
+    if (!afterLimit.slice(0, nextReq).includes('waited')) problems.push(`a queued search started before retry_after=3 elapsed (${JSON.stringify(events)})`);
+
+    holdFrom = 2000;
+    const controller = new AbortController();
+    let sent = 0;
+    const pending = withGet(({ url }) => { if (!isSearch(url)) return []; sent++; throw rateLimited(3); },
+      () => runMessageSearch({ query: 'abortneedle', limit: 10, scanLimit: 10 }, dmScope(), controller.signal));
+    const outcome = pending.then(() => 'resolved', () => 'rejected');
+    await tick(20);
+    controller.abort();
+    const settled = await Promise.race([outcome, tick(200).then(() => 'still sleeping')]);
+    held.splice(0).forEach((fire) => fire());
+    await tick(20);
+    if (settled !== 'rejected' || sent !== 1) problems.push(`abort during a 429 retry wait: ${settled}, ${sent} search requests`);
+    holdFrom = Infinity;
+
+    events.length = 0;
+    let calls = 0;
+    const page = await withGet(() => { if (++calls === 1) throw rateLimited('soon'); return [msg('180000000000000018', DM, 'x', new Date().toISOString())]; },
+      () => fetchDiscordMessagesApi(DM, { limit: '1' }));
+    const retryDelay = events.find((e) => e.startsWith('timer:'));
+    if (page.length !== 1 || retryDelay === undefined || !(Number(retryDelay.slice(6)) >= 1000)) problems.push(`retry_after="soon" retried after ${retryDelay} (expected a finite fallback delay)`);
+    calls = 0;
+    const cappedPage = await withGet(() => { calls++; throw rateLimited(60); }, () => fetchDiscordMessagesApi(DM, { limit: '1' }));
+    if (calls !== 1 || cappedPage.length !== 0) problems.push(`messages retry_after=60 sent ${calls} requests (expected 1, no retry)`);
+  } finally {
+    globalThis.setTimeout = outerSetTimeout;
+    globalThis.fetch = originalFetch;
+  }
+  // Leave the shared start time in the past for later suites that use real timers.
+  await withGet(() => ({ total_results: 0, messages: [] }), () => searchDiscordMessages({ query: 'resetneedle', channelId: DM }));
+  return problems.length ? problems.join('; ') : null;
+}
+
 const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
@@ -296,6 +364,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-06 query mangling', srch06QueryMangling],
   ['SRCH-08 invalid after_date ignored', srch08InvalidDateIgnored],
   ['SRCH-09 fractional limit', srch09FractionalLimit],
+  ['SRCH-10 rate-limit retries', srch10RateLimitRetries],
 ];
 
 /** Collapses the 1.2 s search throttle and retry sleeps; restored in finally. */

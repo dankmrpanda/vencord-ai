@@ -352,11 +352,45 @@ let lastRequestTime = 0;
 let searchStartQueue: Promise<void> = Promise.resolve();
 const MIN_REQUEST_INTERVAL_MS = 1200;
 
-async function throttle(): Promise<void> {
+/** Longest retry_after honoured; longer rate limits fail so callers fall back instead of stalling. */
+export const MAX_RETRY_AFTER_SECONDS = 5;
+
+function abortError(signal: AbortSignal): unknown {
+  return signal.reason ?? Object.assign(new Error('The search was aborted.'), { name: 'AbortError' });
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError(signal!));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** Parses a Retry-After/retry_after value in seconds; unparseable values fall back to 2 s. */
+export function parseRetryAfterSeconds(value: unknown): number {
+  const sec = Number(value);
+  return Number.isFinite(sec) ? Math.max(sec, 1) : 2;
+}
+
+async function throttle(signal?: AbortSignal): Promise<void> {
   const scheduled = searchStartQueue.then(async () => {
-    const elapsed = Date.now() - lastRequestTime;
-    if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-      await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
+    // Re-check after each wait: a 429 elsewhere may push the start time forward meanwhile.
+    let deadline = 0;
+    while (lastRequestTime + MIN_REQUEST_INTERVAL_MS > Math.max(Date.now(), deadline)) {
+      deadline = lastRequestTime + MIN_REQUEST_INTERVAL_MS;
+      await abortableSleep(deadline - Date.now(), signal);
     }
     lastRequestTime = Date.now();
   });
@@ -364,7 +398,10 @@ async function throttle(): Promise<void> {
   await scheduled;
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Holds every queued search start until the rate-limit window has passed. */
+function deferSearchStarts(delayMs: number): void {
+  lastRequestTime = Math.max(lastRequestTime, Date.now() + delayMs - MIN_REQUEST_INTERVAL_MS);
+}
 
 export function buildSearchCacheKey(
   options: SearchOptions,
@@ -418,10 +455,7 @@ function extractRetryAfterSeconds(target: any): number | null {
   if (!target) return null;
   const status = target.status ?? target.statusCode;
   const retryVal = target.headers?.get?.('Retry-After') ?? target.body?.retry_after ?? target.retry_after;
-  if (retryVal) {
-    const sec = Number(retryVal);
-    return isNaN(sec) ? 2 : Math.max(sec, 1);
-  }
+  if (retryVal) return parseRetryAfterSeconds(retryVal);
   if (status === 429 || status === 202) {
     return 2;
   }
@@ -433,8 +467,10 @@ function extractRetryAfterSeconds(target: any): number | null {
  */
 export async function searchDiscordMessages(
   options: SearchOptions,
-  retriesRemaining: number = 3
+  retriesRemaining: number = 3,
+  signal?: AbortSignal,
 ): Promise<SearchResponse> {
+  throwIfAborted(signal);
   const { minId: effectiveMinId, maxId: effectiveMaxId } = resolveDateSnowflakeBounds(options);
 
   // Check if options.query is a pure pattern descriptor with no keyword (e.g. "6-digit")
@@ -456,7 +492,8 @@ export async function searchDiscordMessages(
     return cached.data;
   }
 
-  await throttle();
+  await throttle(signal);
+  throwIfAborted(signal);
 
   // Resolve guild ID from channel if not explicitly provided
   let guildId = options.guildId;
@@ -513,6 +550,7 @@ export async function searchDiscordMessages(
           Authorization: token || '',
           'Content-Type': 'application/json',
         },
+        signal,
       });
 
       if (!response.ok) {
@@ -528,21 +566,26 @@ export async function searchDiscordMessages(
 
     const retrySec = extractRetryAfterSeconds(rawData);
     if (retrySec !== null && retriesRemaining > 0) {
-      console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
-      await sleep(retrySec * 1000 + 500);
-      lastRequestTime = Date.now();
-      return searchDiscordMessages(options, retriesRemaining - 1);
+      return retryAfterRateLimit(retrySec, undefined);
     }
   } catch (err: any) {
-    const retrySec = extractRetryAfterSeconds(err);
+    const retrySec = signal?.aborted ? null : extractRetryAfterSeconds(err);
     if (retrySec !== null && retriesRemaining > 0) {
-      console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
-      await sleep(retrySec * 1000 + 500);
-      lastRequestTime = Date.now();
-      return searchDiscordMessages(options, retriesRemaining - 1);
+      return retryAfterRateLimit(retrySec, err);
     }
     console.error('[VencordAI] Search error', { status: err?.status ?? err?.statusCode ?? 'unknown' });
     throw err;
+  }
+
+  async function retryAfterRateLimit(retrySec: number, cause: unknown): Promise<SearchResponse> {
+    // Queued and retried starts wait in throttle(), which honours the signal.
+    deferSearchStarts(Math.min(retrySec, MAX_RETRY_AFTER_SECONDS) * 1000 + 500);
+    if (retrySec > MAX_RETRY_AFTER_SECONDS) {
+      console.warn('[VencordAI] discord_search_rate_limited', { retryAfterSeconds: retrySec });
+      throw cause ?? Object.assign(new Error(`Discord search asked to retry after ${retrySec}s`), { status: 429 });
+    }
+    console.info('[VencordAI] discord_search_retry', { retriesRemaining, retryAfterSeconds: retrySec });
+    return searchDiscordMessages(options, retriesRemaining - 1, signal);
   }
 
   // Normalize raw message array structure

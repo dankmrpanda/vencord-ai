@@ -73,6 +73,7 @@ function isValidSearchDate(value: string): boolean {
 export async function runMessageSearch(
   request: MessageSearchRequest,
   scope: CurrentScopeContext,
+  signal?: AbortSignal,
 ): Promise<ToolExecutionResult<MessageSearchData>> {
   // 1. Fail-Closed Scope Pre-Check
   const isGuildWideAllowed = Boolean(scope.isGuild && (scope.scopeMode === 'server' || scope.scopeMode === undefined));
@@ -157,12 +158,14 @@ export async function runMessageSearch(
         offset: request.offset,
         pinned: request.pinned,
         mentions: request.mentions,
-      });
+      }, 3, signal);
       const hits = hitMessages(response.messages);
       if (variant === variants[0]) primary = { hits, totalResults: response.totalResults };
       candidates.push(...hits);
       if (offset > 0) break;
     } catch (remoteErr) {
+      // A cancelled run must stop, not fall back to local sources.
+      if (signal?.aborted) throw remoteErr;
       console.warn('[VencordAI] Remote Discord search failed, falling back to local index:', remoteErr);
       remoteSearchFailed = true;
       break;
@@ -230,7 +233,7 @@ export async function runMessageSearch(
   let localNextBeforeMessageId: string | undefined;
   if (offset === 0 && channelId && candidates.length < request.limit) {
     try {
-      const recent = await fetchRecentMessages(channelId, request.scanLimit, request.beforeMessageId);
+      const recent = await fetchRecentMessages(channelId, request.scanLimit, request.beforeMessageId, signal);
       if (recent.length === request.scanLimit) {
         localNextBeforeMessageId = recent.reduce((oldest, message) =>
           new Date(message.timestamp).getTime() < new Date(oldest.timestamp).getTime() ? message : oldest,
@@ -249,7 +252,9 @@ export async function runMessageSearch(
       });
       candidates.push(...filteredRecent);
       if (fallbackUsed === 'none') fallbackUsed = 'local_scan';
-    } catch {}
+    } catch (scanErr) {
+      if (signal?.aborted) throw scanErr;
+    }
   }
 
   // 6. Deduplication, Ranking & Fail-Closed Post-Filtering

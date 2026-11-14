@@ -6,6 +6,7 @@
 
 import { DiscordMessage } from '../types';
 import { compileSafeRegex } from '../storage/regex';
+import { abortableSleep, MAX_RETRY_AFTER_SECONDS, parseRetryAfterSeconds, throwIfAborted } from './search';
 import { getAuthToken, getHTTP, getLoadedMessages } from './stores';
 
 const MAX_PATTERN_TEXT_LENGTH = 4000;
@@ -297,10 +298,12 @@ export function filterMessagesLocally(
 export async function fetchDiscordMessagesApi(
   channelId: string,
   queryObj: Record<string, string>,
-  retriesRemaining = 3
+  retriesRemaining = 3,
+  signal?: AbortSignal,
 ): Promise<DiscordMessage[]> {
   const relativeEndpoint = `/channels/${channelId}/messages`;
   const http = getHTTP();
+  throwIfAborted(signal);
 
   if (http && typeof http.get === 'function') {
     try {
@@ -310,11 +313,16 @@ export async function fetchDiscordMessagesApi(
     } catch (httpErr: any) {
       const status = httpErr?.status ?? httpErr?.statusCode;
       const retryVal = httpErr?.headers?.get?.('Retry-After') ?? httpErr?.body?.retry_after ?? httpErr?.retry_after;
-      const retrySec = retryVal ? Number(retryVal) : status === 429 ? 2 : null;
+      const retrySec = retryVal ? parseRetryAfterSeconds(retryVal) : status === 429 ? 2 : null;
+      if (retrySec !== null && retrySec > MAX_RETRY_AFTER_SECONDS) {
+        // A raw fetch would land in the same rate-limited bucket; let the caller fall back.
+        console.warn(`[VencordAI] Discord 429 on ${relativeEndpoint}, retry_after ${retrySec}s exceeds the cap`);
+        return [];
+      }
       if (retrySec !== null && retriesRemaining > 0) {
         console.warn(`[VencordAI] Discord 429 on ${relativeEndpoint}, retrying after ${retrySec}s...`);
-        await new Promise((resolve) => setTimeout(resolve, retrySec * 1000 + 300));
-        return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1);
+        await abortableSleep(retrySec * 1000 + 300, signal);
+        return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1, signal);
       }
       console.warn('[VencordAI] RestAPI.get failed, falling back to fetch:', httpErr);
     }
@@ -329,19 +337,22 @@ export async function fetchDiscordMessagesApi(
         Authorization: token || '',
         'Content-Type': 'application/json',
       },
+      signal,
     });
     if (response.status === 429 && retriesRemaining > 0) {
       const retryHeader = response.headers.get('Retry-After');
-      const retrySec = retryHeader ? parseFloat(retryHeader) : 2;
+      const retrySec = retryHeader ? parseRetryAfterSeconds(retryHeader) : 2;
+      if (retrySec > MAX_RETRY_AFTER_SECONDS) return [];
       console.warn(`[VencordAI] Discord 429 on fetch ${relativeEndpoint}, retrying after ${retrySec}s...`);
-      await new Promise((resolve) => setTimeout(resolve, retrySec * 1000 + 300));
-      return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1);
+      await abortableSleep(retrySec * 1000 + 300, signal);
+      return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1, signal);
     }
     if (response.ok) {
       const data = await response.json();
       if (Array.isArray(data)) return data;
     }
   } catch (err) {
+    if (signal?.aborted) throw err;
     console.error(`[VencordAI] Failed to fetch messages for channel ${channelId}:`, err);
   }
 
@@ -354,12 +365,13 @@ export async function fetchDiscordMessagesApi(
 export async function fetchSurroundingMessages(
   channelId: string,
   messageId: string,
-  limit: number = 10
+  limit: number = 10,
+  signal?: AbortSignal,
 ): Promise<DiscordMessage[]> {
   const messages = await fetchDiscordMessagesApi(channelId, {
     around: messageId,
     limit: String(Math.min(limit, 50)),
-  });
+  }, 3, signal);
 
   return [...messages].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -373,6 +385,7 @@ export async function fetchRecentMessages(
   channelId: string,
   limit: number = 50,
   beforeMessageId?: string,
+  signal?: AbortSignal,
 ): Promise<DiscordMessage[]> {
   const loadedFromCache = beforeMessageId ? [] : getLoadedMessages(channelId);
   const targetLimit = Math.min(Math.max(limit, 1), 500);
@@ -382,7 +395,7 @@ export async function fetchRecentMessages(
     const page = await fetchDiscordMessagesApi(channelId, {
       limit: String(Math.min(100, targetLimit - fetchedMessages.length)),
       ...(before ? { before } : {}),
-    });
+    }, 3, signal);
     if (page.length === 0) break;
     fetchedMessages.push(...page);
     before = page.reduce((oldest, message) => BigInt(message.id) < BigInt(oldest) ? message.id : oldest, page[0].id);
