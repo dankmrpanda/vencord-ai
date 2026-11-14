@@ -10,7 +10,7 @@ import { extractQueryTokens } from './index/tokenizer';
 import { IndexSearchQuery, ScoredIndexHit, StoredMessageRecord } from './index/types';
 import { indexBridge, WorkerBridge } from './index/workerBridge';
 import { computeCosineSimilarity, DenseVector, generateDenseEmbedding } from './semantic';
-import { extractMatchesFromText, isRegexSafe } from './regex';
+import { compileSafeRegex, extractMatchesFromText } from './regex';
 
 /**
  * Comprehensive Hybrid Search Query parameters.
@@ -229,7 +229,7 @@ export class HybridRetrievalEngine {
 
     // 5. Modality C: Regex / Structured Pattern Matching
     const regexRankMap = new Map<string, { rank: number; matches: string[] }>();
-    if (query.pattern && isRegexSafe(query.pattern)) {
+    if (query.pattern && compileSafeRegex(query.pattern).isSafe) {
       const patternMatches: Array<{ id: string; matches: string[] }> = [];
 
       for (const rec of candidateRecords) {

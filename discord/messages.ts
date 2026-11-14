@@ -8,6 +8,8 @@ import { DiscordMessage } from '../types';
 import { compileSafeRegex } from '../storage/regex';
 import { getAuthToken, getHTTP, getLoadedMessages } from './stores';
 
+const MAX_PATTERN_TEXT_LENGTH = 4000;
+
 export interface LocalMessageFilter {
   query?: string;
   pattern?: string | RegExp;
@@ -247,10 +249,10 @@ export function filterMessagesLocally(
 
     const fullMessageText = `${msg.content || ''} ${msg.attachments?.map((a) => a.filename).join(' ') || ''} ${msg.embeds?.map((e) => `${e.title || ''} ${e.description || ''}`).join(' ') || ''}`;
 
-    // Filter by pattern if specified
+    // Filter by pattern if specified (bounded input limits worst-case regex cost)
     if (patternRegex) {
       patternRegex.lastIndex = 0;
-      const patternMatches = patternRegex.test(fullMessageText);
+      const patternMatches = patternRegex.test(fullMessageText.slice(0, MAX_PATTERN_TEXT_LENGTH));
       if (!patternMatches) {
         continue;
       }

@@ -265,9 +265,95 @@ function containsAnyQuantifier(node: RegexNode): boolean {
   return false;
 }
 
-function checkASTSafety(alternatives: RegexAlternative[]): boolean {
+const OVERLAP_SAMPLE_CHARS = (() => {
+  const chars: string[] = ['\t', '\n', '\r', ' ', 'é', 'É', 'ж', 'Ж', '中', '😀'];
+  for (let code = 0x20; code < 0x7f; code++) chars.push(String.fromCharCode(code));
+  return chars;
+})();
+
+/** Sample characters a single-character atom can consume; null when it cannot be modelled (groups, backreferences). */
+function atomCharSet(node: RegexNode, flags: string): Set<string> | null {
+  if (node.type !== 'literal' && node.type !== 'charClass' && node.type !== 'wildcard') return null;
+  try {
+    const matcher = new RegExp(`^(?:${node.raw})$`, flags.replace(/[gy]/g, ''));
+    const chars = new Set(OVERLAP_SAMPLE_CHARS.filter((char) => matcher.test(char)));
+    // An atom that matches no sample character is unknown, not disjoint: treat it as overlapping.
+    return chars.size ? chars : null;
+  } catch {
+    return null;
+  }
+}
+
+function charSetsOverlap(a: Set<string> | null, b: Set<string> | null): boolean {
+  if (!a || !b) return true;
+  for (const char of a) {
+    if (b.has(char)) return true;
+  }
+  return false;
+}
+
+function containsUnboundedQuantifier(node: RegexNode): boolean {
+  if (node.quantifier?.max === Infinity) return true;
+  return Boolean(node.alternatives?.some((alt) => alt.nodes.some(containsUnboundedQuantifier)));
+}
+
+interface SequenceAtom {
+  chars: Set<string> | null;
+  separators: Array<Set<string> | null>;
+}
+
+/**
+ * Rejects two unbounded atoms that can consume the same characters when nothing mandatory and disjoint
+ * separates them (e.g. `\w+\s*\w+!`, `a*[a-z]*b`, `(a+)?(a+)?b`). A top-level atom followed only by optional,
+ * non-assertion nodes is exempt, because nothing after it can fail and force backtracking.
+ */
+function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: boolean): boolean {
+  const atoms: SequenceAtom[] = [];
+  const separate = (chars: Set<string> | null) => atoms.forEach((atom) => atom.separators.push(chars));
+
+  const walk = (sequence: RegexNode[], topLevel: boolean): boolean => {
+    for (let index = 0; index < sequence.length; index++) {
+      const node = sequence[index];
+      const mandatory = !node.quantifier || node.quantifier.min > 0;
+      if (node.type === 'assertion' || node.type === 'backref' || node.isLookaround) continue;
+
+      if (node.quantifier?.max === Infinity) {
+        const chars = node.type === 'group' ? null : atomCharSet(node, flags);
+        const isTail = topLevel && allowTail && !sequence.slice(index + 1).some((next) =>
+          next.type === 'assertion' || !next.quantifier || next.quantifier.min > 0);
+        for (const previous of isTail ? [] : atoms) {
+          const separated = previous.separators.some((separator) =>
+            !charSetsOverlap(separator, previous.chars) || !charSetsOverlap(separator, chars));
+          if (!separated && charSetsOverlap(previous.chars, chars)) return false;
+        }
+        if (mandatory) separate(chars);
+        atoms.push({ chars, separators: [] });
+      } else if (node.type === 'group' && containsUnboundedQuantifier(node)) {
+        // Separators inside an optional group or a single branch only apply while that branch is taken.
+        const base = atoms.map((atom) => atom.separators.length);
+        const scoped = !mandatory || (node.alternatives?.length ?? 0) > 1;
+        const added: SequenceAtom[] = [];
+        for (const alt of node.alternatives || []) {
+          if (!walk(alt.nodes, false)) return false;
+          added.push(...atoms.splice(base.length));
+          if (scoped) atoms.forEach((atom, i) => { atom.separators.length = base[i]; });
+        }
+        atoms.push(...added);
+      } else if (mandatory) {
+        separate(node.type === 'group' ? null : atomCharSet(node, flags));
+      }
+    }
+    return true;
+  };
+
+  return walk(nodes, true);
+}
+
+function checkASTSafety(alternatives: RegexAlternative[], flags = '', topLevel = true): boolean {
   for (const alt of alternatives) {
     const nodes = alt.nodes;
+
+    if (!checkUnboundedSequence(nodes, flags, topLevel)) return false;
 
     for (let j = 0; j < nodes.length - 1; j++) {
       const n1 = nodes[j];
@@ -285,6 +371,23 @@ function checkASTSafety(alternatives: RegexAlternative[]): boolean {
     for (const node of nodes) {
       if (node.type === 'group') {
         const isRepeated = isDangerousRepetition(node.quantifier);
+        const repeatsMoreThanOnce = Boolean(node.quantifier && node.quantifier.max > 1);
+
+        if (repeatsMoreThanOnce && node.alternatives?.some((a) => a.nodes.some(containsUnboundedQuantifier))) {
+          return false;
+        }
+
+        if (repeatsMoreThanOnce && node.alternatives && node.alternatives.length > 1) {
+          const firstSets = node.alternatives.map((a) => {
+            const first = a.nodes[0];
+            return first?.type === 'literal' ? atomCharSet(first, flags) : null;
+          });
+          for (let a1 = 0; a1 < firstSets.length; a1++) {
+            for (let a2 = a1 + 1; a2 < firstSets.length; a2++) {
+              if (charSetsOverlap(firstSets[a1], firstSets[a2])) return false;
+            }
+          }
+        }
 
         if (node.isLookaround && (isRepeated || node.quantifier)) {
           return false;
@@ -339,7 +442,7 @@ function checkASTSafety(alternatives: RegexAlternative[]): boolean {
         }
 
         if (node.alternatives) {
-          if (!checkASTSafety(node.alternatives)) {
+          if (!checkASTSafety(node.alternatives, flags, false)) {
             return false;
           }
         }
@@ -353,12 +456,12 @@ function checkASTSafety(alternatives: RegexAlternative[]): boolean {
 /**
  * Pre-screens a regex string to detect catastrophic backtracking / ReDoS vulnerabilities.
  */
-export function isRegexSafe(patternStr: string): boolean {
+export function isRegexSafe(patternStr: string, flags = ''): boolean {
   if (!patternStr || typeof patternStr !== 'string') return false;
   if (patternStr.length > 1000) return false;
 
   try {
-    new RegExp(patternStr);
+    new RegExp(patternStr, flags);
   } catch {
     return false;
   }
@@ -367,7 +470,7 @@ export function isRegexSafe(patternStr: string): boolean {
   const ast = parseRegexAST(patternStr);
   if (!ast) return false;
 
-  return checkASTSafety(ast);
+  return checkASTSafety(ast, flags);
 }
 
 /**
@@ -384,7 +487,7 @@ export function compileSafeRegex(
   try {
     if (pattern instanceof RegExp) {
       const source = pattern.source;
-      if (!isRegexSafe(source)) {
+      if (!isRegexSafe(source, pattern.flags)) {
         return { regex: null, isSafe: false, error: 'Pattern failed ReDoS safety analysis (nested quantifiers detected)' };
       }
       const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g';
@@ -405,7 +508,7 @@ export function compileSafeRegex(
       flags = slashMatch[2].includes('g') ? slashMatch[2] : slashMatch[2] + 'g';
     }
 
-    if (!isRegexSafe(source)) {
+    if (!isRegexSafe(source, flags)) {
       return { regex: null, isSafe: false, error: 'Pattern failed ReDoS safety analysis (nested quantifiers detected)' };
     }
 
