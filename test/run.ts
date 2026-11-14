@@ -27,6 +27,11 @@ import { runRuntimeLifecycleTests } from './runtimeLifecycle.test';
 import { runModelSettingsTests } from './modelSettings.test';
 import { runMessageLaunchTests } from './messageLaunch.test';
 import { runBugHuntTests } from './bugHunt.test';
+import { runAdversarialReviewChallengerTests } from './challenger_m2_review';
+import { runScopePermissionTests } from './scopePermission.test';
+import { runHuntScopeTests } from './huntScope.test';
+import { runHuntLifecycleTests } from './huntLifecycle.test';
+import { runHuntIndexTests } from './huntIndex.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -46,6 +51,11 @@ async function runAsyncFixtures(): Promise<void> {
   await runRuntimeLifecycleTests();
   await runSearchPipelineTests();
   await runBugHuntTests();
+  await runScopePermissionTests();
+  await runHuntScopeTests();
+  await runHuntLifecycleTests();
+  await runHuntIndexTests();
+  await runAdversarialReviewChallengerTests();
   await runIndexStorageTests();
   await runMilestone1ChallengerTests();
   await runM2Challenger1Tests();
