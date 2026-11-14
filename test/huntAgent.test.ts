@@ -200,6 +200,9 @@ async function llm04FinalizationExceedsTokenBudget(): Promise<void> {
     const estimate = estimateTokens((final.messages as any[]).map((entry) => String(entry.content || '')).join('\n'));
     assert(estimate <= 48_000,
       `LLM-04 finalization request carried ~${estimate} estimated input tokens, over the 48000 maxEstimatedInputTokens budget (requests=${requests.length})`);
+    const callIds = (final.messages as any[]).flatMap((entry) => (entry.tool_calls || []).map((call: any) => call.id));
+    const resultIds = new Set((final.messages as any[]).filter((entry) => entry.role === 'tool').map((entry) => entry.tool_call_id));
+    assert(callIds.length > 0 && callIds.every((id: string) => resultIds.has(id)), 'LLM-04 finalization request lost a tool result for one of its tool_calls');
   })));
 }
 
