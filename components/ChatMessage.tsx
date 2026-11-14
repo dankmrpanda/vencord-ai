@@ -7,6 +7,7 @@
 import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { AssistantChatMessage } from '../types';
+import { clickableProps } from './a11y';
 import { classifyChatError } from './chatErrors';
 import { classifyLink } from './chatLinks';
 import { MessagePreview } from './MessagePreview';
@@ -258,7 +259,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSetting
         <div style={citationsContainerStyle}>
           <div
             style={citationsHeaderStyle}
-            onClick={() => setShowCitations(!showCitations)}
+            {...clickableProps(() => setShowCitations(!showCitations), showCitations)}
             title={showCitations ? 'Click to hide references' : 'Click to show references'}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

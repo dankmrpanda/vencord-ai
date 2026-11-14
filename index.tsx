@@ -8,6 +8,7 @@ import { NavContextMenuPatchCallback } from '@api/ContextMenu';
 import definePlugin from '@utils/types';
 import { createRoot as vcCreateRoot, Menu, React } from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from './assistantLaunch';
+import { shortcutLabel } from './components/a11y';
 import { getPluginErrorBoundary } from './components/PluginErrorBoundary';
 import { SidebarPanel } from './components/SidebarPanel';
 import { isEscapeForPanel, isUnhandledEscape } from './components/sidebarActions';
@@ -72,6 +73,12 @@ function injectPluginStyles() {
       color: var(--interactive-normal, #b5bac1);
       transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
       flex-shrink: 0;
+    }
+    /* UI-Q07: keyboard focus is visible (text fields keep their own styling). */
+    #vencord-ai-sidebar-root :focus-visible:not(textarea):not(input),
+    #vencord-ai-header-btn:focus-visible {
+      outline: 2px solid var(--brand-experiment, #5865f2) !important;
+      outline-offset: 1px;
     }
     #vencord-ai-header-btn:hover {
       color: var(--interactive-hover, #dbdee1);
@@ -414,7 +421,8 @@ function injectHeaderButton() {
 
     const btn = document.createElement('div');
     btn.id = 'vencord-ai-header-btn';
-    btn.setAttribute('data-tooltip', 'AI Assistant (Cmd+Shift+A)');
+    const platform = (navigator as any).userAgentData?.platform || navigator.platform;
+    btn.setAttribute('data-tooltip', `AI Assistant (${shortcutLabel(platform)})`);
     btn.setAttribute('aria-label', 'AI Message Assistant');
     btn.setAttribute('role', 'button');
     btn.setAttribute('tabindex', '0');

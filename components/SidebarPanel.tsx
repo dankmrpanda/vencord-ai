@@ -391,6 +391,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
               setShowDebug(!showDebug);
             }}
             title="Debug Diagnostics & Live Logs"
+            aria-label="Debug diagnostics"
+            aria-expanded={showDebug}
           >
             🐞
           </button>
@@ -403,6 +405,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
               setShowHistory(!showHistory);
             }}
             title={isGenerating && !showHistory ? 'Chat History (stop generating first)' : 'Chat History'}
+            aria-label="Chat history"
+            aria-expanded={showHistory}
           >
             🕒
           </button>
@@ -411,15 +415,16 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             onClick={handleNewChat}
             disabled={isGenerating}
             title={isGenerating ? 'New Chat (stop generating first)' : 'New Chat'}
+            aria-label="New chat"
           >
             ➕
           </button>
           {onOpenSettings && (
-            <button style={iconButtonStyle} onClick={onOpenSettings} title="Settings">
+            <button style={iconButtonStyle} onClick={onOpenSettings} title="Settings" aria-label="Settings">
               ⚙️
             </button>
           )}
-          <button style={iconButtonStyle} onClick={onClose} title="Close Assistant (Esc)">
+          <button style={iconButtonStyle} onClick={onClose} title="Close Assistant (Esc)" aria-label="Close assistant">
             ✕
           </button>
         </div>
@@ -562,6 +567,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
           ref={textareaRef}
           style={textareaStyle}
           placeholder="Ask a question about messages, files, or @mention someone..."
+          aria-label="Message the AI assistant"
           value={inputText}
           onChange={handleTextareaInput}
           onKeyDown={handleKeyDown}
@@ -573,6 +579,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
           onClick={() => handleSend()}
           disabled={!inputText.trim() || isGenerating}
           title="Send message (Enter)"
+          aria-label="Send message"
         >
           ➔
         </button>

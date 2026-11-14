@@ -113,6 +113,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                 }}
                 disabled={disabled}
                 title={disabled ? 'Stop generating to delete' : armed?.id === s.id ? 'Click again to delete' : 'Delete Chat'}
+                aria-label={armed?.id === s.id ? `Confirm delete ${s.title || 'chat'}` : `Delete ${s.title || 'chat'}`}
               >
                 {armed?.id === s.id ? 'Delete?' : '🗑️'}
               </button>

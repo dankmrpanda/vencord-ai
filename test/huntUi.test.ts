@@ -7,11 +7,13 @@ import * as RealReact from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from '../assistantLaunch';
+import { clickableProps, shortcutLabel } from '../components/a11y';
 import { classifyChatError } from '../components/chatErrors';
 import { classifyLink } from '../components/chatLinks';
 import { ChatMessage, isEmptyFinishedReply } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
 import { deleteClickAction, DELETE_CONFIRM_MS, HistoryDrawer } from '../components/HistoryDrawer';
+import { ToolCallBadge } from '../components/ToolCallBadge';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
@@ -459,6 +461,24 @@ async function uiQ08DeleteConfirm(): Promise<void> {
   assert(html.includes('🗑️') && !html.includes('Delete?'), 'UI-Q08 unarmed drawer renders the trash button');
 }
 
+/** UI-Q07: keyboard-operable clickable divs, aria state on toggles, platform-aware shortcut label. */
+async function uiQ07Accessibility(): Promise<void> {
+  let activations = 0;
+  let prevented = 0;
+  const props = clickableProps(() => { activations++; }, false);
+  for (const key of ['Enter', ' ', 'a', 'Tab']) props.onKeyDown({ key, preventDefault: () => { prevented++; } });
+  assert(activations === 2 && prevented === 2, `UI-Q07 Enter/Space activate (${activations}, ${prevented})`);
+  assert(props.role === 'button' && props.tabIndex === 0 && props['aria-expanded'] === false, 'UI-Q07 role/tabIndex/aria-expanded');
+  assert(shortcutLabel('MacIntel') === 'Cmd+Shift+A' && shortcutLabel('macOS') === 'Cmd+Shift+A', 'UI-Q07 mac label');
+  assert(shortcutLabel('Win32') === 'Ctrl+Shift+A' && shortcutLabel('Linux x86_64') === 'Ctrl+Shift+A' && shortcutLabel(undefined) === 'Ctrl+Shift+A',
+    'UI-Q07 other platforms use Ctrl');
+  const message = { ...assistantMessage('see refs'), citations: [{ messageId: 'm1', channelId: 'c1' } as any] };
+  const html = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message }));
+  assert(/role="button" tabindex="0" aria-expanded="false"/.test(html), 'UI-Q07 citations header is a keyboard-operable toggle');
+  const badge = renderWithRealReact(() => RealReact.createElement(ToolCallBadge, { step: { id: 'st1', type: 'tool_call', toolName: 'search_messages', timestamp: 0 } as any }));
+  assert(/role="button" tabindex="0" aria-expanded="false"/.test(badge), 'UI-Q07 tool badge header is a keyboard-operable toggle');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -477,6 +497,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-Q05 stop note and focus', uiQ05StopAndFocus],
   ['UI-Q04 retry last reply', uiQ04Retry],
   ['UI-Q08 delete needs confirmation', uiQ08DeleteConfirm],
+  ['UI-Q07 accessibility basics', uiQ07Accessibility],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

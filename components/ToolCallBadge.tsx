@@ -6,6 +6,7 @@
 
 import { React } from '@webpack/common';
 import { AgentStep } from '../types';
+import { clickableProps } from './a11y';
 
 interface ToolCallBadgeProps {
   step: AgentStep;
@@ -63,7 +64,7 @@ export const ToolCallBadge: React.FC<ToolCallBadgeProps> = ({ step }) => {
 
   return (
     <div style={containerStyle}>
-      <div style={headerStyle} onClick={() => setExpanded(!expanded)}>
+      <div style={headerStyle} {...clickableProps(() => setExpanded(!expanded), expanded)}>
         <span style={toolIconStyle}>{getToolIcon()}</span>
         <span style={summaryStyle}>{getSummary()}</span>
         <span style={statusIconStyle}>{getStatusIcon()}</span>
