@@ -346,6 +346,21 @@ export function generateRelaxedQueries(query: string): string[] {
 // In-memory cache for recent search queries (only non-empty results are cached)
 const searchCache = new Map<string, { data: SearchResponse; timestamp: number }>();
 const CACHE_TTL_MS = 60 * 1000; // 1 minute
+const SEARCH_CACHE_MAX_ENTRIES = 100;
+
+/** Drops expired entries on write and keeps only the newest SEARCH_CACHE_MAX_ENTRIES. */
+function cacheSearchResult(key: string, data: SearchResponse): void {
+  const now = Date.now();
+  for (const [entryKey, entry] of searchCache) {
+    if (now - entry.timestamp >= CACHE_TTL_MS) searchCache.delete(entryKey);
+  }
+  searchCache.delete(key);
+  searchCache.set(key, { data, timestamp: now });
+  for (const oldestKey of searchCache.keys()) {
+    if (searchCache.size <= SEARCH_CACHE_MAX_ENTRIES) break;
+    searchCache.delete(oldestKey);
+  }
+}
 
 // Rate limiter / serial queue
 let lastRequestTime = 0;
@@ -608,7 +623,7 @@ export async function searchDiscordMessages(
 
   // Only cache positive results so temporary empty/indexing states do not get stuck
   if (result.messages.length > 0) {
-    searchCache.set(normalizedKey, { data: result, timestamp: Date.now() });
+    cacheSearchResult(normalizedKey, result);
   }
 
   return result;

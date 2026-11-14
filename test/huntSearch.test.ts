@@ -370,6 +370,21 @@ async function srch10RateLimitRetries(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
+/** SRCH-12: the search cache never evicted entries. */
+async function srch12SearchCacheUnbounded(): Promise<string | null> {
+  const hit = msg('190000000000000019', DM, 'cacheneedle', new Date().toISOString(), { hit: true });
+  const sent: string[] = [];
+  await withGet(({ query }) => { sent.push(String(query.content)); return { total_results: 1, messages: [[hit]] }; }, async () => {
+    for (let i = 0; i <= 100; i++) await searchDiscordMessages({ query: `cacheneedle${i}`, channelId: DM });
+    sent.length = 0;
+    await searchDiscordMessages({ query: 'cacheneedle100', channelId: DM });
+    await searchDiscordMessages({ query: 'cacheneedle0', channelId: DM });
+  });
+  return sent.length === 1 && sent[0] === 'cacheneedle0'
+    ? null
+    : `after 101 cached queries, re-running the newest and the oldest reached Discord for ${JSON.stringify(sent)} (expected only the oldest, evicted by the size cap)`;
+}
+
 const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
@@ -380,6 +395,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-08 invalid after_date ignored', srch08InvalidDateIgnored],
   ['SRCH-09 fractional limit', srch09FractionalLimit],
   ['SRCH-10 rate-limit retries', srch10RateLimitRetries],
+  ['SRCH-12 search cache unbounded', srch12SearchCacheUnbounded],
 ];
 
 /** Collapses the 1.2 s search throttle and retry sleeps; restored in finally. */
