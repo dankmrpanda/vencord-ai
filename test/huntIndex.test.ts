@@ -1,11 +1,27 @@
 /*
- * Regression tests for the approved index/storage fixes (prefix IDX): IDX-03.
+ * Regression tests for the approved index/storage fixes (prefix IDX): IDX-02, IDX-03.
  * Cases that patch globals (indexedDB, localStorage) restore them in `finally`.
  */
 
 import { saveSession } from '../storage/chatHistory';
-import { ChatSession } from '../types';
+import { InvertedIndex } from '../storage/index/invertedIndex';
+import { ChatSession, DiscordMessage } from '../types';
 import { assert } from './assert';
+
+function msg(id: string, channelId: string, content: string, authorId = 'u1', extra: Partial<DiscordMessage> = {}): DiscordMessage {
+  return {
+    id,
+    channel_id: channelId,
+    guild_id: 'g1',
+    author: { id: authorId, username: authorId } as DiscordMessage['author'],
+    content,
+    timestamp: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+    attachments: [],
+    embeds: [],
+    mentions: [],
+    ...extra,
+  };
+}
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | 'TIMEOUT'> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -120,6 +136,39 @@ function session(id: string, channelId: string, updatedAt: number): ChatSession 
 }
 
 /* ------------------------------------------------------------------------ */
+/* IDX-02: channelIds undefined = no filter; any array is an allowlist, and  */
+/* [] matches nothing (fail closed).                                         */
+/* ------------------------------------------------------------------------ */
+function idx02Index(): InvertedIndex {
+  const index = new InvertedIndex(100);
+  index.addBatch([
+    msg('a1', 'chan_allowed', 'alpha rollout notes', 'mallory'),
+    msg('b1', 'chan_private', 'alpha secret plan', 'mallory'),
+  ]);
+  return index;
+}
+
+async function idx02EmptyChannelAllowlistMatchesNothing(): Promise<void> {
+  const index = idx02Index();
+  const res = index.search({ query: 'alpha', channelIds: [], limit: 10, boostRecency: 0 });
+  const channels = res.records.map((r) => r.channelId).sort();
+  assert(res.hits.length === 0, `IDX-02 search({query:'alpha', channelIds:[]}) returned ${res.hits.length} hits from [${channels.join(',')}] (expected 0: empty allowlist = match nothing)`);
+  const noFilter = index.search({ query: 'alpha', limit: 10, boostRecency: 0 });
+  assert(noFilter.hits.length === 2, `IDX-02 channelIds undefined must stay "no filter" (got ${noFilter.hits.length} hits, expected 2)`);
+  const one = index.search({ query: 'alpha', channelIds: ['chan_allowed'], limit: 10, boostRecency: 0 });
+  assert(one.records.length === 1 && one.records[0].channelId === 'chan_allowed', `IDX-02 non-empty allowlist must filter (got [${one.records.map((r) => r.channelId).join(',')}])`);
+}
+
+async function idx02EmptyAllowlistPlusAuthorMatchesNothing(): Promise<void> {
+  const index = idx02Index();
+  const res = index.search({ channelIds: [], authorId: 'mallory', limit: 10, boostRecency: 0 });
+  const channels = res.records.map((r) => r.channelId).sort();
+  assert(res.hits.length === 0, `IDX-02 search({channelIds:[], authorId}) returned ${res.hits.length} docs from [${channels.join(',')}] across all channels (expected 0)`);
+  const noFilter = index.search({ authorId: 'mallory', limit: 10, boostRecency: 0 });
+  assert(noFilter.hits.length === 2, `IDX-02 authorId without channelIds must still return the author's docs (got ${noFilter.hits.length}, expected 2)`);
+}
+
+/* ------------------------------------------------------------------------ */
 /* IDX-03: saveSession must only report success after the transaction       */
 /* commits; a commit-time abort must reach the localStorage fallback.        */
 /* ------------------------------------------------------------------------ */
@@ -155,6 +204,8 @@ async function idx03SaveSessionWaitsForCommit(): Promise<void> {
 
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
+  ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
+  ['IDX-02 channelIds:[] + authorId matches nothing', idx02EmptyAllowlistPlusAuthorMatchesNothing],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

@@ -320,9 +320,10 @@ export class InvertedIndex {
     const minScore = query.minScore ?? 0.01;
     const tokens = query.tokens || (query.query ? extractQueryTokens(query.query) : []);
 
-    // Scope pre-filtering set
+    // Scope pre-filtering set. `channelIds` undefined = no channel filter; any array is an
+    // allowlist, so an empty array matches nothing (fail closed).
     let allowedDocs: Set<DocId> | null = null;
-    if (query.channelIds && query.channelIds.length > 0) {
+    if (query.channelIds) {
       allowedDocs = new Set<DocId>();
       for (const chId of query.channelIds) {
         const set = this.channelDocs.get(chId);
