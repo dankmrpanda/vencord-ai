@@ -28,6 +28,8 @@ export class ChatService {
   private activeSession: ChatSession | null = null;
   private generating = false;
   private abortController: AbortController | null = null;
+  /** Sessions deleted while a run was in flight; the run must not save them back. */
+  private deletedWhileGenerating = new Set<string>();
   private listeners = new Set<() => void>();
   private settings: PluginSettings;
 
@@ -117,6 +119,10 @@ export class ChatService {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    if (this.generating) {
+      this.deletedWhileGenerating.add(sessionId);
+      if (this.activeSession?.id === sessionId) this.stopGenerating();
+    }
     await deleteSessionStorage(sessionId);
     if (this.activeSession?.id === sessionId) {
       const channelId = this.activeSession.channelId || 'global';
@@ -233,7 +239,7 @@ export class ChatService {
         this.abortController = null;
       }
       this.notify();
-      if (session) {
+      if (session && !this.deletedWhileGenerating.delete(session.id)) {
         session.updatedAt = Date.now();
         await saveSession(session);
       }
