@@ -462,6 +462,8 @@ export async function runMilestone3Challenger2Tests(): Promise<{
       },
     };
 
+    const hadWindow = 'window' in globalThis;
+    const originalWindow = (globalThis as any).window;
     (globalThis as any).window = {
       Vencord: {
         Webpack: {
@@ -745,7 +747,8 @@ export async function runMilestone3Challenger2Tests(): Promise<{
       assert(abortedCaught, 'AbortSignal must trigger cancellation exception');
     } finally {
       globalThis.fetch = originalFetch;
-      delete (globalThis as any).window;
+      if (hadWindow) (globalThis as any).window = originalWindow;
+      else delete (globalThis as any).window;
     }
 
     passedCount++;

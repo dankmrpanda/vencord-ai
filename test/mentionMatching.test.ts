@@ -10,6 +10,18 @@ import { ChannelType, CurrentScopeContext, DiscordUser } from '../types';
 import { assert } from './assert';
 
 export function runMentionAndScopeTests() {
+  // The cases below install a mock `window` with Discord stores; restore it so later suites keep their own.
+  const hadWindow = 'window' in globalThis;
+  const originalWindow = (globalThis as any).window;
+  try {
+    runMentionAndScopeCases();
+  } finally {
+    if (hadWindow) (globalThis as any).window = originalWindow;
+    else delete (globalThis as any).window;
+  }
+}
+
+function runMentionAndScopeCases() {
   console.log('--- Running Member Mention Matching & Manual Scope Modification Tests ---');
 
   // =========================================================================
