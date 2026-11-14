@@ -7,6 +7,9 @@ import { ToolDefinition } from '../types';
 export class ToolArgumentError extends Error {
   name = 'ToolArgumentError';
 }
+/** Message IDs are interpolated into Discord REST paths, so they must be plain decimal snowflakes. */
+const MESSAGE_ID_ARGUMENTS = new Set(['message_id', 'before_message_id']);
+const NUMERIC_ID = /^\d{1,22}$/;
 function validateValue(name: string, value: unknown, schema: any): void {
   const valid = schema.type === 'string'
     ? typeof value === 'string'
@@ -16,6 +19,9 @@ function validateValue(name: string, value: unknown, schema: any): void {
         ? typeof value === 'boolean'
         : true;
   if (!valid) throw new ToolArgumentError(`Argument "${name}" must be a ${schema.type}.`);
+  if (MESSAGE_ID_ARGUMENTS.has(name) && !NUMERIC_ID.test(value as string)) {
+    throw new ToolArgumentError(`Argument "${name}" must be a numeric Discord message ID.`);
+  }
   if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
     throw new ToolArgumentError(`Argument "${name}" must be one of: ${schema.enum.join(', ')}.`);
   }
@@ -33,7 +39,8 @@ export function validateToolArguments(definition: ToolDefinition, value: unknown
     if (!(key in args)) throw new ToolArgumentError(`Missing required argument "${key}".`);
   }
   for (const [key, current] of Object.entries(args)) {
-    if (current === null && !required.includes(key)) delete args[key];
+    const absent = current === null || (current === '' && MESSAGE_ID_ARGUMENTS.has(key));
+    if (absent && !required.includes(key)) delete args[key];
     else validateValue(key, current, properties[key]);
   }
   return args;

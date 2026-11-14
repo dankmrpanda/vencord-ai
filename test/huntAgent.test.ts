@@ -269,6 +269,34 @@ async function sec05HistorySummaryNotSystem(): Promise<void> {
   }
 }
 
+/** SEC-01 (defence in depth): message-ID arguments must be all digits before any tool runs. */
+async function sec01NonNumericMessageIdsRejected(): Promise<void> {
+  const details = TOOL_REGISTRY.get('get_message_details')!.definition;
+  const surrounding = TOOL_REGISTRY.get('fetch_surrounding_messages')!.definition;
+  const search = TOOL_REGISTRY.get('search_messages')!.definition;
+  const accepted: string[] = [];
+  const bad: Array<[typeof details, Record<string, unknown>]> = [
+    [details, { channel_id: ACTIVE_DM, message_id: '../../200000000000000002/messages/300000000000000003' }],
+    [details, { channel_id: ACTIVE_DM, message_id: '../../../users/@me' }],
+    [surrounding, { channel_id: ACTIVE_DM, message_id: '300000000000000003?around=1' }],
+    [search, { query: 'x', before_message_id: '1/../2' }],
+    [search, { query: 'x', before_message_id: ' 12' }],
+  ];
+  for (const [definition, args] of bad) {
+    try {
+      parseToolArguments(definition, JSON.stringify(args));
+      accepted.push(JSON.stringify(args));
+    } catch (error) {
+      if (!(error instanceof ToolArgumentError)) accepted.push(`${JSON.stringify(args)} (threw ${String(error)})`);
+    }
+  }
+  assert(accepted.length === 0, `SEC-01 non-numeric message-ID arguments were accepted: ${accepted.join(' ')}`);
+  const ok = parseToolArguments(details, JSON.stringify({ channel_id: 'fixture-channel', message_id: '100' }));
+  assert(ok.message_id === '100' && ok.channel_id === 'fixture-channel', 'SEC-01 a numeric message_id (or a non-message ID) was rejected');
+  const optional = parseToolArguments(search, JSON.stringify({ query: 'x', before_message_id: '' }));
+  assert(!('before_message_id' in optional), 'SEC-01 an empty optional before_message_id should be treated as absent');
+}
+
 /** LLM-07: a call that failed transiently is marked as executed, so the identical retry is rejected as a duplicate. */
 async function llm07FailedCallCannotBeRetried(): Promise<void> {
   const tool = TOOL_REGISTRY.get('fetch_recent_messages')!;
@@ -574,6 +602,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-04 finalization exceeds token budget', llm04FinalizationExceedsTokenBudget],
   ['LLM-05 unavailable tool executes', llm05UnavailableToolStillExecutes],
   ['LLM-06 prototype-named args accepted', llm06PrototypeKeysAccepted],
+  ['SEC-01 non-numeric message IDs rejected', sec01NonNumericMessageIdsRejected],
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],
   ['LLM-09 elapsed budget ignored during call', llm09ElapsedBudgetIgnoredDuringCall],
