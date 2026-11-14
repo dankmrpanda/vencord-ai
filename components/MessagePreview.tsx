@@ -12,6 +12,43 @@ interface MessagePreviewProps {
   citation: CitationItem;
 }
 
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
+
+/**
+ * UI-Q11: whether an attachment URL can be shown as a thumbnail, and the file name to label it with. Only the last
+ * path segment is used, never the query (Discord CDN links carry signed tokens there).
+ */
+export function attachmentDisplay(url: string): { kind: 'image' | 'file'; name: string } {
+  let path = url;
+  try { path = new URL(url).pathname; } catch { path = url.split(/[?#]/)[0]; }
+  const segment = path.split('/').filter(Boolean).pop() || 'attachment';
+  let name = segment;
+  try { name = decodeURIComponent(segment); } catch {}
+  return { kind: IMAGE_EXTENSIONS.test(name) ? 'image' : 'file', name };
+}
+
+const AttachmentItem: React.FC<{ url: string; onOpen: (e: React.MouseEvent) => void }> = ({ url, onOpen }) => {
+  const [failed, setFailed] = React.useState(false);
+  const { kind, name } = attachmentDisplay(url);
+  if (kind === 'file' || failed) {
+    return (
+      <button style={fileChipStyle} onClick={onOpen} title={name}>
+        {failed ? '🖼️ image unavailable' : `📄 ${name}`}
+      </button>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={name}
+      style={attachmentThumbStyle}
+      title="Click to view full image"
+      onClick={onOpen}
+      onError={() => setFailed(true)}
+    />
+  );
+};
+
 export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
   const handleJump = () => {
     jumpToMessage(citation.channelId, citation.messageId, citation.guildId);
@@ -69,15 +106,7 @@ export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
       {citation.attachmentUrls && citation.attachmentUrls.length > 0 && (
         <div style={attachmentContainerStyle}>
           {citation.attachmentUrls.map((url, i) => (
-            <img
-              key={i}
-              src={url}
-              alt="attachment"
-              style={attachmentThumbStyle}
-              title="Click to view full image"
-              onClick={(e) => handleImageClick(e, url)}
-              onError={(e) => ((e.target as HTMLElement).style.display = 'none')}
-            />
+            <AttachmentItem key={i} url={url} onOpen={(e) => handleImageClick(e, url)} />
           ))}
         </div>
       )}
@@ -174,6 +203,20 @@ const attachmentContainerStyle: React.CSSProperties = {
   gap: '6px',
   marginTop: '6px',
   flexWrap: 'wrap',
+};
+
+const fileChipStyle: React.CSSProperties = {
+  maxWidth: '160px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  padding: '3px 8px',
+  borderRadius: '4px',
+  fontSize: '11px',
+  cursor: 'pointer',
+  color: 'var(--text-normal, #dbdee1)',
+  backgroundColor: 'var(--background-tertiary, #1e1f22)',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
 };
 
 const attachmentThumbStyle: React.CSSProperties = {

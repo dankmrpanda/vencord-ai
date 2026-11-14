@@ -13,6 +13,7 @@ import { classifyLink } from '../components/chatLinks';
 import { ChatMessage, isEmptyFinishedReply } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
 import { deleteClickAction, DELETE_CONFIRM_MS, HistoryDrawer } from '../components/HistoryDrawer';
+import { attachmentDisplay, MessagePreview } from '../components/MessagePreview';
 import { ToolCallBadge } from '../components/ToolCallBadge';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
@@ -479,6 +480,29 @@ async function uiQ07Accessibility(): Promise<void> {
   assert(/role="button" tabindex="0" aria-expanded="false"/.test(badge), 'UI-Q07 tool badge header is a keyboard-operable toggle');
 }
 
+/** UI-Q11: non-image attachments render as a named file chip, not a broken image; names never include the query. */
+async function uiQ11AttachmentChips(): Promise<void> {
+  const cdn = 'https://cdn.discordapp.com/attachments/1/2';
+  const cases: Array<[string, string, string]> = [
+    [`${cdn}/photo.PNG?ex=1&is=2&hm=secret`, 'image', 'photo.PNG'],
+    [`${cdn}/report%20final.pdf?ex=1&hm=secret`, 'file', 'report final.pdf'],
+    [`${cdn}/clip.mp4`, 'file', 'clip.mp4'],
+    [`${cdn}/archive.zip#x`, 'file', 'archive.zip'],
+    ['not a url/pic.jpeg?x=1', 'image', 'pic.jpeg'],
+    ['https://cdn.discordapp.com/', 'file', 'attachment'],
+  ];
+  const wrong = cases.filter(([url, kind, name]) => {
+    const got = attachmentDisplay(url);
+    return got.kind !== kind || got.name !== name;
+  }).map(([url]) => `${url} -> ${JSON.stringify(attachmentDisplay(url))}`);
+  assert(wrong.length === 0, `UI-Q11 attachmentDisplay: ${wrong.join('; ')}`);
+  const html = renderWithRealReact(() => RealReact.createElement(MessagePreview, {
+    citation: { messageId: 'm1', channelId: 'c1', timestamp: 0, content: 'x', attachmentUrls: [`${cdn}/photo.png`, `${cdn}/notes.pdf?hm=secret`] } as any,
+  }));
+  assert(html.includes('<img') && html.includes('📄 notes.pdf') && !html.includes('src="https://cdn.discordapp.com/attachments/1/2/notes.pdf'),
+    'UI-Q11 image thumbnail plus file chip');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -498,6 +522,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-Q04 retry last reply', uiQ04Retry],
   ['UI-Q08 delete needs confirmation', uiQ08DeleteConfirm],
   ['UI-Q07 accessibility basics', uiQ07Accessibility],
+  ['UI-Q11 attachment file chips', uiQ11AttachmentChips],
 ];
 
 export async function runHuntUiTests(): Promise<void> {
