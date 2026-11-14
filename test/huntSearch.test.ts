@@ -250,13 +250,16 @@ async function srch08InvalidDateIgnored(): Promise<string | null> {
   const old = msg('160000000000000016', DM, 'ancient datedneedle', '2019-01-01T12:00:00.000Z');
   const out: string[] = [];
   await withGet(({ url }) => (isSearch(url) ? { total_results: 0, messages: [] } : [old]), async () => {
-    for (const afterDate of ['last week', '2024-13-45']) {
+    for (const afterDate of ['last week', '2024-13-45', '2024-02-30']) {
       const r = await runMessageSearch({ query: 'datedneedle', afterDate, limit: 10, scanLimit: 10 }, dmScope());
       const ids = r.data?.messages.map((m) => m.id) || [];
-      if (r.ok && ids.includes(old.id)) out.push(`afterDate=${JSON.stringify(afterDate)} returned a 2019 message (ok=${r.ok}, code=${r.code})`);
+      if (r.ok || r.code !== 'invalid_date') out.push(`afterDate=${JSON.stringify(afterDate)} returned ${JSON.stringify(ids)} (ok=${r.ok}, code=${r.code})`);
     }
   });
-  return out.length ? `${out.join('; ')} (expected invalid_date or no match)` : null;
+  const valid = await withGet(({ url }) => (isSearch(url) ? { total_results: 0, messages: [] } : [old]), () =>
+    runMessageSearch({ query: 'datedneedle', afterDate: '2018-12-31', beforeDate: '2019-01-02T00:00:00Z', limit: 10, scanLimit: 10 }, dmScope()));
+  if (!valid.ok) out.push(`valid dates were rejected (code=${valid.code})`);
+  return out.length ? `${out.join('; ')} (expected invalid_date)` : null;
 }
 
 /** SRCH-09: fractional limits reach the Discord API as non-integer strings. */
