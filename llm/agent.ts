@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { sanitizeUntrustedContent } from '../discord/guardrails';
 import { getCurrentScopeContext, restrictScopeForUserPrompt } from '../discord/scope';
 import { getChannel, getCurrentUser, resolvePromptMentions } from '../discord/stores';
 import {
@@ -54,10 +55,20 @@ function errorMessage(error: unknown): string {
   return 'Tool execution failed.';
 }
 
+/** Neutralizes chat-template tokens and control/bidi characters in every string leaf (before serialization). */
+function sanitizeDeep(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeUntrustedContent(value);
+  if (Array.isArray(value)) return value.map(sanitizeDeep);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, current]) => [key, sanitizeDeep(current)]));
+  }
+  return value;
+}
+
 /** Serializes the model-facing view of a tool result; UI-only fields such as citations are left out. */
 function toolMessageContent(result: ToolExecutionResult): string {
   const { citations: _citations, ...modelView } = result;
-  return compactToolResult(JSON.stringify(modelView));
+  return compactToolResult(JSON.stringify(sanitizeDeep(modelView)));
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
