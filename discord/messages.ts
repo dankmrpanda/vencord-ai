@@ -359,6 +359,11 @@ export async function fetchDiscordMessagesApi(
   return [];
 }
 
+/** Whole-number request limit in [1, max]; non-finite values use the fallback. */
+function clampLimit(value: number, fallback: number, max: number): number {
+  return Math.min(Math.max(Number.isFinite(value) ? Math.floor(value) : fallback, 1), max);
+}
+
 /**
  * Fetches messages around a specific message ID to provide conversational context
  */
@@ -370,7 +375,7 @@ export async function fetchSurroundingMessages(
 ): Promise<DiscordMessage[]> {
   const messages = await fetchDiscordMessagesApi(channelId, {
     around: messageId,
-    limit: String(Math.min(limit, 50)),
+    limit: String(clampLimit(limit, 10, 50)),
   }, 3, signal);
 
   return [...messages].sort(
@@ -388,7 +393,7 @@ export async function fetchRecentMessages(
   signal?: AbortSignal,
 ): Promise<DiscordMessage[]> {
   const loadedFromCache = beforeMessageId ? [] : getLoadedMessages(channelId);
-  const targetLimit = Math.min(Math.max(limit, 1), 500);
+  const targetLimit = clampLimit(limit, 50, 500);
   const fetchedMessages: DiscordMessage[] = [];
   let before = beforeMessageId;
   while (fetchedMessages.length < targetLimit) {

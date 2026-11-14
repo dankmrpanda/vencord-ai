@@ -403,6 +403,11 @@ function deferSearchStarts(delayMs: number): void {
   lastRequestTime = Math.max(lastRequestTime, Date.now() + delayMs - MIN_REQUEST_INTERVAL_MS);
 }
 
+/** Discord accepts only a positive whole-number offset; anything else means the first page. */
+function sanitizeOffset(offset?: number): number | undefined {
+  return Number.isInteger(offset) && offset! > 0 ? offset : undefined;
+}
+
 export function buildSearchCacheKey(
   options: SearchOptions,
   sanitizedQuery = options.query?.trim() || '',
@@ -421,7 +426,7 @@ export function buildSearchCacheKey(
     max: effectiveMaxId || '',
     sort: options.sortBy || '',
     ord: options.sortOrder || '',
-    off: options.offset || 0,
+    off: sanitizeOffset(options.offset) || 0,
     pin: options.pinned === undefined ? '' : options.pinned,
     men: options.mentions || '',
   });
@@ -512,7 +517,8 @@ export async function searchDiscordMessages(
   if (effectiveMaxId) queryObj.max_id = effectiveMaxId;
   if (options.sortBy) queryObj.sort_by = options.sortBy;
   if (options.sortOrder) queryObj.sort_order = options.sortOrder;
-  if (options.offset) queryObj.offset = String(options.offset);
+  const offset = sanitizeOffset(options.offset);
+  if (offset) queryObj.offset = String(offset);
   if (options.pinned !== undefined) queryObj.pinned = String(options.pinned);
   if (options.mentions) queryObj.mentions = options.mentions;
 

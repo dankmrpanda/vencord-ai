@@ -5,7 +5,7 @@
  */
 
 import { RestAPI } from '@webpack/common';
-import { compileRegexSafely, fetchDiscordMessagesApi, fetchRecentMessages, filterMessagesLocally } from '../discord/messages';
+import { compileRegexSafely, fetchDiscordMessagesApi, fetchRecentMessages, fetchSurroundingMessages, filterMessagesLocally } from '../discord/messages';
 import { detectPatternFromQuery, searchDiscordMessages } from '../discord/search';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { STRUCTURED_PATTERNS } from '../storage/regex';
@@ -278,13 +278,28 @@ async function srch08InvalidDateIgnored(): Promise<string | null> {
   return out.length ? `${out.join('; ')} (expected invalid_date)` : null;
 }
 
-/** SRCH-09: fractional limits reach the Discord API as non-integer strings. */
+/** SRCH-09: fractional limits and offsets reach the Discord API as non-integer strings. */
 async function srch09FractionalLimit(): Promise<string | null> {
+  const problems: string[] = [];
   const limits: string[] = [];
   const page = Array.from({ length: 100 }, (_, i) => msg(String(170000000000000000n + BigInt(i)), DM, 'x', new Date(Date.UTC(2025, 0, 1) + i * 1000).toISOString()));
   const got = await withGet(({ query }) => { limits.push(String(query.limit)); return limits.length === 1 ? page : []; }, () => fetchRecentMessages(DM, 150.5));
-  const bad = limits.filter((l) => !/^\d+$/.test(l));
-  return bad.length ? `fetchRecentMessages(…, 150.5) sent limit=${JSON.stringify(limits)} (got ${got.length})` : null;
+  if (limits.some((l) => !/^\d+$/.test(l))) problems.push(`fetchRecentMessages(…, 150.5) sent limit=${JSON.stringify(limits)} (got ${got.length})`);
+  for (const [limit, want] of [[NaN, '50'], [0.4, '1']] as const) {
+    const sent: string[] = [];
+    await withGet(({ query }) => { sent.push(String(query.limit)); return []; }, () => fetchRecentMessages(DM, limit));
+    if (sent[0] !== want) problems.push(`fetchRecentMessages(…, ${limit}) sent limit=${JSON.stringify(sent)} (expected ${want})`);
+  }
+  const around: string[] = [];
+  await withGet(({ query }) => { around.push(String(query.limit)); return []; }, () => fetchSurroundingMessages(DM, '170000000000000000', 7.5));
+  if (around[0] !== '7') problems.push(`fetchSurroundingMessages(…, 7.5) sent limit=${JSON.stringify(around)}`);
+  for (const offset of [-5, 2.5]) {
+    const sent: Array<string | undefined> = [];
+    await withGet(({ query }) => { sent.push(query.offset); return { total_results: 0, messages: [] }; },
+      () => searchDiscordMessages({ query: `offsetneedle${offset}`, channelId: DM, offset }));
+    if (sent[0] !== undefined) problems.push(`offset=${offset} was sent as ${JSON.stringify(sent[0])}`);
+  }
+  return problems.length ? problems.join('; ') : null;
 }
 
 /** SRCH-10: 429 retries had no retry_after cap, ignored cancellation and slept outside the start queue. */
