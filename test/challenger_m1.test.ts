@@ -8,6 +8,7 @@ import { InvertedIndex, TopKHeap, binarySearchDocId } from '../storage/index/inv
 import { tokenizeText, extractQueryTokens, sanitizeDiscordText } from '../storage/index/tokenizer';
 import { messageDb } from '../storage/db';
 import { DiscordMessage } from '../types';
+import { assert } from './assert';
 
 function createMsg(
   id: string,
@@ -286,9 +287,5 @@ export async function runMilestone1ChallengerTests(): Promise<void> {
   console.log('\n======================================================');
   console.log(`EMPIRICAL CHALLENGE SUITE COMPLETE: ${passedTests} Passed | ${detectedBugs} Critical/High/Medium Bugs Confirmed`);
   console.log('======================================================\n');
+  assert(detectedBugs === 0, `challenger_m1 detected ${detectedBugs} bug(s); see the "[FAIL]" lines above`);
 }
-
-runMilestone1ChallengerTests().catch((e) => {
-  console.error('Fatal error in challenger runner:', e);
-  process.exitCode = 1;
-});
