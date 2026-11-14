@@ -1,6 +1,6 @@
 /*
- * Phase 1 hunt repro tests for the llm-agent area (prefix LLM).
- * Every case here is expected to be RED until the matching finding is fixed.
+ * Regression tests for the llm-agent fixes made in the bug hunt (LLM, SEC and LIFE finding IDs).
+ * Every case covers a committed fix and must stay green; each case restores the globals it patches.
  */
 
 import { RestAPI } from '@webpack/common';
