@@ -101,6 +101,9 @@ export async function runMessageSearch(
   const candidates: DiscordMessage[] = [];
   let fallbackUsed: 'local_index' | 'local_scan' | 'none' = 'none';
   let remoteSearchFailed = false;
+  const offset = request.offset || 0;
+  // The offset cursor belongs to the primary remote variant; other sources do not share it.
+  let primary: { hits: DiscordMessage[]; totalResults: number } | undefined;
 
   // 3. Remote Discord Search with Throttling & 429 Backoff
   for (const variant of variants.length ? variants : [undefined]) {
@@ -135,7 +138,10 @@ export async function runMessageSearch(
         pinned: request.pinned,
         mentions: request.mentions,
       });
-      candidates.push(...hitMessages(response.messages));
+      const hits = hitMessages(response.messages);
+      if (variant === variants[0]) primary = { hits, totalResults: response.totalResults };
+      candidates.push(...hits);
+      if (offset > 0) break;
     } catch (remoteErr) {
       console.warn('[VencordAI] Remote Discord search failed, falling back to local index:', remoteErr);
       remoteSearchFailed = true;
@@ -144,7 +150,7 @@ export async function runMessageSearch(
   }
 
   // 4. Seamless Hybrid Search Fallback (Local Inverted Index)
-  if (remoteSearchFailed || candidates.length < request.limit) {
+  if (offset === 0 && (remoteSearchFailed || candidates.length < request.limit)) {
     // Compact index records do not retain mention identities or full media metadata.
     // Use Discord/recent-message results when those filters cannot be verified.
     if (!request.has && !request.mentions && (query || pattern || request.authorId || request.date || request.afterDate || request.beforeDate || request.pinned !== undefined)) {
@@ -202,7 +208,7 @@ export async function runMessageSearch(
 
   // 5. Local Channel MessageStore Recent Scan Fallback
   let localNextBeforeMessageId: string | undefined;
-  if (channelId && candidates.length < request.limit) {
+  if (offset === 0 && channelId && candidates.length < request.limit) {
     try {
       const recent = await fetchRecentMessages(channelId, request.scanLimit, request.beforeMessageId);
       if (recent.length === request.scanLimit) {
@@ -245,8 +251,18 @@ export async function runMessageSearch(
     const score = scoreMessageRelevance(b, query || '') - scoreMessageRelevance(a, query || '');
     return score || new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
   });
-  const messages = ranked.slice(0, request.limit);
-  const nextOffset = candidates.length >= request.limit ? (request.offset || 0) + request.limit : undefined;
+  // A page consumes primary hits in Discord order, so the next offset neither skips nor repeats them.
+  const consumed = primary ? primary.hits.slice(0, request.limit) : [];
+  const nextOffset = primary && offset + consumed.length < primary.totalResults && consumed.length > 0
+    ? offset + consumed.length
+    : undefined;
+  let messages = ranked.slice(0, request.limit);
+  if (nextOffset !== undefined) {
+    // While more primary pages remain, the page is exactly the consumed primary hits (ranked locally);
+    // other sources would crowd them out or repeat on later pages.
+    const pageIds = new Set(consumed.map((message) => message.id));
+    messages = ranked.filter((message) => pageIds.has(message.id));
+  }
 
   return {
     ok: true,
