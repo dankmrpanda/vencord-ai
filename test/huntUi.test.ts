@@ -6,6 +6,7 @@
 import * as RealReact from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
+import { classifyLink } from '../components/chatLinks';
 import { ChatMessage } from '../components/ChatMessage';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
@@ -74,6 +75,54 @@ async function sec10SpoofedLinkHostHidden(): Promise<void> {
     `SEC-10 external link shows only "${visibleText}" while its href is https://evil.example/... (host not visible)`);
 }
 
+/** SEC-10: the link classifier allows only Discord jump links and https:, and anchors host checks. */
+async function sec10ClassifyLink(): Promise<void> {
+  const cases: Array<[string, string, Record<string, unknown>?]> = [
+    ['javascript:alert(1)', 'blocked'],
+    ['JaVaScRiPt:alert(1)', 'blocked'],
+    ['data:text/html,<b>x</b>', 'blocked'],
+    ['http://evil.example/', 'blocked'],
+    ['file:///etc/passwd', 'blocked'],
+    ['not a url', 'blocked'],
+    ['discord://settings/account', 'blocked'],
+    ['discord://message/abc/2', 'blocked'],
+    ['discord://message/1/2/3', 'blocked'],
+    ['discord://message/111/222', 'jump', { channelId: '111', messageId: '222', guildId: undefined }],
+    ['discord://channels/@me/111/222', 'jump', { channelId: '111', messageId: '222', guildId: undefined }],
+    ['discord://channels/9/111/222', 'jump', { channelId: '111', messageId: '222', guildId: '9' }],
+    ['https://discord.com/channels/@me/111/222', 'jump', { channelId: '111', messageId: '222', guildId: undefined }],
+    ['https://ptb.discord.com/channels/9/111', 'jump', { channelId: '111', messageId: undefined, guildId: '9' }],
+    ['/channels/9/111/222', 'jump', { channelId: '111', href: 'https://discord.com/channels/9/111/222' }],
+    ['https://discord.com.evil.example/channels/9/111/222', 'external', { display: 'https://discord.com.evil.example/channels/9/111/222' }],
+    ['https://evil.example/channels/9/111/222', 'external'],
+    ['https://discord.com@evil.example/x', 'external', { display: 'https://evil.example/x' }],
+    ['https://evil.example/?d=secret dm', 'external', { display: 'https://evil.example/?d=secret%20dm' }],
+    ['https://discord.com/channels/9/111/222/extra', 'external'],
+    ['//evil.example/x', 'blocked'],
+    ['  javascript:alert(1)', 'blocked'],
+    ['HTTPS://DISCORD.COM/channels/9/111', 'jump', { channelId: '111', guildId: '9' }],
+    ['DISCORD://Message/111/222', 'jump', { channelId: '111', messageId: '222' }],
+    ['https://evildiscord.com/channels/9/111/222', 'external'],
+    ['https://user:pw@discord.com/channels/9/111/222', 'jump', { href: 'https://discord.com/channels/9/111/222' }],
+    ['https://user:pw@evil.example/x', 'external', { href: 'https://evil.example/x', display: 'https://evil.example/x' }],
+  ];
+  const wrong: string[] = [];
+  for (const [href, kind, fields] of cases) {
+    const got = classifyLink(href) as Record<string, unknown>;
+    const fieldMismatch = Object.entries(fields || {}).find(([key, value]) => got[key] !== value);
+    if (got.kind !== kind || fieldMismatch) wrong.push(`${href} -> ${JSON.stringify(got)} (expected ${kind}${fields ? ` ${JSON.stringify(fields)}` : ''})`);
+  }
+  assert(wrong.length === 0, `SEC-10 classifyLink: ${wrong.join('; ')}`);
+}
+
+/** UI-10: links nested in bold/italic/strike still render as links; balanced parentheses stay in the href. */
+async function ui10NestedInlineLinks(): Promise<void> {
+  const bold = renderWithRealReact(() =>
+    RealReact.createElement(ChatMessage, { message: assistantMessage('**[Jump](discord://message/1/2)** and *[a](https://x.example/p_(1))*') }));
+  assert(/<strong[^>]*><a [^>]*href="https:\/\/discord.com\/channels\/@me\/1\/2"/.test(bold), `UI-10 bold jump link not rendered as a link: ${bold.slice(bold.indexOf('<strong'), bold.indexOf('<strong') + 160)}`);
+  assert(bold.includes('href="https://x.example/p_(1)"'), `UI-10 parenthesised href truncated: ${bold.match(/<em[\s\S]*?<\/em>/)?.[0]}`);
+}
+
 /**
  * UI-02: selecting the active chat in the history drawer during a run (SidebarPanel.handleSelectSession ->
  * chatService.switchSession(storedCopy)) swaps in a stale copy; the next send overwrites the finished answer.
@@ -126,7 +175,10 @@ async function ui02StaleCopyOverwritesAnswer(): Promise<void> {
 }
 
 const CASES: Array<[string, () => Promise<void>]> = [
-  // SEC-10 cases are registered with the SEC-10 fix.
+  ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
+  ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
+  ['SEC-10 spoofed link host hidden', sec10SpoofedLinkHostHidden],
+  ['UI-10 nested inline links', ui10NestedInlineLinks],
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],
 ];
 

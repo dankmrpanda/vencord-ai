@@ -7,6 +7,7 @@
 import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { AssistantChatMessage } from '../types';
+import { classifyLink } from './chatLinks';
 import { MessagePreview } from './MessagePreview';
 import { ToolCallBadge } from './ToolCallBadge';
 
@@ -14,34 +15,50 @@ interface ChatMessageProps {
   message: AssistantChatMessage;
 }
 
-function handleLinkClick(e: React.MouseEvent, href: string) {
-  e.preventDefault();
-  try {
-    // Match Discord web URLs: https://discord.com/channels/:guildId/:channelId/:messageId
-    const discordMatch = href.match(/(?:https?:\/\/(?:[a-z0-9]+\.)?discord(?:app)?\.com)?\/channels\/([^\/\s]+)\/([^\/\s]+)(?:\/([^\/\s]+))?/i);
-    if (discordMatch) {
-      const [, guildId, channelId, messageId] = discordMatch;
-      jumpToMessage(channelId, messageId, guildId === '@me' ? undefined : guildId);
-      return;
-    }
+function renderLink(text: string, rawHref: string, key: number): React.ReactNode {
+  const target = classifyLink(rawHref);
+  // Model output is untrusted: blocked schemes render as plain text, never as an href (middle-click skips onClick).
+  if (target.kind === 'blocked') return <span key={key}>{text}</span>;
 
-    // Match custom URIs: discord://message/:channelId/:messageId or discord://channels/:guildId/:channelId/:messageId
-    const uriMatch = href.match(/discord:\/\/(?:channels\/([^\/\s]+)\/|message\/)([^\/\s]+)(?:\/([^\/\s]+))?/i);
-    if (uriMatch) {
-      const [, guildId, channelId, messageId] = uriMatch;
-      jumpToMessage(channelId, messageId, guildId === '@me' ? undefined : guildId);
-      return;
-    }
-
-    window.open(href, '_blank', 'noopener,noreferrer');
-  } catch {
-    window.open(href, '_blank', 'noopener,noreferrer');
+  if (target.kind === 'jump') {
+    return (
+      <a
+        key={key}
+        href={target.href}
+        style={linkStyle}
+        title={target.href}
+        onClick={(e) => {
+          e.preventDefault();
+          jumpToMessage(target.channelId, target.messageId, target.guildId);
+        }}
+      >
+        {renderInlineMarkdown(text)}
+      </a>
+    );
   }
+
+  // External https link: show the real URL next to the model-chosen text.
+  return (
+    <a
+      key={key}
+      href={target.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={linkStyle}
+      title={target.href}
+      onClick={(e) => {
+        e.preventDefault();
+        window.open(target.href, '_blank', 'noopener,noreferrer');
+      }}
+    >
+      {text === target.display ? text : <>{renderInlineMarkdown(text)} <span style={linkUrlStyle}>({target.display})</span></>}
+    </a>
+  );
 }
 
 function renderInlineMarkdown(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
-  const regex = /(\[([^\]]+)\]\(([^)]+)\))|(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(~~([^~]+)~~)/g;
+  const regex = /(\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\))|(`([^`]+)`)|(\*\*([^*]+)\*\*)|(\*([^*]+)\*)|(~~([^~]+)~~)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -51,19 +68,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
     }
 
     if (match[1]) {
-      const linkText = match[2];
-      const linkHref = match[3];
-      parts.push(
-        <a
-          key={match.index}
-          href={linkHref}
-          style={linkStyle}
-          onClick={(e) => handleLinkClick(e, linkHref)}
-          title={linkHref}
-        >
-          {linkText}
-        </a>
-      );
+      parts.push(renderLink(match[2], match[3], match.index));
     } else if (match[4]) {
       parts.push(
         <code key={match.index} style={inlineCodeStyle}>
@@ -73,13 +78,13 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
     } else if (match[6]) {
       parts.push(
         <strong key={match.index} style={{ fontWeight: 700, color: 'var(--header-primary, #f2f3f5)' }}>
-          {match[7]}
+          {renderInlineMarkdown(match[7])}
         </strong>
       );
     } else if (match[8]) {
-      parts.push(<em key={match.index}>{match[9]}</em>);
+      parts.push(<em key={match.index}>{renderInlineMarkdown(match[9])}</em>);
     } else if (match[10]) {
-      parts.push(<del key={match.index}>{match[11]}</del>);
+      parts.push(<del key={match.index}>{renderInlineMarkdown(match[11])}</del>);
     }
 
     lastIndex = regex.lastIndex;
@@ -367,6 +372,12 @@ const linkStyle: React.CSSProperties = {
   textDecoration: 'none',
   cursor: 'pointer',
   fontWeight: 500,
+};
+
+const linkUrlStyle: React.CSSProperties = {
+  color: 'var(--text-muted, #949ba4)',
+  fontWeight: 400,
+  wordBreak: 'break-all',
 };
 
 const inlineCodeStyle: React.CSSProperties = {
