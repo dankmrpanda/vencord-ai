@@ -11,6 +11,7 @@ import { classifyChatError } from '../components/chatErrors';
 import { classifyLink } from '../components/chatLinks';
 import { ChatMessage, isEmptyFinishedReply } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
+import { deleteClickAction, DELETE_CONFIRM_MS, HistoryDrawer } from '../components/HistoryDrawer';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
@@ -442,6 +443,22 @@ async function uiQ04Retry(): Promise<void> {
   assert(withRetry.includes('↻ Retry') && !without.includes('↻ Retry'), 'UI-Q04 Retry button follows onRetry');
 }
 
+/** UI-Q08: deleting a chat needs a second click on the same chat within a few seconds. */
+async function uiQ08DeleteConfirm(): Promise<void> {
+  assert(deleteClickAction(null, 's1', 1000) === 'arm', 'UI-Q08 first click arms');
+  assert(deleteClickAction({ id: 's1', at: 1000 }, 's1', 1000 + DELETE_CONFIRM_MS) === 'delete', 'UI-Q08 second click within window deletes');
+  assert(deleteClickAction({ id: 's1', at: 1000 }, 's1', 1001 + DELETE_CONFIRM_MS) === 'arm', 'UI-Q08 expired confirmation re-arms');
+  assert(deleteClickAction({ id: 's1', at: 1000 }, 's2', 1500) === 'arm', 'UI-Q08 another chat re-arms');
+  const html = renderWithRealReact(() => RealReact.createElement(HistoryDrawer, {
+    isOpen: true,
+    sessionsList: [{ id: 's1', channelId: 'c1', title: 't', createdAt: 0, updatedAt: 0, messages: [] }],
+    onSelectSession: () => undefined,
+    onDeleteSession: () => undefined,
+    onClose: () => undefined,
+  }));
+  assert(html.includes('🗑️') && !html.includes('Delete?'), 'UI-Q08 unarmed drawer renders the trash button');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -459,6 +476,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-Q02 actionable errors', uiQ02ActionableErrors],
   ['UI-Q05 stop note and focus', uiQ05StopAndFocus],
   ['UI-Q04 retry last reply', uiQ04Retry],
+  ['UI-Q08 delete needs confirmation', uiQ08DeleteConfirm],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

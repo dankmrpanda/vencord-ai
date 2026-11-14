@@ -43,6 +43,18 @@ function formatRelativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+export const DELETE_CONFIRM_MS = 3000;
+
+/** UI-Q08: the first click on a chat's delete button arms it; a second click on the same chat within the window deletes. */
+export function deleteClickAction(
+  armed: { id: string; at: number } | null,
+  id: string,
+  now: number,
+  windowMs = DELETE_CONFIRM_MS,
+): 'delete' | 'arm' {
+  return armed?.id === id && now - armed.at <= windowMs ? 'delete' : 'arm';
+}
+
 export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   isOpen,
   sessionsList,
@@ -52,6 +64,13 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   onDeleteSession,
   onClose,
 }) => {
+  const [armed, setArmed] = React.useState<{ id: string; at: number } | null>(null);
+  React.useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(null), DELETE_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
   if (!isOpen) return null;
 
   return (
@@ -82,11 +101,20 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
               </div>
               <button
                 style={deleteButtonStyle}
-                onClick={(e) => { e.stopPropagation(); if (!disabled) onDeleteSession(e, s.id); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (disabled) return;
+                  if (deleteClickAction(armed, s.id, Date.now()) === 'arm') {
+                    setArmed({ id: s.id, at: Date.now() });
+                    return;
+                  }
+                  setArmed(null);
+                  onDeleteSession(e, s.id);
+                }}
                 disabled={disabled}
-                title={disabled ? 'Stop generating to delete' : 'Delete Chat'}
+                title={disabled ? 'Stop generating to delete' : armed?.id === s.id ? 'Click again to delete' : 'Delete Chat'}
               >
-                🗑️
+                {armed?.id === s.id ? 'Delete?' : '🗑️'}
               </button>
             </div>
           ))
