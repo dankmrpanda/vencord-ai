@@ -27,6 +27,7 @@ import {
   isNearBottom,
   isUnhandledEscape,
   keepScopeForChannel,
+  launchRequestForSend,
   selectHistorySession,
   streamScrollKey,
   syncSessionToChannel,
@@ -272,7 +273,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     setInputText('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    const req = launchRequest;
+    // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
+    const req = launchRequestForSend(launchRequest, customPrompt);
     if (req) onLaunchConsumed?.();
 
     // SEC-09: the channel listener can lag; never send into another channel's session.

@@ -5,7 +5,7 @@
 
 import type { ChatService } from '../services/chatService';
 import { createNewSession, getSessionsForChannel } from '../storage/chatHistory';
-import { ChatSession, CurrentScopeContext } from '../types';
+import { AssistantLaunchRequest, ChatSession, CurrentScopeContext } from '../types';
 
 /**
  * Switching or deleting sessions during a run detaches the streaming reply from what the panel shows
@@ -100,4 +100,12 @@ export function isEscapeForPanel(target: unknown, panel: { contains(node: any): 
 export function escapeLayer(popupOpen: boolean, drawerOpen: boolean): 'popup' | 'drawer' | 'panel' {
   if (popupOpen) return 'popup';
   return drawerOpen ? 'drawer' : 'panel';
+}
+
+/** UI-13: a launch target rides only on a send from the input box it prefilled, never on a quick prompt. */
+export function launchRequestForSend(
+  request: AssistantLaunchRequest | null | undefined,
+  customPrompt?: string,
+): AssistantLaunchRequest | null {
+  return request && !customPrompt ? request : null;
 }

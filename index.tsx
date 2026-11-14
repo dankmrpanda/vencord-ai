@@ -229,10 +229,7 @@ function renderSidebar() {
     const panel = (
       <SidebarPanel
         settings={currentSettings}
-        onClose={() => {
-          isSidebarOpen = false;
-          renderSidebar();
-        }}
+        onClose={closeSidebar}
         logs={pluginLogs}
         launchRequest={getAssistantLaunchRequest()}
         onLaunchConsumed={() => {
@@ -323,8 +320,19 @@ function renderSidebar() {
   }
 }
 
+// UI-13: an unsent launch request ends with the panel, so it cannot attach to a later, unrelated question.
+function closeSidebar() {
+  isSidebarOpen = false;
+  clearAssistantLaunchRequest();
+  renderSidebar();
+}
+
 export function toggleAIAssistant() {
-  isSidebarOpen = !isSidebarOpen;
+  if (isSidebarOpen) {
+    closeSidebar();
+    return;
+  }
+  isSidebarOpen = true;
   renderSidebar();
 }
 

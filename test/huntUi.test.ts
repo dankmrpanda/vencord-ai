@@ -6,6 +6,7 @@
 import * as RealReact from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
+import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from '../assistantLaunch';
 import { classifyLink } from '../components/chatLinks';
 import { ChatMessage } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
@@ -19,6 +20,7 @@ import {
   isNearBottom,
   isUnhandledEscape,
   keepScopeForChannel,
+  launchRequestForSend,
   selectHistorySession,
   sessionChannelTarget,
   streamScrollKey,
@@ -319,8 +321,8 @@ async function ui04EscapeLayering(): Promise<void> {
     'UI-Q09 innermost layer first: popup, drawer, panel');
 }
 
-/** UI-14: the global toggle exists only between startPlugin and stopPlugin. */
-async function ui14GlobalToggleLifecycle(): Promise<void> {
+/** Runs `fn` with a minimal fake window/document so index.tsx can start and stop, restoring both afterwards. */
+async function withFakeDom<T>(fn: (fakeWindow: Record<string, any>) => Promise<T>): Promise<T> {
   const g = globalThis as any;
   const hadWindow = 'window' in g;
   const hadDocument = 'document' in g;
@@ -330,19 +332,49 @@ async function ui14GlobalToggleLifecycle(): Promise<void> {
   g.window = fakeWindow;
   if (!hadDocument) g.document = { getElementById: () => null, querySelectorAll: () => [] };
   try {
-    await withMemoryLocalStorage(async () => {
-      const plugin = await import('../index');
-      assert(fakeWindow.toggleVencordAIAssistant === undefined, 'UI-14 toggle must not be assigned at module load');
-      plugin.startPlugin();
-      const assigned = typeof fakeWindow.toggleVencordAIAssistant === 'function';
-      plugin.stopPlugin();
-      assert(assigned, 'UI-14 startPlugin assigns the toggle');
-      assert(!('toggleVencordAIAssistant' in fakeWindow), 'UI-14 stopPlugin removes the toggle');
-    });
+    return await withMemoryLocalStorage(() => fn(fakeWindow));
   } finally {
     if (hadWindow) g.window = savedWindow; else delete g.window;
     if (hadDocument) g.document = savedDocument; else delete g.document;
   }
+}
+
+/** UI-14: the global toggle exists only between startPlugin and stopPlugin. */
+async function ui14GlobalToggleLifecycle(): Promise<void> {
+  await withFakeDom(async (fakeWindow) => {
+    const plugin = await import('../index');
+    assert(fakeWindow.toggleVencordAIAssistant === undefined, 'UI-14 toggle must not be assigned at module load');
+    plugin.startPlugin();
+    const assigned = typeof fakeWindow.toggleVencordAIAssistant === 'function';
+    plugin.stopPlugin();
+    assert(assigned, 'UI-14 startPlugin assigns the toggle');
+    assert(!('toggleVencordAIAssistant' in fakeWindow), 'UI-14 stopPlugin removes the toggle');
+  });
+}
+
+/** UI-13: closing the panel drops an unsent launch request; quick prompts never carry it. */
+async function ui13LaunchRequestScoped(): Promise<void> {
+  const request = { targetChannelId: 'c1', targetMessageId: 'm1', mode: 'message', initialPrompt: 'Explain this message.' } as any;
+  const scope = { channelId: 'c1', isGuild: false } as unknown as CurrentScopeContext;
+  await withFakeDom(async () => {
+    const plugin = await import('../index');
+    const originalError = console.error;
+    console.error = () => undefined; // the fake document cannot mount the panel; renderSidebar logs that and returns.
+    let left;
+    try {
+      plugin.toggleAIAssistant(); // open
+      assert(setAssistantLaunchRequest(request, scope), 'UI-13 setup: launch request accepted');
+      plugin.toggleAIAssistant(); // close without sending
+      left = getAssistantLaunchRequest();
+    } finally {
+      console.error = originalError;
+      clearAssistantLaunchRequest();
+    }
+    assert(left === null, 'UI-13 closing the panel must drop the pending launch request');
+  });
+  assert(launchRequestForSend(request, undefined) === request, 'UI-13 input-box send carries the launch target');
+  assert(launchRequestForSend(request, 'Summarize recent topics') === null, 'UI-13 quick prompt must not carry it');
+  assert(launchRequestForSend(null) === null, 'UI-13 no request');
 }
 
 const CASES: Array<[string, () => Promise<void>]> = [
@@ -358,6 +390,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-03 scroll follows stream', ui03ScrollFollowsStream],
   ['UI-04 Escape layering', ui04EscapeLayering],
   ['UI-14 global toggle lifecycle', ui14GlobalToggleLifecycle],
+  ['UI-13 launch request scoped to its prompt', ui13LaunchRequestScoped],
 ];
 
 export async function runHuntUiTests(): Promise<void> {
