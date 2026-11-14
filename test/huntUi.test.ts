@@ -22,6 +22,7 @@ import {
   isUnhandledEscape,
   keepScopeForChannel,
   launchRequestForSend,
+  retryPromptAt,
   selectHistorySession,
   sessionChannelTarget,
   shouldRefocusInput,
@@ -426,6 +427,21 @@ async function uiQ05StopAndFocus(): Promise<void> {
   assert(!shouldRefocusInput(false, false, true) && !shouldRefocusInput(false, true, true), 'UI-Q05 only on the generating -> idle edge');
 }
 
+/** UI-Q04: Retry appears only on the last finished assistant reply and re-sends the prompt before it. */
+async function uiQ04Retry(): Promise<void> {
+  const user = (content: string) => ({ ...assistantMessage(content), role: 'user' as const });
+  const reply = { ...assistantMessage('⚠️ **Error**: Failed to fetch'), isStreaming: false };
+  const messages = [user('first'), { ...assistantMessage('a1'), isStreaming: false }, user('  second question  '), reply];
+  assert(retryPromptAt(messages, 3) === 'second question', 'UI-Q04 last reply retries the preceding prompt');
+  assert(retryPromptAt(messages, 1) === null, 'UI-Q04 earlier replies have no Retry');
+  assert(retryPromptAt(messages, 2) === null, 'UI-Q04 user messages have no Retry');
+  assert(retryPromptAt([...messages.slice(0, 3), { ...reply, isStreaming: true }], 3) === null, 'UI-Q04 no Retry while streaming');
+  assert(retryPromptAt([reply], 0) === null, 'UI-Q04 no preceding prompt');
+  const withRetry = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: reply, onRetry: () => undefined }));
+  const without = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: reply }));
+  assert(withRetry.includes('↻ Retry') && !without.includes('↻ Retry'), 'UI-Q04 Retry button follows onRetry');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -442,6 +458,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-13 launch request scoped to its prompt', ui13LaunchRequestScoped],
   ['UI-Q02 actionable errors', uiQ02ActionableErrors],
   ['UI-Q05 stop note and focus', uiQ05StopAndFocus],
+  ['UI-Q04 retry last reply', uiQ04Retry],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

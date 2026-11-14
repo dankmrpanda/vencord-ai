@@ -28,6 +28,7 @@ import {
   isUnhandledEscape,
   keepScopeForChannel,
   launchRequestForSend,
+  retryPromptAt,
   selectHistorySession,
   shouldRefocusInput,
   streamScrollKey,
@@ -279,8 +280,11 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     if (!promptToSend || isGenerating) return;
 
     isUserScrolledUpRef.current = false;
-    setInputText('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    if (!customPrompt) {
+      // Quick prompts and Retry leave a half-typed question in the box alone.
+      setInputText('');
+      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    }
 
     // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
     const req = launchRequestForSend(launchRequest, customPrompt);
@@ -476,7 +480,18 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             </div>
           </div>
         ) : (
-          session.messages.map((m) => <ChatMessage key={m.id} message={m} onOpenSettings={onOpenSettings} />)
+          session.messages.map((m, i) => {
+            // UI-Q04: Retry re-sends the previous prompt as a new exchange (history keeps the old reply).
+            const retryPrompt = isGenerating ? null : retryPromptAt(session.messages, i);
+            return (
+              <ChatMessage
+                key={m.id}
+                message={m}
+                onOpenSettings={onOpenSettings}
+                onRetry={retryPrompt ? () => handleSend(retryPrompt) : undefined}
+              />
+            );
+          })
         )}
         <div ref={messagesEndRef} />
       </div>

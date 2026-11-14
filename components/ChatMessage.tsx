@@ -15,6 +15,7 @@ import { ToolCallBadge } from './ToolCallBadge';
 interface ChatMessageProps {
   message: AssistantChatMessage;
   onOpenSettings?: () => void;
+  onRetry?: () => void;
 }
 
 function renderLink(text: string, rawHref: string, key: number): React.ReactNode {
@@ -184,7 +185,7 @@ export function isEmptyFinishedReply(message: Pick<AssistantChatMessage, 'role' 
   return message.role !== 'user' && !message.isStreaming && !message.content?.trim();
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSettings }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSettings, onRetry }) => {
   const isUser = message.role === 'user';
   const errorHint = isUser ? null : classifyChatError(message.content);
   const [copiedMsg, setCopiedMsg] = React.useState(false);
@@ -214,11 +215,18 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSetting
             })}
           </span>
         </div>
-        {!isUser && message.content && (
-          <button style={copyMessageButtonStyle} onClick={handleCopyMessage} title="Copy reply">
-            {copiedMsg ? '✓ Copied' : '📋 Copy'}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '4px' }}>
+          {!isUser && onRetry && (
+            <button style={copyMessageButtonStyle} onClick={onRetry} title="Ask the previous question again">
+              ↻ Retry
+            </button>
+          )}
+          {!isUser && message.content && (
+            <button style={copyMessageButtonStyle} onClick={handleCopyMessage} title="Copy reply">
+              {copiedMsg ? '✓ Copied' : '📋 Copy'}
+            </button>
+          )}
+        </div>
       </div>
 
       {!isUser && toolSteps && toolSteps.length > 0 && (
