@@ -155,6 +155,19 @@ export class ModelLifecycle {
     }
   }
 
+  /** omlx and ollama unload by model name, which entries with another API key may share. */
+  private isModelUsedElsewhere(entry: ModelEntry): boolean {
+    const { providerPreset, baseUrl, model } = entry.settings;
+    // LM Studio unloads this entry's own instance id.
+    if (providerPreset === 'lmstudio') return false;
+    for (const other of this.entries.values()) {
+      if (other === entry || (other.users === 0 && !other.loaded)) continue;
+      const s = other.settings;
+      if (s.providerPreset === providerPreset && s.baseUrl === baseUrl && s.model === model) return true;
+    }
+    return false;
+  }
+
   private scheduleUnload(key: string, entry: ModelEntry, delay: number): void {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = setTimeout(() => {
@@ -171,7 +184,8 @@ export class ModelLifecycle {
     const evict = async () => {
       if (!force && entry.users > 0) return;
       if (entry.needsCleanup) {
-        await this.changeResidency(entry, false, keepalive);
+        // Leave a model that another entry still uses to that entry's own unload.
+        if (force || !this.isModelUsedElsewhere(entry)) await this.changeResidency(entry, false, keepalive);
         entry.loaded = false;
         entry.needsCleanup = false;
         entry.instanceId = undefined;

@@ -113,6 +113,30 @@ async function life02AliasedEntryUnloadsActiveModel(): Promise<void> {
     const unloads = calls.filter(isUnload);
     active();
     assert(unloads.length === 0, `LIFE-02 the server model must stay resident while a lease is active (saw ${unloads.length} unload: ${unloads.map((c) => c.url).join(', ')})`);
+    // The entry that held the lease still unloads the model once it goes idle.
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    assert(calls.filter(isUnload).length === 1, `LIFE-02 the model is unloaded once after the last lease goes idle (saw ${calls.filter(isUnload).length})`);
+  });
+  // Two idle aliases: the first timer leaves the model to the entry that loaded it later.
+  await withLifecycle(() => Response.json({}), async (lifecycle, calls, advance) => {
+    (await lifecycle.acquire({ ...base, apiKey: 'old-key' }))();
+    await advance(60_000);
+    (await lifecycle.acquire({ ...base, apiKey: 'new-key' }))();
+    await advance(MODEL_IDLE_TIMEOUT_MS - 60_000);
+    assert(!calls.some(isUnload), 'LIFE-02 the first idle alias must not unload a model the second still holds loaded');
+    await advance(60_000);
+    assert(calls.filter(isUnload).length === 1, `LIFE-02 the last idle alias unloads the model once (saw ${calls.filter(isUnload).length})`);
+  });
+  // LM Studio unloads by instance id, so each entry still unloads its own instance.
+  const lmstudio = fixtureSettings({ providerPreset: 'lmstudio', baseUrl: 'http://life02-lms.fixture/v1', model: 'shared-model' });
+  let instance = 0;
+  await withLifecycle((call) => Response.json(call.url.endsWith('/load') ? { instance_id: `inst-${++instance}` } : {}), async (lifecycle, calls, advance) => {
+    (await lifecycle.acquire({ ...lmstudio, apiKey: 'old-key' }))();
+    const active = await lifecycle.acquire({ ...lmstudio, apiKey: 'new-key' });
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    const unloaded = calls.filter(isUnload).map((c) => c.body.instance_id);
+    active();
+    assert(unloaded.join(',') === 'inst-1', `LIFE-02 an idle LM Studio entry still unloads its own instance (unloaded: ${unloaded.join(',')})`);
   });
 }
 
@@ -228,6 +252,7 @@ async function life07NormalizeBaseUrlContract(): Promise<void> {
 
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LIFE-01 unbounded idle-unload retry', life01UnboundedUnloadRetry],
+  ['LIFE-02 aliased entry unloads active model', life02AliasedEntryUnloadsActiveModel],
   ['LIFE-04 credentials echoed in fetch error', life04CredentialsInErrorMessage],
   ['LIFE-04b credentials echoed in acquire error', life04bCredentialsInLoadError],
   ['LIFE-07 relative baseUrl sends API key', life07RelativeBaseUrlSendsKey],
