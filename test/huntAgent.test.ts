@@ -545,6 +545,15 @@ async function llm12LoopTurnFailureSkipsFinalization(): Promise<void> {
     globalThis.fetch = originalFetch;
   }
   assert(outcome.startsWith('returned'), `LLM-12 one 503 on loop turn 2 (after a successful tool call) aborted the whole run: ${outcome}`);
+  let firstTurn = '';
+  try {
+    (globalThis as any).fetch = async () => new Response('upstream overloaded', { status: 503 });
+    firstTurn = await quiet(() => new AIAssistantAgent(settings()).run('who am i?', [], undefined, undefined, undefined, dmScope()))
+      .then((result) => `returned: ${result.content}`, (error) => `threw: ${error?.message}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert(firstTurn.startsWith('threw'), `LLM-12 a first-turn provider error should still fail the run: ${firstTurn}`);
 }
 
 /** LLM-13: inspect_image is offered whenever enableVision is on (default) but always fails for presets without declared vision (default omlx). */

@@ -359,10 +359,17 @@ export class AIAssistantAgent {
           temperature: 0.2,
         }, undefined, callSignal));
       } catch (error) {
-        if (!(error instanceof ProviderDeadlineError) || signal?.aborted) throw error;
-        thought.content = 'Run time budget reached while waiting for the model.';
+        if (signal?.aborted) throw error;
+        if (error instanceof ProviderDeadlineError) {
+          thought.content = 'Run time budget reached while waiting for the model.';
+          stoppingReason = 'elapsed_time';
+        } else {
+          // A later turn only runs after tool evidence was gathered: finalize with it instead of failing the run.
+          if (budget.modelTurns <= 1) throw error;
+          thought.content = 'The model request failed; answering from the evidence gathered so far.';
+          stoppingReason = 'provider_error';
+        }
         callbacks?.onStepUpdated?.(thought);
-        stoppingReason = 'elapsed_time';
         break;
       }
       thought.content = response.content.trim() || 'Selected Discord context tools.';
