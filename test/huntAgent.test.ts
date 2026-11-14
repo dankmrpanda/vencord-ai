@@ -399,6 +399,48 @@ async function llm11DeletedSessionResurrected(): Promise<void> {
   }
 }
 
+/** SEC-09 (chatService half): a send scoped to another channel must not replay or extend the active session of a different channel. */
+async function sec09SessionFollowsScopeChannel(): Promise<void> {
+  const originalAcquire = modelLifecycle.acquire;
+  const originalRun = AIAssistantAgent.prototype.run;
+  const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
+  const memory = new Map<string, string>();
+  const histories: string[][] = [];
+  try {
+    if (!hadLocalStorage) {
+      (globalThis as any).localStorage = {
+        getItem: (key: string) => memory.get(key) ?? null,
+        setItem: (key: string, value: string) => { memory.set(key, String(value)); },
+        removeItem: (key: string) => { memory.delete(key); },
+        key: (index: number) => Array.from(memory.keys())[index] ?? null,
+        get length() { return memory.size; },
+      };
+    }
+    modelLifecycle.acquire = async () => () => undefined;
+    AIAssistantAgent.prototype.run = async (_prompt, history) => {
+      histories.push(history.map((entry) => entry.content));
+      return { content: 'reply', steps: [], citations: [] };
+    };
+    const channelA = `${Date.now()}00001`;
+    const channelB = `${Date.now()}00002`;
+    const service = new ChatService(settings());
+    const sessionA = await service.initSession(channelA);
+    await service.sendMessage('what did alice say about the lawsuit', null, { ...dmScope(), channelId: channelA } as CurrentScopeContext);
+    await service.sendMessage('anything new here?', null, { ...dmScope(), channelId: channelB } as CurrentScopeContext);
+    assert(histories[1]?.length === 0, `SEC-09 a run scoped to channel B replayed channel A history: ${JSON.stringify(histories[1])}`);
+    assert(service.getActiveSession()?.channelId === channelB, 'SEC-09 the channel-B turn was not placed in a channel-B session');
+    const storedA = await getSessionById(sessionA.id);
+    assert(storedA?.messages.length === 2, `SEC-09 channel A session was extended by a channel-B turn (${storedA?.messages.length} messages)`);
+    // A fresh service restoring the stored active session must not adopt one from another channel.
+    const restored = await new ChatService(settings()).initSession(channelA);
+    assert(restored.channelId === channelA, `SEC-09 initSession(${channelA}) restored a session of channel ${restored.channelId}`);
+  } finally {
+    modelLifecycle.acquire = originalAcquire;
+    AIAssistantAgent.prototype.run = originalRun;
+    if (!hadLocalStorage) delete (globalThis as any).localStorage;
+  }
+}
+
 /** LLM-12: a provider error on a later loop turn throws out of the run, discarding evidence instead of finalizing. */
 async function llm12LoopTurnFailureSkipsFinalization(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -494,6 +536,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-11 untrusted names in system message', sec11UntrustedNamesInSystemMessage],
   ['SEC-05 history summary not system', sec05HistorySummaryNotSystem],
   ['LLM-11 deleted session resurrected by run', llm11DeletedSessionResurrected],
+  ['SEC-09 session follows scope channel', sec09SessionFollowsScopeChannel],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],
 ];

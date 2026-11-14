@@ -74,7 +74,8 @@ export class ChatService {
     if (storedId) {
       try {
         const existing = await getSessionById(storedId);
-        if (existing) {
+        // Sessions are per channel: never restore another channel's session for this one.
+        if (existing && (!channelId || existing.channelId === targetChannel)) {
           this.activeSession = existing;
           this.notify();
           return existing;
@@ -164,8 +165,14 @@ export class ChatService {
     let session: ChatSession | undefined;
     let assistantMessage: AssistantChatMessage | undefined;
     try {
-      if (!this.activeSession) await this.initSession();
+      const scopeChannelId = customScope?.channelId;
+      if (!this.activeSession) await this.initSession(scopeChannelId);
       controller.signal.throwIfAborted();
+      // Sessions are per channel: a run must never replay another channel's history.
+      if (scopeChannelId && this.activeSession!.channelId !== scopeChannelId) {
+        if (this.activeSession!.messages.length) this.newSession(scopeChannelId);
+        else this.activeSession!.channelId = scopeChannelId;
+      }
       session = this.activeSession!;
       const history = session.messages.slice();
       const turnId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
