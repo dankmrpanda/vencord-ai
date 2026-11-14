@@ -20,8 +20,10 @@ import { ChatMessage } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
 import { HistoryDrawer } from './HistoryDrawer';
 import { ScopeIndicator } from './ScopeIndicator';
+import { deleteHistorySession, selectHistorySession } from './sidebarActions';
 import {
   activeIconButtonStyle,
+  disabledIconButtonStyle,
   activeSendButtonStyle,
   botTagStyle,
   disabledSendButtonStyle,
@@ -169,6 +171,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   }, [session?.messages, isGenerating]);
 
   const handleNewChat = () => {
+    if (isGenerating) return;
     const channelId = getCurrentChannelId() || 'global';
     chatService.newSession(channelId);
     isUserScrolledUpRef.current = false;
@@ -181,8 +184,9 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   };
 
   const handleSelectSession = (selected: ChatSession) => {
+    if (isGenerating) return;
     isUserScrolledUpRef.current = false;
-    chatService.switchSession(selected);
+    selectHistorySession(chatService, selected);
     setShowHistory(false);
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -192,7 +196,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
   const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    await chatService.deleteSession(id);
+    if (!(await deleteHistorySession(chatService, id))) return;
     const targetId = getCurrentChannelId() || 'global';
     loadChannelScopeAndHistory(targetId);
   };
@@ -311,16 +315,22 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             🐞
           </button>
           <button
-            style={showHistory ? activeIconButtonStyle : iconButtonStyle}
+            style={showHistory ? activeIconButtonStyle : isGenerating ? disabledIconButtonStyle : iconButtonStyle}
             onClick={() => {
+              if (isGenerating && !showHistory) return;
               loadChannelScopeAndHistory(getCurrentChannelId());
               setShowHistory(!showHistory);
             }}
-            title="Chat History"
+            title={isGenerating && !showHistory ? 'Chat History (stop generating first)' : 'Chat History'}
           >
             🕒
           </button>
-          <button style={iconButtonStyle} onClick={handleNewChat} title="New Chat">
+          <button
+            style={isGenerating ? disabledIconButtonStyle : iconButtonStyle}
+            onClick={handleNewChat}
+            disabled={isGenerating}
+            title={isGenerating ? 'New Chat (stop generating first)' : 'New Chat'}
+          >
             ➕
           </button>
           {onOpenSettings && (
@@ -351,6 +361,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         isOpen={showHistory}
         sessionsList={sessionsList}
         activeSessionId={session?.id}
+        disabled={isGenerating}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         onClose={() => setShowHistory(false)}

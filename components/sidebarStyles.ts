@@ -65,6 +65,12 @@ export const activeIconButtonStyle: React.CSSProperties = {
   color: 'var(--interactive-active, #ffffff)',
 };
 
+export const disabledIconButtonStyle: React.CSSProperties = {
+  ...iconButtonStyle,
+  cursor: 'not-allowed',
+  opacity: 0.4,
+};
+
 export const textButtonStyle: React.CSSProperties = {
   background: 'none',
   border: 'none',

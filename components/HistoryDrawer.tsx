@@ -22,6 +22,8 @@ interface HistoryDrawerProps {
   isOpen: boolean;
   sessionsList: ChatSession[];
   activeSessionId?: string;
+  /** True while a reply is generating: sessions cannot be switched or deleted until it ends. */
+  disabled?: boolean;
   onSelectSession: (session: ChatSession) => void;
   onDeleteSession: (e: React.MouseEvent, id: string) => void;
   onClose: () => void;
@@ -45,6 +47,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   isOpen,
   sessionsList,
   activeSessionId,
+  disabled = false,
   onSelectSession,
   onDeleteSession,
   onClose,
@@ -54,7 +57,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   return (
     <div style={historyDrawerStyle}>
       <div style={historyHeaderStyle}>
-        <span>Chat Sessions ({sessionsList.length})</span>
+        <span>Chat Sessions ({sessionsList.length}){disabled ? ' · stop generating to switch' : ''}</span>
         <button style={textButtonStyle} onClick={onClose}>
           Close
         </button>
@@ -66,8 +69,11 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
           sessionsList.map((s) => (
             <div
               key={s.id}
-              style={s.id === activeSessionId ? activeHistoryItemStyle : historyItemStyle}
-              onClick={() => onSelectSession(s)}
+              style={{
+                ...(s.id === activeSessionId ? activeHistoryItemStyle : historyItemStyle),
+                ...(disabled ? { cursor: 'not-allowed', opacity: 0.6 } : {}),
+              }}
+              onClick={() => { if (!disabled) onSelectSession(s); }}
               title={s.title}
             >
               <div style={historyTitleStyle}>{s.title || 'Untitled Chat'}</div>
@@ -76,8 +82,9 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
               </div>
               <button
                 style={deleteButtonStyle}
-                onClick={(e) => onDeleteSession(e, s.id)}
-                title="Delete Chat"
+                onClick={(e) => { e.stopPropagation(); if (!disabled) onDeleteSession(e, s.id); }}
+                disabled={disabled}
+                title={disabled ? 'Stop generating to delete' : 'Delete Chat'}
               >
                 🗑️
               </button>
