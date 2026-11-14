@@ -12,7 +12,15 @@ import { displayBaseUrl } from '../components/DebugDrawer';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
-import { deleteHistorySession, keepScopeForChannel, selectHistorySession, sessionChannelTarget, syncSessionToChannel } from '../components/sidebarActions';
+import {
+  deleteHistorySession,
+  isNearBottom,
+  keepScopeForChannel,
+  selectHistorySession,
+  sessionChannelTarget,
+  streamScrollKey,
+  syncSessionToChannel,
+} from '../components/sidebarActions';
 import { DEFAULT_SETTINGS, validateBaseUrlInput } from '../settings';
 import { getSessionById, getSessionsForChannel } from '../storage/chatHistory';
 import { AssistantChatMessage, CurrentScopeContext } from '../types';
@@ -271,6 +279,23 @@ async function ui11BaseUrlRedacted(): Promise<void> {
   assert(wrong.length === 0, `UI-11 displayBaseUrl: ${wrong.join('; ')}`);
 }
 
+/** UI-03: chatService mutates the streaming reply in place, so the auto-scroll trigger must change as it grows. */
+async function ui03ScrollFollowsStream(): Promise<void> {
+  const reply = assistantMessage('');
+  const session = { id: 's1', channelId: 'c1', title: 't', createdAt: 0, updatedAt: 0, messages: [reply] };
+  const keys = [streamScrollKey(session)];
+  reply.content += 'first tokens';
+  keys.push(streamScrollKey(session));
+  reply.steps!.push({ type: 'tool_call' } as any);
+  keys.push(streamScrollKey(session));
+  session.messages.push(assistantMessage('next'));
+  keys.push(streamScrollKey(session));
+  assert(new Set(keys).size === keys.length, `UI-03 scroll key did not change while the reply grew in place: ${JSON.stringify(keys)}`);
+  assert(streamScrollKey(null) === '', 'UI-03 no session -> empty key');
+  assert(isNearBottom(1000, 900, 100) && isNearBottom(1000, 821, 100) && !isNearBottom(1000, 700, 100),
+    'UI-Q01 near-bottom threshold (80 px)');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -281,6 +306,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-09 session follows channel', sec09SessionFollowsChannel],
   ['UI-01 scope kept until channel change', ui01ScopeKeptUntilChannelChange],
   ['UI-11 base URL redacted in debug drawer', ui11BaseUrlRedacted],
+  ['UI-03 scroll follows stream', ui03ScrollFollowsStream],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

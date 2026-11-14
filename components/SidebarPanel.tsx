@@ -20,7 +20,14 @@ import { ChatMessage } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
 import { HistoryDrawer } from './HistoryDrawer';
 import { ScopeIndicator } from './ScopeIndicator';
-import { deleteHistorySession, keepScopeForChannel, selectHistorySession, syncSessionToChannel } from './sidebarActions';
+import {
+  deleteHistorySession,
+  isNearBottom,
+  keepScopeForChannel,
+  selectHistorySession,
+  streamScrollKey,
+  syncSessionToChannel,
+} from './sidebarActions';
 import {
   activeIconButtonStyle,
   disabledIconButtonStyle,
@@ -35,6 +42,7 @@ import {
   headerTitleStyle,
   iconButtonStyle,
   inputContainerStyle,
+  jumpToLatestButtonStyle,
   mentionAvatarPlaceholderStyle,
   mentionGlobalNameStyle,
   mentionItemActiveStyle,
@@ -88,6 +96,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const isUserScrolledUpRef = React.useRef(false);
+  const [showJumpToLatest, setShowJumpToLatest] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const lastChannelIdRef = React.useRef<string | null>(null);
   // index.tsx passes a new arrow on every render; a ref keeps the channel listener effect from re-running.
@@ -174,15 +183,24 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const handleScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    isUserScrolledUpRef.current = distanceFromBottom > 80;
+    const scrolledUp = !isNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+    isUserScrolledUpRef.current = scrolledUp;
+    setShowJumpToLatest(scrolledUp);
   };
 
+  const jumpToLatest = () => {
+    isUserScrolledUpRef.current = false;
+    setShowJumpToLatest(false);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // UI-03: follow the streaming reply (mutated in place) while the user is near the bottom.
+  const scrollKey = streamScrollKey(session);
   React.useEffect(() => {
     if (!isUserScrolledUpRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: isGenerating ? 'auto' : 'smooth' });
     }
-  }, [session?.messages, isGenerating]);
+  }, [scrollKey, isGenerating]);
 
   const handleNewChat = () => {
     if (isGenerating) return;
@@ -420,6 +438,15 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* UI-Q01: shown while scrolled away from the latest content */}
+      {showJumpToLatest && Boolean(session?.messages.length) && (
+        <div style={stopButtonContainerStyle}>
+          <button style={jumpToLatestButtonStyle} onClick={jumpToLatest} title="Scroll to the latest message">
+            ↓ Jump to latest
+          </button>
+        </div>
+      )}
 
       {/* Stop Generating Button */}
       {isGenerating && (

@@ -62,3 +62,18 @@ export function keepScopeForChannel(scope: CurrentScopeContext | null, channelId
   if (!scope) return null;
   return !channelId || scope.channelId === channelId ? scope : null;
 }
+
+/** UI-Q01: the user counts as following the conversation while within `threshold` px of the bottom. */
+export function isNearBottom(scrollHeight: number, scrollTop: number, clientHeight: number, threshold = 80): boolean {
+  return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+/**
+ * UI-03: chatService appends tokens and steps to the last message in place, so the messages array identity never
+ * changes during a run. This key changes whenever visible content grows, and drives the auto-scroll effect.
+ */
+export function streamScrollKey(session: Pick<ChatSession, 'id' | 'messages'> | null | undefined): string {
+  if (!session) return '';
+  const last = session.messages[session.messages.length - 1];
+  return `${session.id}:${session.messages.length}:${last?.content?.length ?? 0}:${last?.steps?.length ?? 0}`;
+}

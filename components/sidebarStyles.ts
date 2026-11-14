@@ -229,6 +229,17 @@ export const stopButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
+export const jumpToLatestButtonStyle: React.CSSProperties = {
+  padding: '3px 12px',
+  backgroundColor: 'var(--background-secondary-alt, #232428)',
+  color: 'var(--text-normal, #dbdee1)',
+  border: '1px solid var(--background-modifier-accent, #3f4147)',
+  borderRadius: '12px',
+  fontSize: '11px',
+  fontWeight: 600,
+  cursor: 'pointer',
+};
+
 export const inputContainerStyle: React.CSSProperties = {
   position: 'relative',
   padding: '10px 12px',
