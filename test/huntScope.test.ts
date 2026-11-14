@@ -94,8 +94,32 @@ async function sec01MessageIdPathTraversal(): Promise<void> {
   );
 }
 
+/** SEC-02: group DM names are matched as raw substrings of the prompt, so ordinary words widen DM scope. */
+async function sec02GroupDmSubstringMatch(): Promise<void> {
+  const base: CurrentScopeContext = {
+    ...dmScope(),
+    mutualGroupDMs: [
+      { id: 'gdm_art', name: 'art', recipientNames: ['Alice', 'Bob'] },
+      { id: 'gdm_plans', name: 'Plans', recipientNames: ['Alice', 'Carol'] },
+    ],
+  };
+  const inWord = restrictScopeForUserPrompt(base, 'When does the party start?');
+  assert(!isChannelAllowedInScope('gdm_art', inWord), 'SEC-02 group DM "art" was added to scope by the words "party start" (substring match inside other words)');
+  const plural = restrictScopeForUserPrompt(base, 'did alice send her airplanschedule yet');
+  assert(!isChannelAllowedInScope('gdm_plans', plural), 'SEC-02 group DM "Plans" was added to scope by the token "airplanschedule"');
+  const named = restrictScopeForUserPrompt(base, 'What did we decide in the Plans group?');
+  assert(isChannelAllowedInScope('gdm_plans', named) && !isChannelAllowedInScope('gdm_art', named), 'SEC-02 a group DM named as a whole word must still be added, and only that one');
+  const numeric: CurrentScopeContext = {
+    ...base,
+    mutualGroupDMs: [{ id: '700000000000000007', name: 'x', recipientNames: ['Alice'] }],
+  };
+  assert(!isChannelAllowedInScope('700000000000000007', restrictScopeForUserPrompt(numeric, 'see 17000000000000000079')), 'SEC-02 a group DM ID embedded in a longer number widened scope');
+  assert(isChannelAllowedInScope('700000000000000007', restrictScopeForUserPrompt(numeric, 'search group 700000000000000007 please')), 'SEC-02 an exact group DM ID must still be accepted');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 message_id path traversal', sec01MessageIdPathTraversal],
+  ['SEC-02 group DM substring match', sec02GroupDmSubstringMatch],
 ];
 
 export async function runHuntScopeTests(): Promise<void> {

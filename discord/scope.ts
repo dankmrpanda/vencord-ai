@@ -238,6 +238,19 @@ function normalizedLabel(value: string): string {
   return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
+const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/** True when `token` occurs in `text` without a letter, digit or underscore directly on either side. */
+function containsWholeToken(text: string, token: string): boolean {
+  if (!token) return false;
+  for (let index = text.indexOf(token); index !== -1; index = text.indexOf(token, index + 1)) {
+    const before = text[index - 1];
+    const after = text[index + token.length];
+    if ((!before || !WORD_CHARACTER.test(before)) && (!after || !WORD_CHARACTER.test(after))) return true;
+  }
+  return false;
+}
+
 export function restrictScopeForUserPrompt(
   context: CurrentScopeContext,
   userPrompt: string,
@@ -252,9 +265,9 @@ export function restrictScopeForUserPrompt(
   }
   const normalizedPrompt = normalizedLabel(userPrompt);
   const explicitlyRequested = context.mutualGroupDMs.filter((group) => {
-    if (launchTargetChannelId === group.id || userPrompt.includes(group.id)) return true;
+    if (launchTargetChannelId === group.id || containsWholeToken(userPrompt, group.id)) return true;
     const groupName = normalizedLabel(group.name);
-    return groupName.length >= 3 && normalizedPrompt.includes(groupName);
+    return groupName.length >= 3 && containsWholeToken(normalizedPrompt, groupName);
   });
   return { ...context, mutualGroupDMs: explicitlyRequested, explicitMutualGroupDMIds: explicitlyRequested.map((group) => group.id) };
 }
