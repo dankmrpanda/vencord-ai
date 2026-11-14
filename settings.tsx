@@ -8,8 +8,21 @@ import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
 import { React } from '@webpack/common';
 import { modelLifecycle } from './llm/modelLifecycle';
-import { resolveModelIdentifier } from './llm/modelSettings';
+import { normalizeBaseUrl, resolveModelIdentifier } from './llm/modelSettings';
 import { PluginSettings, ProviderPreset } from './types';
+
+/**
+ * Decides whether a typed base URL may receive a request (and the API key). Empty, scheme-less and
+ * credential-bearing values are refused, so a relative URL never resolves against discord.com.
+ */
+export function validateBaseUrlInput(raw: string | undefined): { ok: true; url: string } | { ok: false; message: string } {
+  if (!raw?.trim()) return { ok: false, message: 'Enter a Base URL, for example http://localhost:8000/v1.' };
+  try {
+    return { ok: true, url: normalizeBaseUrl(raw) };
+  } catch (err: any) {
+    return { ok: false, message: err?.message || 'Invalid Base URL.' };
+  }
+}
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
@@ -212,19 +225,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
     }));
   };
 
+  const baseUrlValidation = validateBaseUrlInput(localSettings.baseUrl);
+
   const handleTestConnection = async () => {
+    const baseUrlCheck = validateBaseUrlInput(localSettings.baseUrl);
+    if (!baseUrlCheck.ok) {
+      setTestStatus(`❌ ${baseUrlCheck.message}`);
+      return;
+    }
     setIsTesting(true);
     setTestStatus('Testing connection...');
 
-    const testSettings = { ...localSettings };
+    const testSettings = { ...localSettings, baseUrl: baseUrlCheck.url };
     const controller = new AbortController();
     connectionController.current = controller;
     const signal = AbortSignal.any([controller.signal, modelLifecycle.signal]);
     let releaseModel: (() => void) | undefined;
     try {
       releaseModel = await modelLifecycle.acquire(testSettings, signal);
-      let cleanUrl = testSettings.baseUrl.trim();
-      if (cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+      const cleanUrl = testSettings.baseUrl;
 
       const authKey = testSettings.apiKey?.trim() || 'local-no-auth';
       const headers: Record<string, string> = {
@@ -288,6 +307,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
           placeholder="http://localhost:8000/v1"
           onChange={(e) => updateSetting((prev) => ({ ...prev, baseUrl: e.target.value }))}
         />
+        {!baseUrlValidation.ok && <span style={errorHintStyle}>{baseUrlValidation.message}</span>}
         <span style={hintStyle}>
           Standard OpenAI-compatible endpoint. Local defaults: omlx (`:8000/v1`), Ollama (`:11434/v1`), LM Studio (`:1234/v1`).
         </span>
@@ -443,6 +463,11 @@ const hintStyle: React.CSSProperties = {
   fontSize: '11px',
   color: 'var(--text-muted, #949ba4)',
   lineHeight: '1.3',
+};
+
+const errorHintStyle: React.CSSProperties = {
+  ...hintStyle,
+  color: 'var(--text-danger, #f23f43)',
 };
 
 const inputStyle: React.CSSProperties = {

@@ -12,7 +12,7 @@ import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
 import { deleteHistorySession, selectHistorySession } from '../components/sidebarActions';
-import { DEFAULT_SETTINGS } from '../settings';
+import { DEFAULT_SETTINGS, validateBaseUrlInput } from '../settings';
 import { getSessionById, getSessionsForChannel } from '../storage/chatHistory';
 import { AssistantChatMessage } from '../types';
 import { assert } from './assert';
@@ -123,6 +123,21 @@ async function ui10NestedInlineLinks(): Promise<void> {
   assert(bold.includes('href="https://x.example/p_(1)"'), `UI-10 parenthesised href truncated: ${bold.match(/<em[\s\S]*?<\/em>/)?.[0]}`);
 }
 
+/** UI-07: Test Connection must refuse empty, scheme-less and credential-bearing base URLs before any request. */
+async function ui07BaseUrlValidation(): Promise<void> {
+  const invalid = ['', '   ', 'api.openai.com/v1', '127.0.0.1:8000/v1', 'localhost:8000/v1', '/v1', 'javascript:alert(1)',
+    'ftp://example.com/v1', 'https://user:pw@api.example.com/v1', 'https://user@api.example.com/v1'];
+  const accepted = invalid.filter((raw) => validateBaseUrlInput(raw).ok);
+  assert(accepted.length === 0, `UI-07 accepted invalid base URLs: ${JSON.stringify(accepted)}`);
+  const missingMessage = invalid.filter((raw) => { const r = validateBaseUrlInput(raw); return !r.ok && !r.message; });
+  assert(missingMessage.length === 0, `UI-07 no message for: ${JSON.stringify(missingMessage)}`);
+  const leaked = validateBaseUrlInput('https://user:secretpw@api.example.com/v1');
+  assert(!leaked.ok && !leaked.message.includes('secretpw'), 'UI-07 validation message echoes the credential');
+  const ok = validateBaseUrlInput(' http://localhost:8000/v1/ ');
+  assert(ok.ok && ok.url === 'http://localhost:8000/v1', `UI-07 valid URL not normalized: ${JSON.stringify(ok)}`);
+  assert(validateBaseUrlInput('https://api.openai.com/v1').ok, 'UI-07 rejected https://api.openai.com/v1');
+}
+
 /**
  * UI-02: selecting the active chat in the history drawer during a run (SidebarPanel.handleSelectSession ->
  * chatService.switchSession(storedCopy)) swaps in a stale copy; the next send overwrites the finished answer.
@@ -179,6 +194,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
   ['SEC-10 spoofed link host hidden', sec10SpoofedLinkHostHidden],
   ['UI-10 nested inline links', ui10NestedInlineLinks],
+  ['UI-07 base URL validation', ui07BaseUrlValidation],
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],
 ];
 
