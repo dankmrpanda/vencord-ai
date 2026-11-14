@@ -7,12 +7,14 @@
 import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { AssistantChatMessage } from '../types';
+import { classifyChatError } from './chatErrors';
 import { classifyLink } from './chatLinks';
 import { MessagePreview } from './MessagePreview';
 import { ToolCallBadge } from './ToolCallBadge';
 
 interface ChatMessageProps {
   message: AssistantChatMessage;
+  onOpenSettings?: () => void;
 }
 
 function renderLink(text: string, rawHref: string, key: number): React.ReactNode {
@@ -177,8 +179,9 @@ function renderMarkdownContent(content: string): React.ReactNode {
   );
 }
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSettings }) => {
   const isUser = message.role === 'user';
+  const errorHint = isUser ? null : classifyChatError(message.content);
   const [copiedMsg, setCopiedMsg] = React.useState(false);
   const [showCitations, setShowCitations] = React.useState(false);
 
@@ -225,6 +228,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
         {renderMarkdownContent(message.content)}
         {message.isStreaming && <span style={streamingCursorStyle}>▋</span>}
       </div>
+
+      {errorHint && (
+        <div style={errorHintStyle} data-error-kind={errorHint.kind}>
+          <span>💡 {errorHint.hint}</span>
+          {onOpenSettings && (
+            <button style={copyMessageButtonStyle} onClick={onOpenSettings}>
+              Open settings
+            </button>
+          )}
+        </div>
+      )}
 
       {!isUser && message.citations && message.citations.length > 0 && (
         <div style={citationsContainerStyle}>
@@ -297,6 +311,19 @@ const copyMessageButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
   padding: '2px 6px',
   borderRadius: '4px',
+};
+
+const errorHintStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+  marginTop: '6px',
+  padding: '6px 8px',
+  borderRadius: '4px',
+  fontSize: '12px',
+  backgroundColor: 'var(--background-secondary, #2b2d31)',
+  color: 'var(--text-normal, #dbdee1)',
 };
 
 const stepsContainerStyle: React.CSSProperties = {

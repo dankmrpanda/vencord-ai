@@ -230,6 +230,7 @@ function renderSidebar() {
       <SidebarPanel
         settings={currentSettings}
         onClose={closeSidebar}
+        onOpenSettings={getPluginSettingsOpener()}
         logs={pluginLogs}
         launchRequest={getAssistantLaunchRequest()}
         onLaunchConsumed={() => {
@@ -318,6 +319,14 @@ function renderSidebar() {
   } catch (err: any) {
     logPlugin('error', `Fatal error in renderSidebar: ${err?.stack || err?.message || err}`);
   }
+}
+
+// UI-Q02: Vencord exposes openPluginModal on its global; without it the settings buttons stay hidden.
+function getPluginSettingsOpener(): (() => void) | undefined {
+  const vencord = typeof window !== 'undefined' ? (window as any).Vencord : undefined;
+  const open = vencord?.Components?.openPluginModal;
+  const plugin = vencord?.Plugins?.plugins?.AIAssistant;
+  return typeof open === 'function' && plugin ? () => open(plugin) : undefined;
 }
 
 // UI-13: an unsent launch request ends with the panel, so it cannot attach to a later, unrelated question.

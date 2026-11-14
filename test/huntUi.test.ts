@@ -7,6 +7,7 @@ import * as RealReact from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from '../assistantLaunch';
+import { classifyChatError } from '../components/chatErrors';
 import { classifyLink } from '../components/chatLinks';
 import { ChatMessage } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
@@ -377,6 +378,39 @@ async function ui13LaunchRequestScoped(): Promise<void> {
   assert(launchRequestForSend(null) === null, 'UI-13 no request');
 }
 
+/** UI-Q02: common provider failures get a fixed one-line hint and an Open settings action. */
+async function uiQ02ActionableErrors(): Promise<void> {
+  const err = (text: string) => `⚠️ **Error**: ${text}`;
+  const cases: Array<[string, string | null]> = [
+    [err('Failed to fetch'), 'unreachable'],
+    [err('fetch failed (ECONNREFUSED 127.0.0.1:8000)'), 'unreachable'],
+    [err('LLM completion failed (401).'), 'auth'],
+    [err('Could not resolve the omlx model identifier (HTTP 403). Set Model Identifier...'), 'auth'],
+    [err('The omlx model identifier "qwen" was not found. Set Model Identifier...'), 'model'],
+    [err('LLM completion failed (404).'), 'model'],
+    [err('The Base URL must be an absolute http:// or https:// URL, for example http://localhost:8000/v1.'), 'baseUrl'],
+    [err('The Base URL must not contain a username or password. Use the API Key setting instead.'), 'baseUrl'],
+    [err('LLM completion failed (500).'), null],
+    ['Failed to fetch is a phrase in a normal answer', null],
+    ['', null],
+  ];
+  const wrong = cases.filter(([text, kind]) => (classifyChatError(text)?.kind ?? null) !== kind)
+    .map(([text, kind]) => `${text} -> ${classifyChatError(text)?.kind ?? null} (expected ${kind})`);
+  assert(wrong.length === 0, `UI-Q02 classifyChatError: ${wrong.join('; ')}`);
+
+  const leaky = err('fetch failed for https://user:hunter2@gw.example/v1?key=sk-secret');
+  const hint = classifyChatError(leaky)?.hint ?? '';
+  assert(hint && !/hunter2|sk-secret|gw\.example/.test(hint), `UI-Q02 hint must not echo credentials: ${hint}`);
+
+  const message = { ...assistantMessage(err('LLM completion failed (401).')) };
+  const withSettings = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message, onOpenSettings: () => undefined }));
+  assert(withSettings.includes('data-error-kind="auth"') && withSettings.includes('Open settings'), 'UI-Q02 hint card with Open settings');
+  const noSettings = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message }));
+  assert(noSettings.includes('data-error-kind="auth"') && !noSettings.includes('Open settings'), 'UI-Q02 no button without onOpenSettings');
+  const user = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: { ...message, role: 'user' } }));
+  assert(!user.includes('data-error-kind'), 'UI-Q02 user messages never get a hint');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -391,6 +425,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-04 Escape layering', ui04EscapeLayering],
   ['UI-14 global toggle lifecycle', ui14GlobalToggleLifecycle],
   ['UI-13 launch request scoped to its prompt', ui13LaunchRequestScoped],
+  ['UI-Q02 actionable errors', uiQ02ActionableErrors],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

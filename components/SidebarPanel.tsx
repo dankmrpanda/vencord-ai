@@ -467,7 +467,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             </div>
           </div>
         ) : (
-          session.messages.map((m) => <ChatMessage key={m.id} message={m} />)
+          session.messages.map((m) => <ChatMessage key={m.id} message={m} onOpenSettings={onOpenSettings} />)
         )}
         <div ref={messagesEndRef} />
       </div>
