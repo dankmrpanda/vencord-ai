@@ -179,13 +179,15 @@ export function detectPatternFromQuery(query?: string): DetectedPatternInfo {
 
   // 3. Verification / OTP / 2FA / PIN codes
   if (!pattern) {
-    const otpMatch = workQuery.match(/\b(?:2fa|mfa|otp|verification|auth(?:entication)?)\s*(?:codes?|numbers?|tokens?|pins?)?\b/i);
+    const otpMatch = workQuery.match(
+      /\b(?:(?:2fa|mfa|otp)(?:\s*(?:codes?|numbers?|tokens?|pins?))?|(?:verification|auth(?:entication)?)\s*(?:codes?|numbers?|tokens?|pins?))\b/i
+    );
     if (otpMatch) {
       pattern = `\\b\\d{4,8}\\b`;
       patternDescription = 'verification/OTP code';
       workQuery = workQuery.replace(/\b(?:codes?|numbers?|tokens?|pins?)\b/gi, ' ');
     }
-    const pinMatch = workQuery.match(/\b(?:pins?|pin\s*codes?)\b/i);
+    const pinMatch = workQuery.match(/\bpins?\s*(?:codes?|numbers?)\b/i);
     if (pinMatch && !pattern) {
       pattern = `\\b\\d{4,8}\\b`;
       patternDescription = 'PIN code';
@@ -225,7 +227,7 @@ export function detectPatternFromQuery(query?: string): DetectedPatternInfo {
 
   // 7. IP addresses
   if (!pattern) {
-    const ipMatch = workQuery.match(/\b(?:ip addresses?|ipv4|ips?)\b/i);
+    const ipMatch = workQuery.match(/\b(?:ip\s+address(?:es)?|ipv4(?:\s+address(?:es)?)?)\b/i);
     if (ipMatch) {
       pattern = `\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b`;
       patternDescription = 'IP address';

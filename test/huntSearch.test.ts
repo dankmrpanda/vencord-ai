@@ -234,6 +234,13 @@ async function srch05KeywordHijackedIntoPattern(): Promise<string | null> {
   if (!ids.includes(target.id)) {
     return `query "ip ban appeal" sent content=${JSON.stringify(sent)} and returned ${JSON.stringify(ids)} (expected the matching message; it was dropped by an implicit IPv4 regex)`;
   }
+  for (const plain of ['auth error', 'verification level', 'server verification', 'pin this message', 'pins', 'ips']) {
+    const detected = detectPatternFromQuery(plain);
+    if (detected.pattern) return `plain keywords "${plain}" became pattern ${detected.pattern} (cleanedQuery "${detected.cleanedQuery}")`;
+  }
+  for (const phrase of ['2fa code', 'otp', 'verification code', 'auth token', 'pin code', 'pin numbers', 'ip addresses', 'ipv4']) {
+    if (!detectPatternFromQuery(phrase).pattern) return `descriptor phrase "${phrase}" no longer detected as a pattern`;
+  }
   return null;
 }
 
