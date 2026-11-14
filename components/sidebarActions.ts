@@ -107,6 +107,17 @@ export function inputAfterLaunchCleared(text: string, cleared: AssistantLaunchRe
   return cleared && text === cleared.initialPrompt ? '' : text;
 }
 
+export interface LastSend {
+  sessionId: string | undefined;
+  prompt: string;
+  request: AssistantLaunchRequest | null;
+}
+
+/** UI-Q04: Retry reuses the launch target of the send it repeats, only for the same prompt in the same session (channel). */
+export function retryLaunchRequest(last: LastSend | null, sessionId: string | undefined, prompt: string): AssistantLaunchRequest | null {
+  return last && last.sessionId === sessionId && last.prompt === prompt ? last.request : null;
+}
+
 /** UI-13: a launch target rides only on a send from the input box it prefilled, never on a quick prompt. */
 export function launchRequestForSend(
   request: AssistantLaunchRequest | null | undefined,

@@ -27,6 +27,7 @@ import {
   isUnhandledEscape,
   keepScopeForChannel,
   launchRequestForSend,
+  retryLaunchRequest,
   retryPromptAt,
   selectHistorySession,
   sessionChannelTarget,
@@ -445,6 +446,11 @@ async function uiQ04Retry(): Promise<void> {
   assert(retryPromptAt(messages, 2) === null, 'UI-Q04 user messages have no Retry');
   assert(retryPromptAt([...messages.slice(0, 3), { ...reply, isStreaming: true }], 3) === null, 'UI-Q04 no Retry while streaming');
   assert(retryPromptAt([reply], 0) === null, 'UI-Q04 no preceding prompt');
+  const launch = { targetChannelId: 'c1', targetMessageId: 'm1', mode: 'message', initialPrompt: 'second question' } as any;
+  const last = { sessionId: 's1', prompt: 'second question', request: launch };
+  assert(retryLaunchRequest(last, 's1', 'second question') === launch, 'UI-Q04 Retry keeps the launch target of the repeated send');
+  assert(retryLaunchRequest(last, 's2', 'second question') === null, 'UI-Q04 another session (channel) never reuses it');
+  assert(retryLaunchRequest(last, 's1', 'other') === null && retryLaunchRequest(null, 's1', 'x') === null, 'UI-Q04 other prompt or none');
   const withRetry = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: reply, onRetry: () => undefined }));
   const without = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: reply }));
   assert(withRetry.includes('↻ Retry') && !without.includes('↻ Retry'), 'UI-Q04 Retry button follows onRetry');

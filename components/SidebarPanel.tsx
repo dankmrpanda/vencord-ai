@@ -28,7 +28,9 @@ import {
   inputAfterLaunchCleared,
   isUnhandledEscape,
   keepScopeForChannel,
+  LastSend,
   launchRequestForSend,
+  retryLaunchRequest,
   retryPromptAt,
   selectHistorySession,
   shouldRefocusInput,
@@ -203,6 +205,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     if (!popupOpen && !drawerOpen) return;
     const onEscape = (e: KeyboardEvent) => {
       if (!isUnhandledEscape(e) || !isEscapeForPanel(e.target, panelRef.current, document.body)) return;
+      if (!panelRef.current?.getClientRects().length) return; // hidden sidebar: leave Escape to Discord
       const layer = escapeLayer(popupOpen, drawerOpen);
       if (layer === 'panel') return;
       e.preventDefault();
@@ -281,7 +284,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     refreshSessions(getCurrentChannelId());
   };
 
-  const handleSend = async (customPrompt?: string) => {
+  const lastSendRef = React.useRef<LastSend | null>(null);
+  const handleSend = async (customPrompt?: string, retryRequest?: AssistantLaunchRequest | null) => {
     const promptToSend = customPrompt || inputText.trim();
     if (!promptToSend || isGenerating) return;
 
@@ -293,14 +297,15 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     }
 
     // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
-    const req = launchRequestForSend(launchRequest, customPrompt);
-    if (req) onLaunchConsumed?.();
+    const req = retryRequest || launchRequestForSend(launchRequest, customPrompt);
+    if (req && !retryRequest) onLaunchConsumed?.();
 
     // SEC-09: the channel listener can lag; never send into another channel's session.
     await syncSessionToChannel(chatService, getCurrentChannelId).catch(() => false);
     // UI-01: keep the chosen scope, unless the channel changed before the listener noticed.
     const sendScope = scopeForChannel(currentScope, getCurrentChannelId());
     if (sendScope !== currentScope) setCurrentScope(sendScope);
+    lastSendRef.current = { sessionId: chatService.getActiveSession()?.id, prompt: promptToSend, request: req };
     await chatService.sendMessage(promptToSend, req, sendScope || undefined);
     refreshSessions(getCurrentChannelId());
   };
@@ -499,7 +504,9 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                 key={m.id}
                 message={m}
                 onOpenSettings={onOpenSettings}
-                onRetry={retryPrompt ? () => handleSend(retryPrompt) : undefined}
+                onRetry={retryPrompt
+                  ? () => handleSend(retryPrompt, retryLaunchRequest(lastSendRef.current, session.id, retryPrompt))
+                  : undefined}
               />
             );
           })
