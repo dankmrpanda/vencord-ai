@@ -174,11 +174,9 @@ export class AIAssistantAgent {
     if (!baseScope) throw new Error('Could not determine current Discord channel context.');
     const scope = restrictScopeForUserPrompt(baseScope, userPrompt, launchRequest?.targetChannelId);
 
-    const addCitation = (message: DiscordMessage, channelName?: string) => {
-      const existing = citationMap.get(message.id);
-      if (existing) return existing;
+    const toCitation = (message: DiscordMessage, channelName?: string): CitationItem => {
       const channel = getChannel(message.channel_id);
-      citationMap.set(message.id, {
+      return {
         messageId: message.id,
         channelId: message.channel_id,
         guildId: message.guild_id || channel?.guild_id || scope.guildId,
@@ -190,9 +188,15 @@ export class AIAssistantAgent {
         timestamp: message.timestamp,
         channelName: channelName || channel?.name || scope.channelName,
         attachmentUrls: message.attachments?.map((attachment) => attachment.url),
-      });
+      };
+    };
+    const addCitation = (message: DiscordMessage, channelName?: string) => {
+      const existing = citationMap.get(message.id);
+      if (existing) return existing;
+      const citation = toCitation(message, channelName);
+      citationMap.set(message.id, citation);
       callbacks?.onCitationsUpdated?.(Array.from(citationMap.values()));
-      return citationMap.get(message.id)!;
+      return citation;
     };
 
     const currentUser = scope.currentUser || getCurrentUser();
@@ -245,6 +249,12 @@ export class AIAssistantAgent {
         steps.push(toolStep);
         callbacks?.onStepAdded?.(toolStep);
         let result: ToolExecutionResult;
+        // Once this call has settled (including a timeout), a still-running tool can no longer add citations.
+        let callOpen = true;
+        const callContext: ToolExecutionContext = {
+          ...toolContext,
+          addCitation: (message, channelName) => callOpen ? addCitation(message, channelName) : toCitation(message, channelName),
+        };
         try {
           const tool = TOOL_REGISTRY.get(call.function.name);
           if (!tool) throw new ToolArgumentError(`Unknown tool "${call.function.name}".`);
@@ -255,7 +265,7 @@ export class AIAssistantAgent {
           } else if (!budget.markCall(call.function.name, args)) {
             result = { ok: false, code: 'duplicate_call', summary: 'An identical normalized tool call was already executed.' };
           } else {
-            result = await withTimeout(tool.execute(args, toolContext), tool.timeoutMs);
+            result = await withTimeout(tool.execute(args, callContext), tool.timeoutMs);
             // Local tools also return Discord-authored names and topics.
             result.untrustedData = true;
             if (result.truncation?.truncated) budget.truncations++;
@@ -267,6 +277,8 @@ export class AIAssistantAgent {
             code: error instanceof ToolArgumentError ? 'invalid_arguments' : 'tool_error',
             summary: errorMessage(error),
           };
+        } finally {
+          callOpen = false;
         }
         toolStep.type = result.ok ? 'tool_result' : 'error';
         toolStep.content = result.summary;
