@@ -82,7 +82,7 @@ function fitToolResultsToBudget(messages: LLMMessage[], maxTokens: number): void
     if (total <= maxTokens) return;
     if (message.role !== 'tool') continue;
     const previous = String(message.content || '');
-    let compact = JSON.stringify({ ok: false, summary: 'Output omitted to fit the input budget.' });
+    let compact = JSON.stringify({ ok: false, summary: 'Output omitted to fit the input budget.', untrustedData: true });
     try {
       const { ok, code, summary, truncation } = JSON.parse(previous);
       compact = JSON.stringify({
@@ -90,6 +90,7 @@ function fitToolResultsToBudget(messages: LLMMessage[], maxTokens: number): void
         code,
         summary: typeof summary === 'string' ? summary.slice(0, 500) : undefined,
         truncation,
+        untrustedData: true,
         omitted: 'Full output omitted to fit the input budget.',
       });
     } catch {}

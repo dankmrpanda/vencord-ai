@@ -204,6 +204,8 @@ async function llm04FinalizationExceedsTokenBudget(): Promise<void> {
     const callIds = (final.messages as any[]).flatMap((entry) => (entry.tool_calls || []).map((call: any) => call.id));
     const resultIds = new Set((final.messages as any[]).filter((entry) => entry.role === 'tool').map((entry) => entry.tool_call_id));
     assert(callIds.length > 0 && callIds.every((id: string) => resultIds.has(id)), 'LLM-04 finalization request lost a tool result for one of its tool_calls');
+    const toolResults = (final.messages as any[]).filter((entry) => entry.role === 'tool').map((entry) => JSON.parse(String(entry.content)));
+    assert(toolResults.some((entry) => entry.omitted) && toolResults.every((entry) => entry.untrustedData === true), 'LLM-04 a shrunk tool result lost its untrustedData marker');
   })));
 }
 
