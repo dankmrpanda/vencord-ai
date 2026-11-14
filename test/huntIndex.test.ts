@@ -1,9 +1,9 @@
 /*
- * Regression tests for the approved index/storage fixes (prefix IDX): IDX-02, IDX-03.
+ * Regression tests for the approved index/storage fixes (prefix IDX): IDX-02, IDX-03, IDX-04.
  * Cases that patch globals (indexedDB, localStorage) restore them in `finally`.
  */
 
-import { saveSession } from '../storage/chatHistory';
+import { getSessionsForChannel, saveSession } from '../storage/chatHistory';
 import { InvertedIndex } from '../storage/index/invertedIndex';
 import { ChatSession, DiscordMessage } from '../types';
 import { assert } from './assert';
@@ -202,10 +202,44 @@ async function idx03SaveSessionWaitsForCommit(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-04: getSessionsForChannel merges localStorage-fallback sessions with  */
+/* IndexedDB results by id; the newer updatedAt wins.                        */
+/* ------------------------------------------------------------------------ */
+async function idx04MergesLocalStorageSessions(): Promise<void> {
+  const idbOnly = session('session_idb', 'chan1', 1000);
+  const idbStale = session('session_both_ls_newer', 'chan1', 1500);
+  const idbFresh = { ...session('session_both_idb_newer', 'chan1', 3000), title: 'idb copy' };
+  const lsOnly = session('session_ls', 'chan1', 2000);
+  const lsNewer = { ...session('session_both_ls_newer', 'chan1', 2500), title: 'ls copy' };
+  const lsStale = { ...session('session_both_idb_newer', 'chan1', 500), title: 'stale ls copy' };
+  const otherChannel = session('session_other', 'chan2', 9000);
+  const restoreIdb = installFakeIndexedDB({ outcome: 'complete', getAllResult: [idbOnly, idbStale, idbFresh] });
+  const ls = installFakeLocalStorage({
+    vencord_ai_session_session_ls: JSON.stringify(lsOnly),
+    vencord_ai_session_session_both_ls_newer: JSON.stringify(lsNewer),
+    vencord_ai_session_session_both_idb_newer: JSON.stringify(lsStale),
+    vencord_ai_session_session_other: JSON.stringify(otherChannel),
+  });
+  try {
+    const list = await getSessionsForChannel('chan1');
+    const ids = list.map((s) => s.id);
+    const expected = ['session_both_idb_newer', 'session_both_ls_newer', 'session_ls', 'session_idb'];
+    assert(ids.join(',') === expected.join(','), `IDX-04 getSessionsForChannel returned [${ids.join(',')}] (expected [${expected.join(',')}]: IDB and localStorage-fallback sessions merged by id, newest first)`);
+    const byId = new Map(list.map((s) => [s.id, s]));
+    assert(byId.get('session_both_ls_newer')?.title === 'ls copy', 'IDX-04 the newer localStorage copy must win over an older IDB copy');
+    assert(byId.get('session_both_idb_newer')?.title === 'idb copy', 'IDX-04 the newer IDB copy must win over a stale localStorage copy');
+  } finally {
+    ls.restore();
+    restoreIdb();
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
   ['IDX-02 channelIds:[] + authorId matches nothing', idx02EmptyAllowlistPlusAuthorMatchesNothing],
+  ['IDX-04 localStorage-fallback sessions merged by id, newest wins', idx04MergesLocalStorageSessions],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

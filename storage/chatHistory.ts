@@ -61,6 +61,13 @@ export async function saveSession(session: ChatSession): Promise<void> {
 }
 
 export async function getSessionsForChannel(channelId: string): Promise<ChatSession[]> {
+  // IndexedDB and localStorage-fallback copies are merged by id; the newer updatedAt wins.
+  const merged = new Map<string, ChatSession>();
+  const addIfNewer = (item: ChatSession) => {
+    const existing = merged.get(item.id);
+    if (!existing || item.updatedAt > existing.updatedAt) merged.set(item.id, item);
+  };
+
   try {
     const db = await openDB();
     const dbResults = await new Promise<ChatSession[]>((resolve) => {
@@ -77,13 +84,12 @@ export async function getSessionsForChannel(channelId: string): Promise<ChatSess
 
       req.onerror = () => resolve([]);
     });
-    if (dbResults.length > 0) return dbResults;
+    dbResults.forEach(addIfNewer);
   } catch (err) {
     // IDB error, fallback to LocalStorage
   }
 
-  // LocalStorage fallback
-  const results: ChatSession[] = [];
+  // LocalStorage fallback (sessions whose IndexedDB save failed)
   try {
     if (typeof localStorage !== 'undefined') {
       for (let i = 0; i < localStorage.length; i++) {
@@ -91,16 +97,15 @@ export async function getSessionsForChannel(channelId: string): Promise<ChatSess
         if (key && key.startsWith(LS_PREFIX)) {
           try {
             const item: ChatSession = JSON.parse(localStorage.getItem(key) || '{}');
-            if (item.channelId === channelId) {
-              results.push(item);
+            if (item.channelId === channelId && item.id) {
+              addIfNewer(item);
             }
           } catch {}
         }
       }
     }
   } catch {}
-  results.sort((a, b) => b.updatedAt - a.updatedAt);
-  return results;
+  return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
