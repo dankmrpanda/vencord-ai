@@ -1,6 +1,6 @@
 /*
- * Phase 1 hunt repro tests for the model-lifecycle area (prefix LIFE).
- * Every case here is expected to be RED until the matching finding is fixed.
+ * Regression tests for the approved model-lifecycle fixes (prefix LIFE): LIFE-01, LIFE-02, LIFE-04, LIFE-07.
+ * Each case restores fetch and the mocked timers.
  */
 
 import { setImmediate as settle } from 'node:timers/promises';
@@ -137,33 +137,6 @@ async function life02AliasedEntryUnloadsActiveModel(): Promise<void> {
     const unloaded = calls.filter(isUnload).map((c) => c.body.instance_id);
     active();
     assert(unloaded.join(',') === 'inst-1', `LIFE-02 an idle LM Studio entry still unloads its own instance (unloaded: ${unloaded.join(',')})`);
-  });
-}
-
-/** LIFE-03a: LM Studio load reached the server but returned no instance_id; cleanup never unloads. */
-async function life03aLmStudioMissingInstanceOrphan(): Promise<void> {
-  const settings = fixtureSettings({ providerPreset: 'lmstudio', baseUrl: 'http://life03a.fixture/v1' });
-  await withLifecycle((call) => Response.json(call.url.endsWith('/load') ? { status: 'loaded' } : {}), async (lifecycle, calls, advance) => {
-    const failed = await lifecycle.acquire(settings).then(() => false, () => true);
-    assert(failed, 'precondition: a load without instance_id is reported as a failure');
-    await advance(MODEL_IDLE_TIMEOUT_MS);
-    await lifecycle.shutdown();
-    assert(calls.some(isUnload), `LIFE-03a a model the server loaded must receive an unload request (calls: ${calls.map((c) => c.url).join(', ')})`);
-  });
-}
-
-/** LIFE-03b: LM Studio load response lost (timeout/network); cleanup never unloads. */
-async function life03bLmStudioLostResponseOrphan(): Promise<void> {
-  const settings = fixtureSettings({ providerPreset: 'lmstudio', baseUrl: 'http://life03b.fixture/v1' });
-  await withLifecycle((call) => {
-    if (call.url.endsWith('/load')) throw new DOMException('The operation timed out.', 'TimeoutError');
-    return Response.json({});
-  }, async (lifecycle, calls, advance) => {
-    const failed = await lifecycle.acquire(settings).then(() => false, () => true);
-    assert(failed, 'precondition: the load response is lost');
-    await advance(MODEL_IDLE_TIMEOUT_MS);
-    await lifecycle.shutdown();
-    assert(calls.some(isUnload), `LIFE-03b a load that may have reached the server must receive an unload request (calls: ${calls.map((c) => c.url).join(', ')})`);
   });
 }
 
