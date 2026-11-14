@@ -131,6 +131,15 @@ async function srch02StickerFilterPassesEverything(): Promise<string | null> {
   const withLegacy = msg('110000000000000013', DM, 'sticker', new Date().toISOString(), { stickers: [{ id: '2', name: 'hi' }] } as any);
   const kept = filterMessagesLocally([withItems, withLegacy], { has: 'sticker' }).map((m) => m.id);
   if (kept.length !== 2) problems.push(`sticker messages kept ${JSON.stringify(kept)} (expected both)`);
+  const remoteSticker = { ...withItems, id: '110000000000000014', hit: true } as DiscordMessage;
+  const pipeline = await withGet(
+    ({ url }) => (isSearch(url) ? { total_results: 1, messages: [[remoteSticker]] } : [withItems, plain]),
+    () => runMessageSearch({ has: 'sticker', limit: 10, scanLimit: 10 }, dmScope()),
+  );
+  const pipelineIds = (pipeline.data?.messages.map((m) => m.id) || []).sort();
+  if (JSON.stringify(pipelineIds) !== JSON.stringify([withItems.id, remoteSticker.id])) {
+    problems.push(`pipeline has=sticker returned ${JSON.stringify(pipelineIds)} (expected the remote and local sticker messages only)`);
+  }
   const unknown = filterMessagesLocally([withItems, plain], { has: 'poll' as any });
   if (unknown.length) problems.push(`unknown has='poll' kept ${unknown.length} message(s) (expected fail closed)`);
   return problems.length ? problems.join('; ') : null;
