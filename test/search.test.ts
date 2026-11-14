@@ -42,7 +42,7 @@ function runSearchTests() {
       channel_id: 'ch_general',
       author: { id: 'user_1', username: 'alice', globalName: 'Alice' },
       content: 'Check out this website: https://example.com/docs for more info!',
-      timestamp: '2025-01-01T12:00:00.000Z',
+      timestamp: new Date(2025, 0, 1, 12, 0).toISOString(),
       attachments: [],
       embeds: [],
       mentions: [],
@@ -52,7 +52,7 @@ function runSearchTests() {
       channel_id: 'ch_general',
       author: { id: 'user_2', username: 'bob', globalName: 'Bob' },
       content: 'Here is the project specification PDF',
-      timestamp: '2025-01-01T12:05:00.000Z',
+      timestamp: new Date(2025, 0, 1, 12, 5).toISOString(),
       attachments: [
         {
           id: 'att_1',
@@ -71,7 +71,7 @@ function runSearchTests() {
       channel_id: 'ch_general',
       author: { id: 'user_3', username: 'charlie', globalName: 'Charlie' },
       content: 'Look at this screenshot of the dashboard',
-      timestamp: '2025-01-01T12:10:00.000Z',
+      timestamp: new Date(2025, 0, 1, 12, 10).toISOString(),
       attachments: [
         {
           id: 'att_2',
@@ -90,7 +90,7 @@ function runSearchTests() {
       channel_id: 'ch_general',
       author: { id: 'user_1', username: 'alice', globalName: 'Alice' },
       content: 'Just a regular plain text message without links or files.',
-      timestamp: '2025-01-01T12:15:00.000Z',
+      timestamp: new Date(2025, 0, 1, 12, 15).toISOString(),
       attachments: [],
       embeds: [],
       mentions: [],
@@ -146,6 +146,7 @@ function runSearchTests() {
   assert(Math.abs(recoveredDate.getTime() - sampleTime) < 10, 'Snowflake conversion should preserve timestamp accuracy');
 
   // Test 11: filterMessagesLocally with duringDate
+  // The fixtures above use local-time timestamps, so their local day is 2025-01-01 in every time zone.
   const dateMatch = filterMessagesLocally(testMessages, { duringDate: '2025-01-01' });
   assert(dateMatch.length === 4, `Expected all 4 messages on 2025-01-01, got ${dateMatch.length}`);
 
