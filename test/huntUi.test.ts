@@ -11,10 +11,10 @@ import { ChatMessage } from '../components/ChatMessage';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
-import { deleteHistorySession, selectHistorySession, sessionChannelTarget, syncSessionToChannel } from '../components/sidebarActions';
+import { deleteHistorySession, keepScopeForChannel, selectHistorySession, sessionChannelTarget, syncSessionToChannel } from '../components/sidebarActions';
 import { DEFAULT_SETTINGS, validateBaseUrlInput } from '../settings';
 import { getSessionById, getSessionsForChannel } from '../storage/chatHistory';
-import { AssistantChatMessage } from '../types';
+import { AssistantChatMessage, CurrentScopeContext } from '../types';
 import { assert } from './assert';
 
 function withMemoryLocalStorage<T>(fn: () => Promise<T>): Promise<T> {
@@ -245,6 +245,15 @@ async function sec09SessionFollowsChannel(): Promise<void> {
   });
 }
 
+/** UI-01: a scope chosen in ScopeIndicator survives sends and refreshes; it is replaced only for another channel. */
+async function ui01ScopeKeptUntilChannelChange(): Promise<void> {
+  const serverScope = { channelId: 'c1', scopeMode: 'server', selectedChannelIds: ['c1', 'c2'] } as unknown as CurrentScopeContext;
+  assert(keepScopeForChannel(serverScope, 'c1') === serverScope, 'UI-01 chosen scope dropped while still in its channel');
+  assert(keepScopeForChannel(serverScope, null) === serverScope, 'UI-01 null channel must keep the scope (matches the session rule)');
+  assert(keepScopeForChannel(serverScope, 'c9') === null, 'UI-01 scope from another channel kept after a channel change');
+  assert(keepScopeForChannel(null, 'c1') === null, 'UI-01 missing scope must be rebuilt');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -253,6 +262,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-07 base URL validation', ui07BaseUrlValidation],
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],
   ['SEC-09 session follows channel', sec09SessionFollowsChannel],
+  ['UI-01 scope kept until channel change', ui01ScopeKeptUntilChannelChange],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

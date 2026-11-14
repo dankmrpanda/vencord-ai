@@ -5,7 +5,7 @@
 
 import type { ChatService } from '../services/chatService';
 import { createNewSession, getSessionsForChannel } from '../storage/chatHistory';
-import { ChatSession } from '../types';
+import { ChatSession, CurrentScopeContext } from '../types';
 
 /**
  * Switching or deleting sessions during a run detaches the streaming reply from what the panel shows
@@ -52,4 +52,13 @@ export async function syncSessionToChannel(service: ChatService, getViewedChanne
   if (getViewedChannelId() !== target || service.getActiveSession() !== before || service.isGenerating()) return false;
   service.switchSession(latest?.channelId === target ? latest : createNewSession(target, 'New Conversation'));
   return true;
+}
+
+/**
+ * UI-01: a scope chosen in ScopeIndicator stays until the viewed channel changes. Returns the scope to keep, or
+ * null when it must be rebuilt for `channelId`. A null channel keeps it, like the session (see sessionChannelTarget).
+ */
+export function keepScopeForChannel(scope: CurrentScopeContext | null, channelId: string | null): CurrentScopeContext | null {
+  if (!scope) return null;
+  return !channelId || scope.channelId === channelId ? scope : null;
 }

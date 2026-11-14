@@ -20,7 +20,7 @@ import { ChatMessage } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
 import { HistoryDrawer } from './HistoryDrawer';
 import { ScopeIndicator } from './ScopeIndicator';
-import { deleteHistorySession, selectHistorySession, syncSessionToChannel } from './sidebarActions';
+import { deleteHistorySession, keepScopeForChannel, selectHistorySession, syncSessionToChannel } from './sidebarActions';
 import {
   activeIconButtonStyle,
   disabledIconButtonStyle,
@@ -90,6 +90,9 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const isUserScrolledUpRef = React.useRef(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const lastChannelIdRef = React.useRef<string | null>(null);
+  // index.tsx passes a new arrow on every render; a ref keeps the channel listener effect from re-running.
+  const onLaunchConsumedRef = React.useRef(onLaunchConsumed);
+  onLaunchConsumedRef.current = onLaunchConsumed;
 
   // Subscribe to background ChatService updates (tokens, steps, sessions, streaming)
   React.useEffect(() => {
@@ -110,32 +113,35 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [launchRequest]);
 
-  const loadChannelScopeAndHistory = React.useCallback((channelId: string | null) => {
-    try {
-      const scope = getCurrentScopeContext();
-      setCurrentScope(scope);
-      const targetId = channelId || 'global';
-      getSessionsForChannel(targetId)
-        .then((list) => setSessionsList(list))
-        .catch(() => setSessionsList([]));
-    } catch {}
+  // UI-01: refreshes the history list only; the scope is rebuilt only for another channel (see keepScopeForChannel).
+  const refreshSessions = React.useCallback((channelId: string | null) => {
+    getSessionsForChannel(channelId || 'global')
+      .then((list) => setSessionsList(list))
+      .catch(() => setSessionsList([]));
   }, []);
+
+  const scopeForChannel = (scope: CurrentScopeContext | null, channelId: string | null): CurrentScopeContext | null => {
+    const kept = keepScopeForChannel(scope, channelId);
+    if (kept) return kept;
+    try { return getCurrentScopeContext(); } catch { return null; }
+  };
 
   // Listen to channel changes without blowing away active in-progress chat
   React.useEffect(() => {
     try {
       const initialChId = getCurrentChannelId();
       lastChannelIdRef.current = initialChId;
-      loadChannelScopeAndHistory(initialChId);
+      refreshSessions(initialChId);
 
       const checkChannelChange = () => {
         try {
           const currentChId = getCurrentChannelId();
           if (currentChId && currentChId !== lastChannelIdRef.current) {
-            onLaunchConsumed?.();
+            onLaunchConsumedRef.current?.();
             lastChannelIdRef.current = currentChId;
             setViewedChannelId(currentChId);
-            loadChannelScopeAndHistory(currentChId);
+            setCurrentScope((prev) => scopeForChannel(prev, currentChId));
+            refreshSessions(currentChId);
           }
         } catch {}
       };
@@ -154,7 +160,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         clearInterval(interval);
       };
     } catch {}
-  }, [onLaunchConsumed, loadChannelScopeAndHistory]);
+  }, [refreshSessions]);
 
   const session = chatService.getActiveSession();
   const isGenerating = chatService.isGenerating();
@@ -184,7 +190,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     chatService.newSession(channelId);
     isUserScrolledUpRef.current = false;
     setShowHistory(false);
-    loadChannelScopeAndHistory(channelId);
+    refreshSessions(channelId);
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
       textareaRef.current?.focus();
@@ -205,8 +211,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (!(await deleteHistorySession(chatService, id))) return;
-    const targetId = getCurrentChannelId() || 'global';
-    loadChannelScopeAndHistory(targetId);
+    refreshSessions(getCurrentChannelId());
   };
 
   const handleSend = async (customPrompt?: string) => {
@@ -222,9 +227,11 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
     // SEC-09: the channel listener can lag; never send into another channel's session.
     await syncSessionToChannel(chatService, getCurrentChannelId).catch(() => false);
-    await chatService.sendMessage(promptToSend, req, currentScope || undefined);
-    const targetId = getCurrentChannelId() || 'global';
-    loadChannelScopeAndHistory(targetId);
+    // UI-01: keep the chosen scope, unless the channel changed before the listener noticed.
+    const sendScope = scopeForChannel(currentScope, getCurrentChannelId());
+    if (sendScope !== currentScope) setCurrentScope(sendScope);
+    await chatService.sendMessage(promptToSend, req, sendScope || undefined);
+    refreshSessions(getCurrentChannelId());
   };
 
   const checkMentionTrigger = (text: string, cursorPosition: number) => {
@@ -328,7 +335,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             style={showHistory ? activeIconButtonStyle : isGenerating ? disabledIconButtonStyle : iconButtonStyle}
             onClick={() => {
               if (isGenerating && !showHistory) return;
-              loadChannelScopeAndHistory(getCurrentChannelId());
+              refreshSessions(getCurrentChannelId());
               setShowHistory(!showHistory);
             }}
             title={isGenerating && !showHistory ? 'Chat History (stop generating first)' : 'Chat History'}
