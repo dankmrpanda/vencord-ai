@@ -194,6 +194,12 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // A different session (channel follow, history pick, new chat) starts at the bottom, following.
+  React.useEffect(() => {
+    isUserScrolledUpRef.current = false;
+    setShowJumpToLatest(false);
+  }, [session?.id]);
+
   // UI-03: follow the streaming reply (mutated in place) while the user is near the bottom.
   const scrollKey = streamScrollKey(session);
   React.useEffect(() => {
