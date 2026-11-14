@@ -559,6 +559,11 @@ async function llm13VisionToolOfferedButAlwaysFails(): Promise<void> {
     if (offered && failure.includes('does not declare vision support')) broken.push(preset);
   }
   assert(broken.length === 0, `LLM-13 inspect_image is offered but can never succeed for presets: ${broken.join(', ')}`);
+  const offeredFor = (overrides: Partial<PluginSettings>) => availableToolDefinitions({
+    scope: dmScope(), settings: settings(overrides), addCitation: () => ({} as CitationItem), analyzeImage: async () => '',
+  }).some((tool) => tool.function.name === 'inspect_image');
+  assert(offeredFor({ providerPreset: 'openai', enableVision: true }), 'LLM-13 inspect_image should be offered for a vision preset with vision enabled');
+  assert(!offeredFor({ providerPreset: 'openai', enableVision: false }), 'LLM-13 inspect_image should not be offered with vision disabled');
 }
 
 /** SEC-03: every tool result is deep-sanitized before it reaches the model. */
