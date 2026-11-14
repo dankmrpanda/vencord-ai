@@ -7,6 +7,13 @@ import { CurrentScopeContext, DiscordChannel, DiscordMessage, ToolExecutionResul
 import { isChannelAllowedInScope } from './scope';
 import { getAuthToken, getChannel, getHTTP } from './stores';
 
+/** Discord snowflakes are decimal; anything else must never be interpolated into a REST path. */
+const SNOWFLAKE_PATTERN = /^\d{1,20}$/;
+
+function isSnowflake(value: unknown): value is string {
+  return typeof value === 'string' && SNOWFLAKE_PATTERN.test(value);
+}
+
 function extractRetrySec(target: any): number | null {
   if (!target) return null;
   const status = target.status ?? target.statusCode;
@@ -58,15 +65,23 @@ export async function getMessageDetails(
   if (!isChannelAllowedInScope(channelId, scope)) {
     return { ok: false, code: 'scope_denied', summary: 'The requested message channel is outside the permitted scope.' };
   }
+  if (!isSnowflake(messageId)) {
+    return { ok: false, code: 'invalid_arguments', summary: 'message_id must be a numeric Discord message ID.' };
+  }
   const message = await discordGet(`/channels/${channelId}/messages/${messageId}`) as DiscordMessage;
+  if (message?.channel_id !== channelId) {
+    return { ok: false, code: 'scope_denied', summary: 'The returned message does not belong to the requested channel.' };
+  }
   const replyChain: DiscordMessage[] = [];
   let current = message;
   for (let depth = 0; depth < replyDepth; depth++) {
     const reference = current.referenced_message;
     const referenceId = reference?.id || current.message_reference?.message_id;
     const referenceChannel = reference?.channel_id || current.message_reference?.channel_id || channelId;
-    if (!referenceId || !isChannelAllowedInScope(referenceChannel, scope)) break;
-    current = reference || await discordGet(`/channels/${referenceChannel}/messages/${referenceId}`) as DiscordMessage;
+    if (!isSnowflake(referenceId) || !isChannelAllowedInScope(referenceChannel, scope)) break;
+    const next = reference || await discordGet(`/channels/${referenceChannel}/messages/${referenceId}`) as DiscordMessage;
+    if (next?.channel_id && next.channel_id !== referenceChannel) break;
+    current = next;
     replyChain.push(current);
   }
   return {
@@ -144,9 +159,12 @@ export async function listThreads(
   }).slice(0, limit);
   const items = await Promise.all(permitted.map(async (thread): Promise<ThreadListItem> => {
     let starterMessage: DiscordMessage | undefined;
-    try {
-      starterMessage = await discordGet(`/channels/${thread.id}/messages/${thread.id}`);
-    } catch {}
+    if (isSnowflake(thread.id)) {
+      try {
+        const starter: DiscordMessage | undefined = await discordGet(`/channels/${thread.id}/messages/${thread.id}`);
+        if (starter?.channel_id === thread.id || (thread.parent_id && starter?.channel_id === thread.parent_id)) starterMessage = starter;
+      } catch {}
+    }
     return { thread, parent: getChannel(thread.parent_id || '') || undefined, starterMessage };
   }));
   return {
