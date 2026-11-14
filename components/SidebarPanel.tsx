@@ -25,6 +25,7 @@ import {
   escapeLayer,
   isEscapeForPanel,
   isNearBottom,
+  inputAfterLaunchCleared,
   isUnhandledEscape,
   keepScopeForChannel,
   launchRequestForSend,
@@ -123,7 +124,12 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   }, [chatService, forceRender]);
 
   // Handle launch request (from context menu)
+  const prevLaunchRef = React.useRef(launchRequest);
   React.useEffect(() => {
+    const previous = prevLaunchRef.current;
+    prevLaunchRef.current = launchRequest;
+    // UI-13: the panel stays mounted while hidden; drop the canned prompt whose target was cleared on close.
+    if (!launchRequest && previous) setInputText((text) => inputAfterLaunchCleared(text, previous));
     if (!launchRequest) return;
     setInputText(launchRequest.initialPrompt);
     setTimeout(() => textareaRef.current?.focus(), 0);

@@ -21,6 +21,7 @@ import { ChatService } from '../services/chatService';
 import {
   deleteHistorySession,
   escapeLayer,
+  inputAfterLaunchCleared,
   isEscapeForPanel,
   isNearBottom,
   isUnhandledEscape,
@@ -382,6 +383,9 @@ async function ui13LaunchRequestScoped(): Promise<void> {
   assert(launchRequestForSend(request, undefined) === request, 'UI-13 input-box send carries the launch target');
   assert(launchRequestForSend(request, 'Summarize recent topics') === null, 'UI-13 quick prompt must not carry it');
   assert(launchRequestForSend(null) === null, 'UI-13 no request');
+  assert(inputAfterLaunchCleared('Explain this message.', request) === '', 'UI-13 untouched prefill cleared with its request');
+  assert(inputAfterLaunchCleared('Explain this message, briefly', request) === 'Explain this message, briefly', 'UI-13 edited text kept');
+  assert(inputAfterLaunchCleared('Explain this message.', null) === 'Explain this message.', 'UI-13 nothing cleared');
 }
 
 /** UI-Q02: common provider failures get a fixed one-line hint and an Open settings action. */

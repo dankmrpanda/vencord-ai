@@ -102,6 +102,11 @@ export function escapeLayer(popupOpen: boolean, drawerOpen: boolean): 'popup' | 
   return drawerOpen ? 'drawer' : 'panel';
 }
 
+/** UI-13: when a launch request goes away unsent, its untouched prefilled prompt goes with it; edited text stays. */
+export function inputAfterLaunchCleared(text: string, cleared: AssistantLaunchRequest | null | undefined): string {
+  return cleared && text === cleared.initialPrompt ? '' : text;
+}
+
 /** UI-13: a launch target rides only on a send from the input box it prefilled, never on a quick prompt. */
 export function launchRequestForSend(
   request: AssistantLaunchRequest | null | undefined,
