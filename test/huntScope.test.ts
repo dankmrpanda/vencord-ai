@@ -117,6 +117,26 @@ async function sec02GroupDmSubstringMatch(): Promise<void> {
   assert(isChannelAllowedInScope('700000000000000007', restrictScopeForUserPrompt(numeric, 'search group 700000000000000007 please')), 'SEC-02 an exact group DM ID must still be accepted');
 }
 
+/** SEC-06: the index pre-filter allowlist omits the active channel that validateScopeBoundary always allows. */
+async function sec06PermittedIdsOmitActiveChannel(): Promise<void> {
+  const scope: CurrentScopeContext = {
+    ...dmScope(),
+    channelId: 'thread_active',
+    channelType: ChannelType.PUBLIC_THREAD,
+    isDM: false,
+    isGuild: true,
+    guildId: 'g1',
+    scopeMode: 'server',
+    accessibleGuildChannels: [{ id: 'c1', name: 'general' }],
+  };
+  assert(isChannelAllowedInScope('thread_active', scope), 'active thread is allowed by validateScopeBoundary');
+  const permitted = getPermittedChannelIdsForScope(scope);
+  assert(permitted.includes('thread_active'), 'SEC-06 getPermittedChannelIdsForScope omits the active channel in server mode');
+  // The allowlist must never exceed what validateScopeBoundary permits.
+  assert(permitted.every((id) => isChannelAllowedInScope(id, scope)), `SEC-06 allowlist contains a channel the scope boundary rejects: ${permitted.join(',')}`);
+  assert(permitted.length === new Set(permitted).size, 'SEC-06 allowlist must not contain duplicates');
+}
+
 /** SEC-07: the sanitizer's denylist misses current chat-template control tokens. */
 async function sec07SanitizerTokenCoverage(): Promise<void> {
   const samples = [
@@ -164,6 +184,7 @@ async function sec12PermissionTruthyShapes(): Promise<void> {
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 message_id path traversal', sec01MessageIdPathTraversal],
   ['SEC-02 group DM substring match', sec02GroupDmSubstringMatch],
+  ['SEC-06 permitted IDs omit active channel', sec06PermittedIdsOmitActiveChannel],
   ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
   ['SEC-12 permission truthy shapes', sec12PermissionTruthyShapes],
 ];

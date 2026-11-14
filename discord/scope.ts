@@ -113,7 +113,8 @@ export function getPermittedChannelIdsForScope(context: CurrentScopeContext): st
       return Array.from(new Set([context.channelId, ...valid]));
     }
     if (context.accessibleGuildChannels) {
-      return context.accessibleGuildChannels.map((c) => c.id);
+      // The active channel is always allowed by validateScopeBoundary, so it belongs in the allowlist too.
+      return Array.from(new Set([context.channelId, ...context.accessibleGuildChannels.map((c) => c.id)].filter(Boolean)));
     }
     return [context.channelId];
   }
