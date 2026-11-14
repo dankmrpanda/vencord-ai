@@ -258,7 +258,10 @@ export class AIAssistantAgent {
         };
         try {
           const tool = TOOL_REGISTRY.get(call.function.name);
-          if (!tool) throw new ToolArgumentError(`Unknown tool "${call.function.name}".`);
+          // Only tools offered for this scope and settings may run, even if the model names another one.
+          if (!tool || !tool.isAvailable(toolContext.scope, toolContext.settings)) {
+            throw new ToolArgumentError(`Unknown or unavailable tool "${call.function.name}".`);
+          }
           const args = parseToolArguments(tool.definition, call.function.arguments);
           toolStep.toolArgs = args;
           if (!budget.canToolCall()) {
