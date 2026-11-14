@@ -5,7 +5,7 @@
  */
 
 import { CurrentScopeContext } from '../types';
-import { isChannelAllowedInScope } from '../discord/scope';
+import { getPermittedChannelIdsForScope, isChannelAllowedInScope } from '../discord/scope';
 import { extractQueryTokens } from './index/tokenizer';
 import { IndexSearchQuery, ScoredIndexHit, StoredMessageRecord } from './index/types';
 import { indexBridge, WorkerBridge } from './index/workerBridge';
@@ -106,29 +106,26 @@ export class HybridRetrievalEngine {
     const wSemantic = query.weightSemantic ?? 0.85;
     const wRegex = query.weightRegex ?? 1.25;
 
-    // 1. Resolve Permitted Scope Channels
+    // 1. Resolve Permitted Scope Channels (same allowlist as the rest of the scope layer)
     let allowedChannels = query.channelIds;
     if (scope) {
-      if (scope.isGuild && scope.accessibleGuildChannels) {
-        const permitted = new Set(scope.accessibleGuildChannels.map((c) => c.id));
-        if (allowedChannels) {
-          allowedChannels = allowedChannels.filter((id) => permitted.has(id));
-        } else {
-          allowedChannels = Array.from(permitted);
-        }
-      } else if (!scope.isGuild) {
-        // DM Scope isolation
-        const activeDm = scope.channelId;
-        const mutualDms = scope.explicitMutualGroupDMIds?.length
-          ? scope.explicitMutualGroupDMIds
-          : (scope.mutualGroupDMs || []).map((g) => g.id);
-        const permittedDms = new Set([activeDm, ...mutualDms]);
-        if (allowedChannels) {
-          allowedChannels = allowedChannels.filter((id) => permittedDms.has(id));
-        } else {
-          allowedChannels = Array.from(permittedDms);
-        }
-      }
+      const permitted = new Set(getPermittedChannelIdsForScope(scope));
+      allowedChannels = allowedChannels ? allowedChannels.filter((id) => permitted.has(id)) : Array.from(permitted);
+    }
+
+    // An emptied allowlist means "match nothing"; never pass [] on, where it could read as "no channel filter".
+    if (allowedChannels && allowedChannels.length === 0) {
+      return {
+        hits: [],
+        totalCandidates: 0,
+        durationMs: Date.now() - startTime,
+        querySummary: {
+          lexicalTokens: query.query ? extractQueryTokens(query.query) : [],
+          hasSemantic: false,
+          hasPattern: Boolean(query.pattern),
+          channelFiltersApplied: 0,
+        },
+      };
     }
 
     // 2. Execute BM25 Index Search via Worker Bridge
@@ -171,7 +168,8 @@ export class HybridRetrievalEngine {
           const docs: StoredMessageRecord[] | undefined = snapObj?.snapshot?.documents ?? snapObj?.documents;
           if (docs) {
             candidateRecords = [...docs];
-            if (allowedChannels && allowedChannels.length > 0) {
+            if (allowedChannels) {
+              // [] matches nothing; only undefined means no channel filter.
               const allowedSet = new Set(allowedChannels);
               candidateRecords = candidateRecords.filter((r) => allowedSet.has(r.channelId));
             }

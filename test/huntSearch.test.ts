@@ -9,6 +9,8 @@ import { compileRegexSafely, fetchRecentMessages, filterMessagesLocally } from '
 import { detectPatternFromQuery } from '../discord/search';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { STRUCTURED_PATTERNS } from '../storage/regex';
+import { HybridRetrievalEngine } from '../storage/retrieval';
+import { StoredMessageRecord } from '../storage/index/types';
 import { ChannelType, CurrentScopeContext, DiscordMessage } from '../types';
 import { assert } from './assert';
 
@@ -134,6 +136,47 @@ async function srch02StickerFilterPassesEverything(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
+/** SEC-08: an emptied channel allowlist reached the index as [] and was read as "no channel filter". */
+async function sec08IndexAllowlistEmptiedFailsOpen(): Promise<string | null> {
+  const record = (id: string, channelId: string): StoredMessageRecord => ({
+    docId: Number(id.slice(-3)) as any, id, channelId, guildId: GUILD, authorId: '700000000000000007', authorName: 'fixture',
+    timestamp: Date.UTC(2025, 0, 1), content: 'allowneedle', tokenLength: 1, flags: 0,
+  });
+  const THREAD = '610000000000000061';
+  const OTHER = '620000000000000062';
+  const docs = [record('180000000000000001', THREAD), record('180000000000000002', GUILD_CH), record('180000000000000003', OTHER)];
+  const sent: Array<string[] | undefined> = [];
+  // Models the index before its own fix: an empty or missing channelIds list applies no channel filter.
+  const bridge: any = {
+    search: async (q: { channelIds?: string[] }) => {
+      sent.push(q.channelIds);
+      const rows = q.channelIds?.length ? docs.filter((d) => q.channelIds!.includes(d.channelId)) : docs;
+      return { hits: rows.map((d, i) => ({ docId: d.docId, messageId: d.id, score: 1 - i * 0.1, bm25Score: 1 - i * 0.1, exactBonus: 0, recencyBonus: 0 })), records: rows };
+    },
+    createSnapshot: async () => ({ documents: docs }),
+  };
+  const engine = new HybridRetrievalEngine(bridge);
+  const scope = (mode: 'channel' | 'server' | 'custom', selected?: string[]): CurrentScopeContext => ({
+    ...guildScope(), channelId: THREAD, scopeMode: mode, selectedChannelIds: selected,
+  } as CurrentScopeContext);
+  const problems: string[] = [];
+  const check = async (label: string, run: () => Promise<{ hits: Array<{ channelId?: string; record?: StoredMessageRecord }> }>, allowed: string[]) => {
+    sent.length = 0;
+    const res = await run();
+    const channels = res.hits.map((h: any) => h.record?.channelId ?? h.channelId);
+    const leaked = channels.filter((c) => !allowed.includes(c));
+    if (leaked.length) problems.push(`${label}: returned hits from ${JSON.stringify(leaked)}`);
+    if (sent.some((ids) => ids !== undefined && ids.length === 0)) problems.push(`${label}: index received channelIds=[]`);
+  };
+  await check('server mode, unpermitted channelIds', () => engine.search({ query: 'allowneedle', channelIds: [OTHER] }, scope('server')), []);
+  await check('server mode, sentinel channelIds', () => engine.search({ query: 'allowneedle', channelIds: ['__FORBIDDEN_SCOPE_BLOCKED__'] }, scope('server')), []);
+  await check('server mode, active thread only', () => engine.search({ query: 'allowneedle', channelIds: [THREAD] }, scope('server')), [THREAD]);
+  await check('custom mode, unpermitted channelIds', () => engine.search({ query: 'allowneedle', channelIds: [OTHER] }, scope('custom', [GUILD_CH])), []);
+  await check('channel mode, no channelIds', () => engine.search({ query: 'allowneedle' }, scope('channel')), [THREAD]);
+  await check('no scope, empty channelIds, pattern-only snapshot', () => engine.search({ pattern: 'allowneedle', channelIds: [] }), []);
+  return problems.length ? problems.join('; ') : null;
+}
+
 /** SRCH-04: nextOffset pagination skips and repeats results, and stops early when limit > 25. */
 async function srch04OffsetPagination(): Promise<string | null> {
   const corpus: DiscordMessage[] = [];
@@ -228,6 +271,7 @@ async function srch09FractionalLimit(): Promise<string | null> {
 const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
+  ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
   ['SRCH-05 keyword hijacked into pattern', srch05KeywordHijackedIntoPattern],
   ['SRCH-06 query mangling', srch06QueryMangling],
