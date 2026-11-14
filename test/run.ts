@@ -32,6 +32,9 @@ import { runScopePermissionTests } from './scopePermission.test';
 import { runHuntScopeTests } from './huntScope.test';
 import { runHuntLifecycleTests } from './huntLifecycle.test';
 import { runHuntIndexTests } from './huntIndex.test';
+import { runHuntAgentTests } from './huntAgent.test';
+import { runHuntSearchTests } from './huntSearch.test';
+import { runHuntUiTests } from './huntUi.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -55,6 +58,9 @@ async function runAsyncFixtures(): Promise<void> {
   await runHuntScopeTests();
   await runHuntLifecycleTests();
   await runHuntIndexTests();
+  await runHuntAgentTests();
+  await runHuntSearchTests();
+  await runHuntUiTests();
   await runAdversarialReviewChallengerTests();
   await runIndexStorageTests();
   await runMilestone1ChallengerTests();
