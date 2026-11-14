@@ -8,6 +8,7 @@ import { fetchRecentMessages, fetchSurroundingMessages } from '../discord/messag
 import { runMessageSearch } from '../discord/searchPipeline';
 import { isChannelAllowedInScope } from '../discord/scope';
 import { getCurrentUser } from '../discord/stores';
+import { compileSafeRegex } from '../storage/regex';
 import {
   RegisteredTool,
   ToolDefinition,
@@ -124,11 +125,26 @@ const recentMessages = registered('fetch_recent_messages', 'discord', async (arg
   if (!isChannelAllowedInScope(channelId, context.scope)) {
     return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted scope.' };
   }
-  const messages = await fetchRecentMessages(channelId, Math.min(Number(args.limit) || 25, 100));
-  const result = ok(messages.length ? 'recent_messages' : 'empty_results', `Retrieved ${messages.length} recent message${messages.length === 1 ? '' : 's'}.`, { messages });
+  const pattern = typeof args.pattern === 'string' && args.pattern.trim() ? args.pattern : undefined;
+  const compiled = pattern ? compileSafeRegex(pattern) : undefined;
+  if (compiled && !compiled.regex) {
+    return { ok: false, code: 'invalid_pattern', summary: `The pattern was rejected: ${compiled.error || 'invalid regular expression'}.` };
+  }
+  const fetched = await fetchRecentMessages(channelId, Math.min(Number(args.limit) || 25, 100));
+  const regex = compiled?.regex;
+  const messages = regex
+    ? fetched.filter((message) => {
+      // Same text search_messages matches patterns against: content, attachment names and embed text.
+      const text = `${message.content || ''} ${message.attachments?.map((item) => item.filename).join(' ') || ''} ${message.embeds?.map((item) => `${item.title || ''} ${item.description || ''}`).join(' ') || ''}`;
+      regex.lastIndex = 0;
+      return regex.test(text);
+    })
+    : fetched;
+  const label = regex ? ` matching the pattern (of ${fetched.length} scanned)` : '';
+  const result = ok(messages.length ? 'recent_messages' : 'empty_results', `Retrieved ${messages.length} recent message${messages.length === 1 ? '' : 's'}${label}.`, { messages });
   result.citations = messages.map((message) => context.addCitation(message));
   result.scope = { channelIds: [channelId], guildId: context.scope.guildId };
-  result.pagination = { nextBeforeMessageId: messages.length === Math.min(Number(args.limit) || 25, 100) ? messages[0]?.id : undefined };
+  result.pagination = { nextBeforeMessageId: fetched.length === Math.min(Number(args.limit) || 25, 100) ? fetched[0]?.id : undefined };
   result.truncation = { truncated: Boolean(result.pagination.nextBeforeMessageId), returned: messages.length };
   return result;
 });

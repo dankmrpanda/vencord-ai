@@ -171,6 +171,11 @@ async function llm02RecentMessagesIgnorePattern(): Promise<void> {
   const contents = ((result.data as any)?.messages || []).map((entry: DiscordMessage) => entry.content);
   assert(contents.length === 1 && contents[0].includes('582910'),
     `LLM-02 fetch_recent_messages ignored pattern \\b\\d{6}\\b and returned ${contents.length} messages: ${JSON.stringify(contents)}`);
+  let fetched = false;
+  const unsafe = await withRestGet(() => { fetched = true; return []; },
+    () => tool.execute(tool.parseArgs({ pattern: '(a+)+$' }), context));
+  assert(!unsafe.ok && unsafe.code === 'invalid_pattern' && !fetched,
+    `LLM-02 an unsafe pattern was not rejected before fetching: ${unsafe.code} fetched=${fetched}`);
 }
 
 /** LLM-03: parallel tool-call deltas without `index` are merged into one corrupt call. */
