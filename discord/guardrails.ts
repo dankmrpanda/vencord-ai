@@ -218,6 +218,20 @@ export function sanitizeUntrustedContent(text?: string | null): string {
     .trim();
 }
 
+/** Escapes a value for use inside a double-quoted attribute of the evidence wrapper. */
+function escapeEvidenceAttribute(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Neutralizes anything in the evidence body that would open or close the wrapper tag; other text is unchanged. */
+function escapeEvidenceDelimiter(text: string): string {
+  return text.replace(/<(\s*\/?\s*discord_evidence)/gi, '&lt;$1');
+}
+
 /**
  * Wraps untrusted Discord evidence inside structured XML boundary tags with metadata.
  */
@@ -241,11 +255,11 @@ export function formatUntrustedEvidence(
     .join(' | ');
 
   const metaParts: string[] = [
-    `id="${message.id}"`,
-    `channel="${cleanChannel}"`,
-    `channel_id="${message.channel_id}"`,
-    `author="${cleanAuthor}"`,
-    `timestamp="${timestamp}"`,
+    `id="${escapeEvidenceAttribute(message.id)}"`,
+    `channel="${escapeEvidenceAttribute(cleanChannel)}"`,
+    `channel_id="${escapeEvidenceAttribute(message.channel_id)}"`,
+    `author="${escapeEvidenceAttribute(cleanAuthor)}"`,
+    `timestamp="${escapeEvidenceAttribute(timestamp)}"`,
     `untrusted="true"`,
   ];
 
@@ -253,5 +267,5 @@ export function formatUntrustedEvidence(
   if (attachments) body += `\n[Attachments: ${attachments}]`;
   if (embeds) body += `\n[Embeds: ${embeds}]`;
 
-  return `<discord_evidence ${metaParts.join(' ')}>\n${body}\n</discord_evidence>`;
+  return `<discord_evidence ${metaParts.join(' ')}>\n${escapeEvidenceDelimiter(body)}\n</discord_evidence>`;
 }
