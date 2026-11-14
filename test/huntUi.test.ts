@@ -11,7 +11,7 @@ import { ChatMessage } from '../components/ChatMessage';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
-import { deleteHistorySession, selectHistorySession } from '../components/sidebarActions';
+import { deleteHistorySession, selectHistorySession, sessionChannelTarget, syncSessionToChannel } from '../components/sidebarActions';
 import { DEFAULT_SETTINGS, validateBaseUrlInput } from '../settings';
 import { getSessionById, getSessionsForChannel } from '../storage/chatHistory';
 import { AssistantChatMessage } from '../types';
@@ -189,6 +189,62 @@ async function ui02StaleCopyOverwritesAnswer(): Promise<void> {
   });
 }
 
+/** SEC-09: sessions are per channel; the panel follows the viewed channel once no run is in progress. */
+async function sec09SessionFollowsChannel(): Promise<void> {
+  const originalAcquire = modelLifecycle.acquire;
+  const originalRun = AIAssistantAgent.prototype.run;
+  await withMemoryLocalStorage(async () => {
+    try {
+      let releaseRun: (() => void) | null = null;
+      modelLifecycle.acquire = async () => () => undefined;
+      AIAssistantAgent.prototype.run = function () {
+        if (!releaseRun) return Promise.resolve({ content: 'answer', steps: [], citations: [] });
+        return new Promise((resolve) => {
+          const release = releaseRun!;
+          releaseRun = () => { release(); resolve({ content: 'late answer', steps: [], citations: [] }); };
+        });
+      } as any;
+      const stamp = Date.now();
+      const [chA, chB, chC] = [`hunt_sec09_a_${stamp}`, `hunt_sec09_b_${stamp}`, `hunt_sec09_c_${stamp}`];
+      const service = new ChatService({ ...DEFAULT_SETTINGS });
+      const sessionA = await service.initSession(chA);
+      await service.sendMessage('secret question in A');
+      let viewed: string | null = chB;
+      const viewing = () => viewed;
+
+      assert(await syncSessionToChannel(service, viewing), 'SEC-09 no switch on channel change A -> B');
+      const inB = service.getActiveSession()!;
+      assert(inB.channelId === chB && !inB.messages.some((m) => m.content.includes('secret question in A')),
+        `SEC-09 panel still shows/sends into A's session after moving to B (channelId=${inB.channelId}, messages=${inB.messages.length})`);
+
+      viewed = null;
+      assert(!(await syncSessionToChannel(service, viewing)) && service.getActiveSession() === inB, 'SEC-09 null channel must keep the active session');
+      assert(sessionChannelTarget(null, inB, false) === null && sessionChannelTarget(chB, inB, false) === null
+        && sessionChannelTarget(chA, inB, true) === null && sessionChannelTarget(chA, inB, false) === chA
+        && sessionChannelTarget(chA, null, false) === null, 'SEC-09 sessionChannelTarget decision table');
+
+      viewed = chB;
+      releaseRun = () => undefined;
+      const sending = service.sendMessage('question in B');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      viewed = chA;
+      assert(!(await syncSessionToChannel(service, viewing)) && service.getActiveSession()!.channelId === chB, 'SEC-09 switched sessions during a run');
+      releaseRun!();
+      await sending;
+      releaseRun = null;
+      assert(await syncSessionToChannel(service, viewing), 'SEC-09 no switch after the run ended');
+      assert(service.getActiveSession()!.id === sessionA.id, `SEC-09 returning to A did not resume A's saved session (${service.getActiveSession()!.id})`);
+
+      viewed = chC;
+      assert(await syncSessionToChannel(service, viewing) && service.getActiveSession()!.channelId === chC, 'SEC-09 no switch to an empty channel');
+      assert((await getSessionsForChannel(chC)).length === 0, 'SEC-09 browsing a channel persisted an empty session');
+    } finally {
+      modelLifecycle.acquire = originalAcquire;
+      AIAssistantAgent.prototype.run = originalRun;
+    }
+  });
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -196,6 +252,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-10 nested inline links', ui10NestedInlineLinks],
   ['UI-07 base URL validation', ui07BaseUrlValidation],
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],
+  ['SEC-09 session follows channel', sec09SessionFollowsChannel],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

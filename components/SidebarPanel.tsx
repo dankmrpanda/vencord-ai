@@ -20,7 +20,7 @@ import { ChatMessage } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
 import { HistoryDrawer } from './HistoryDrawer';
 import { ScopeIndicator } from './ScopeIndicator';
-import { deleteHistorySession, selectHistorySession } from './sidebarActions';
+import { deleteHistorySession, selectHistorySession, syncSessionToChannel } from './sidebarActions';
 import {
   activeIconButtonStyle,
   disabledIconButtonStyle,
@@ -83,6 +83,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const [inputText, setInputText] = React.useState('');
   const [mentionSuggestions, setMentionSuggestions] = React.useState<DiscordUser[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
+  const [viewedChannelId, setViewedChannelId] = React.useState<string | null>(() => getCurrentChannelId());
 
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -133,6 +134,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
           if (currentChId && currentChId !== lastChannelIdRef.current) {
             onLaunchConsumed?.();
             lastChannelIdRef.current = currentChId;
+            setViewedChannelId(currentChId);
             loadChannelScopeAndHistory(currentChId);
           }
         } catch {}
@@ -156,6 +158,12 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
   const session = chatService.getActiveSession();
   const isGenerating = chatService.isGenerating();
+
+  // SEC-09: sessions are per channel. Whenever no run is in progress, show the viewed channel's session: after a
+  // channel change, when the panel reopens in another channel, and when a run ends after the user moved.
+  React.useEffect(() => {
+    syncSessionToChannel(chatService, getCurrentChannelId).catch(() => {});
+  }, [chatService, viewedChannelId, isGenerating, session?.id]);
 
   const handleScroll = () => {
     const el = scrollContainerRef.current;
@@ -212,6 +220,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const req = launchRequest;
     if (req) onLaunchConsumed?.();
 
+    // SEC-09: the channel listener can lag; never send into another channel's session.
+    await syncSessionToChannel(chatService, getCurrentChannelId).catch(() => false);
     await chatService.sendMessage(promptToSend, req, currentScope || undefined);
     const targetId = getCurrentChannelId() || 'global';
     loadChannelScopeAndHistory(targetId);
