@@ -72,6 +72,31 @@ function materialize(target: Map<number, { id: string; name: string; arguments: 
     }));
 }
 
+/** Longest a 429 Retry-After is honoured before retrying. */
+const MAX_RETRY_DELAY_MS = 30_000;
+
+/**
+ * Short, single-line provider error detail with credentials removed: the configured key, key-shaped tokens
+ * (including masked echoes such as "sk-****abcd"), bearer values and long opaque strings.
+ */
+async function providerErrorDetail(response: Response, apiKey: string): Promise<string> {
+  let text = await response.text().catch(() => '');
+  try {
+    const parsed = JSON.parse(text);
+    const message = parsed?.error?.message ?? parsed?.error ?? parsed?.message;
+    if (typeof message === 'string') text = message;
+  } catch {}
+  const key = apiKey.trim();
+  if (key) text = text.split(key).join('***');
+  text = text
+    .replace(/Bearer\s+\S+/gi, 'Bearer ***')
+    .replace(/\b(?:sk|pk|rk|gsk|key|api[-_]?key)[-_][\w*.-]{3,}/gi, '***')
+    .replace(/[\w*.-]{32,}/g, '***')
+    .replace(/[\u0000-\u001f\u007f\s]+/g, ' ')
+    .trim();
+  return text.length > 200 ? `${text.slice(0, 200)}...` : text;
+}
+
 function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
@@ -198,7 +223,7 @@ export class OpenAICompatibleTransport {
         const retryHeader = response.headers.get('Retry-After');
         const retrySec = retryHeader ? parseFloat(retryHeader) : NaN;
         const delayMs = !isNaN(retrySec) && retrySec > 0
-          ? retrySec * 1000 + 200
+          ? Math.min(retrySec * 1000 + 200, MAX_RETRY_DELAY_MS)
           : Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 400;
         console.warn(`[VencordAI] LLM rate limit (429). Retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})...`);
         await waitForRetry(delayMs, signal);
@@ -206,7 +231,11 @@ export class OpenAICompatibleTransport {
       }
       break;
     }
-    if (!response || !response.ok) throw new Error(`LLM completion failed (${response?.status || 'unknown'}).`);
+    if (!response) throw new Error('LLM completion failed (unknown).');
+    if (!response.ok) {
+      const detail = await providerErrorDetail(response, this.settings.apiKey || '');
+      throw new Error(`LLM completion failed (${response.status})${detail ? `: ${detail}` : '.'}`);
+    }
     if (request.stream !== false) {
       if (!response.body) throw new Error('LLM completion returned no stream.');
       return consumeChatCompletionStream(response.body, callbacks);

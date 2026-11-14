@@ -331,6 +331,44 @@ async function llm15NumericLimitsClamped(): Promise<void> {
   assert(bad.length === 0, `LLM-15 non-positive or fractional limits reached Discord: ${JSON.stringify(limits)}`);
 }
 
+/** LLM-17: redacted provider error detail, capped Retry-After, trailing slashes stripped. */
+async function llm17TransportErrorDetailAndRetry(): Promise<void> {
+  const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
+  const transportSettings = settings({ apiKey, baseUrl: 'http://llm.test/v1///' });
+  const transport = new OpenAICompatibleTransport(transportSettings, getProviderCapabilities('custom'));
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  const urls: string[] = [];
+  const delays: number[] = [];
+  let thrown = '';
+  let attempts = 0;
+  let retried = '';
+  try {
+    (globalThis as any).fetch = async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ error: { message: `Incorrect API key provided: ${apiKey}. Also seen: sk-test-****cdef and Bearer ${apiKey}` } }), { status: 401 });
+    };
+    thrown = await transport.complete({ messages: [{ role: 'user', content: 'hi' }], stream: false })
+      .then(() => 'resolved', (error) => String(error?.message));
+    (globalThis as any).fetch = async () => {
+      attempts++;
+      return attempts === 1
+        ? new Response('slow down', { status: 429, headers: { 'Retry-After': '3600' } })
+        : new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+    };
+    (globalThis as any).setTimeout = (fn: () => void, ms?: number) => { delays.push(Number(ms)); return originalSetTimeout(fn, 0); };
+    retried = await quiet(() => transport.complete({ messages: [{ role: 'user', content: 'hi' }], stream: false }))
+      .then((result) => result.content, (error) => `threw ${String(error?.message)}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+  assert(urls[0] === 'http://llm.test/v1/chat/completions', `LLM-17 trailing slashes not stripped: ${urls[0]}`);
+  assert(thrown.includes('401') && thrown.includes('Incorrect API key provided'), `LLM-17 provider error detail missing: ${thrown}`);
+  assert(!thrown.includes('SECRETKEY') && !thrown.includes('cdef'), `LLM-17 API key reached the thrown error: ${thrown}`);
+  assert(retried === 'ok' && delays.length > 0 && Math.max(...delays) <= 30_000, `LLM-17 Retry-After 3600 not capped: delays=${JSON.stringify(delays)} result=${retried}`);
+}
+
 /** LLM-07: a call that failed transiently is marked as executed, so the identical retry is rejected as a duplicate. */
 async function llm07FailedCallCannotBeRetried(): Promise<void> {
   const tool = TOOL_REGISTRY.get('fetch_recent_messages')!;
@@ -652,6 +690,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-06 prototype-named args accepted', llm06PrototypeKeysAccepted],
   ['SEC-01 non-numeric message IDs rejected', sec01NonNumericMessageIdsRejected],
   ['LLM-15 numeric limits clamped', llm15NumericLimitsClamped],
+  ['LLM-17 transport error detail and retry cap', llm17TransportErrorDetailAndRetry],
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],
   ['LLM-09 elapsed budget ignored during call', llm09ElapsedBudgetIgnoredDuringCall],
