@@ -251,6 +251,7 @@ export class AIAssistantAgent {
         let result: ToolExecutionResult;
         // Once this call has settled (including a timeout), a still-running tool can no longer add citations.
         let callOpen = true;
+        let executedArgs: Record<string, unknown> | undefined;
         const callContext: ToolExecutionContext = {
           ...toolContext,
           addCitation: (message, channelName) => callOpen ? addCitation(message, channelName) : toCitation(message, channelName),
@@ -265,6 +266,7 @@ export class AIAssistantAgent {
           } else if (!budget.markCall(call.function.name, args)) {
             result = { ok: false, code: 'duplicate_call', summary: 'An identical normalized tool call was already executed.' };
           } else {
+            executedArgs = args;
             result = await withTimeout(tool.execute(args, callContext), tool.timeoutMs);
             // Local tools also return Discord-authored names and topics.
             result.untrustedData = true;
@@ -272,6 +274,8 @@ export class AIAssistantAgent {
             budget.returnedRecords += countRecords(result);
           }
         } catch (error: unknown) {
+          // A thrown or timed-out execution is transient: an identical retry may run (it still costs budget).
+          if (executedArgs) budget.forgetCall(call.function.name, executedArgs);
           result = {
             ok: false,
             code: error instanceof ToolArgumentError ? 'invalid_arguments' : 'tool_error',

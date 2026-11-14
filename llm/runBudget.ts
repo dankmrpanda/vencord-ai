@@ -33,11 +33,16 @@ export class AgentBudgetTracker {
   canToolCall = (): boolean => this.toolCalls < this.limits.maxToolCalls && !this.expired();
   expired = (): boolean => Date.now() - this.startedAt >= this.limits.maxElapsedMs;
   remainingMs = (): number => Math.max(0, this.limits.maxElapsedMs - (Date.now() - this.startedAt));
+  private callKey = (name: string, args: Record<string, unknown>): string => `${name}:${JSON.stringify(normalize(args))}`;
   markCall(name: string, args: Record<string, unknown>): boolean {
-    const key = `${name}:${JSON.stringify(normalize(args))}`;
+    const key = this.callKey(name, args);
     if (this.calls.has(key)) return false;
     this.calls.add(key);
     this.toolCalls++;
     return true;
+  }
+  /** Lets a call that failed transiently be retried once more; the spent tool-call budget is kept. */
+  forgetCall(name: string, args: Record<string, unknown>): void {
+    this.calls.delete(this.callKey(name, args));
   }
 }
