@@ -32,6 +32,7 @@ export class AgentBudgetTracker {
     && this.estimatedInputTokens <= this.limits.maxEstimatedInputTokens && !this.expired();
   canToolCall = (): boolean => this.toolCalls < this.limits.maxToolCalls && !this.expired();
   expired = (): boolean => Date.now() - this.startedAt >= this.limits.maxElapsedMs;
+  remainingMs = (): number => Math.max(0, this.limits.maxElapsedMs - (Date.now() - this.startedAt));
   markCall(name: string, args: Record<string, unknown>): boolean {
     const key = `${name}:${JSON.stringify(normalize(args))}`;
     if (this.calls.has(key)) return false;

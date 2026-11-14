@@ -10,6 +10,7 @@ import { ChatService } from '../services/chatService';
 import { getSessionById } from '../storage/chatHistory';
 import { buildConversationContext, compactToolResult, estimateTokens } from '../llm/compression';
 import { OpenAICompatibleClient } from '../llm/provider';
+import { DEFAULT_AGENT_RUN_BUDGET } from '../llm/runBudget';
 import { availableToolDefinitions, TOOL_REGISTRY } from '../llm/toolRegistry';
 import { consumeChatCompletionStream, OpenAICompatibleTransport } from '../llm/transport';
 import { getProviderCapabilities } from '../llm/capabilities';
@@ -323,26 +324,28 @@ async function llm08LateCitationsAfterTimeout(): Promise<void> {
 /** LLM-09: maxElapsedMs is not enforced while a model call is in flight; a hung provider hangs the run. */
 async function llm09ElapsedBudgetIgnoredDuringCall(): Promise<void> {
   const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
+  const originalElapsed = DEFAULT_AGENT_RUN_BUDGET.maxElapsedMs;
   const controller = new AbortController();
+  const signals: AbortSignal[] = [];
   let outcome = 'pending';
   try {
-    (globalThis as any).fetch = (_url: string, init: any) => new Promise((_, reject) => {
-      // Simulate a stuck local server: it never answers, and 181 s of wall clock pass.
-      const base = originalNow();
-      Date.now = () => base + 181_000;
-      init.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
-    });
+    // A stuck local server: it accepts every request and never answers (not even on abort).
+    (globalThis as any).fetch = (_url: string, init: any) => {
+      signals.push(init.signal);
+      return new Promise(() => undefined);
+    };
+    DEFAULT_AGENT_RUN_BUDGET.maxElapsedMs = 60;
     const run = quiet(() => new AIAssistantAgent(settings()).run('hi', [], undefined, controller.signal, undefined, dmScope()))
-      .then(() => { outcome = 'returned'; }, (error) => { outcome = `rejected: ${error?.message}`; });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+      .then((result) => { outcome = `returned: ${result.content}`; }, (error) => { outcome = `rejected: ${error?.message}`; });
+    await Promise.race([run, new Promise((resolve) => setTimeout(resolve, 1_000))]);
     const observed = outcome;
     controller.abort();
-    await run;
-    assert(observed !== 'pending', 'LLM-09 run was still waiting on the provider after the 180000 ms maxElapsedMs budget had elapsed');
+    await Promise.race([run, new Promise((resolve) => setTimeout(resolve, 100))]);
+    assert(observed.startsWith('returned'), `LLM-09 run was still waiting on a hung provider 1 s after the 60 ms maxElapsedMs budget (outcome: ${observed})`);
+    assert(signals.length >= 2 && signals.every((entry) => entry?.aborted), `LLM-09 hung provider requests were not aborted (requests=${signals.length})`);
   } finally {
     globalThis.fetch = originalFetch;
-    Date.now = originalNow;
+    DEFAULT_AGENT_RUN_BUDGET.maxElapsedMs = originalElapsed;
   }
 }
 
