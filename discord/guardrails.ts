@@ -57,7 +57,8 @@ export interface ScopeValidationResult {
 
 /**
  * Validates channel view permission fail-closed.
- * Returns true ONLY if permissionStore explicitly confirms 1024n VIEW_CHANNEL permission.
+ * Returns true ONLY if permissionStore explicitly confirms 1024n VIEW_CHANNEL permission: `can()` must
+ * return literal `true`; any other value (a Promise, object, string or number) is treated as denied.
  */
 export function validateChannelPermission(
   channel: DiscordChannel,
@@ -88,13 +89,13 @@ export function validateChannelPermission(
   try {
     const bigintResult = permissionStore.can(VIEW_CHANNEL_PERMISSION, channel);
     if (bigintResult !== undefined && bigintResult !== null) {
-      return Boolean(bigintResult);
+      return bigintResult === true;
     }
   } catch {}
 
   try {
     const numResult = permissionStore.can(VIEW_CHANNEL_PERMISSION_NUM, channel);
-    return Boolean(numResult);
+    return numResult === true;
   } catch {
     return false;
   }

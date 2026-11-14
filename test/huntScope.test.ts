@@ -149,10 +149,23 @@ async function sec07SanitizerTokenCoverage(): Promise<void> {
   }
 }
 
+/** SEC-12: validateChannelPermission treats any truthy non-boolean (e.g. a Promise) as permission granted. */
+async function sec12PermissionTruthyShapes(): Promise<void> {
+  const channel = { id: 'c_private', type: ChannelType.GUILD_TEXT, guild_id: 'g1' } as any;
+  const shapes: Array<[string, any]> = [
+    ['async can() -> false (Promise)', { can: async () => false }],
+    ['can() -> {}', { can: () => ({}) }],
+    ['can() -> "false"', { can: () => 'false' }],
+  ];
+  const granted = shapes.filter(([, store]) => validateChannelPermission(channel, store)).map(([name]) => name);
+  assert(granted.length === 0, `SEC-12 validateChannelPermission granted VIEW_CHANNEL for: ${granted.join('; ')}`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 message_id path traversal', sec01MessageIdPathTraversal],
   ['SEC-02 group DM substring match', sec02GroupDmSubstringMatch],
   ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
+  ['SEC-12 permission truthy shapes', sec12PermissionTruthyShapes],
 ];
 
 export async function runHuntScopeTests(): Promise<void> {
