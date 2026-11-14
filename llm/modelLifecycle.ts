@@ -155,15 +155,15 @@ export class ModelLifecycle {
     }
   }
 
-  /** omlx and ollama unload by model name, which entries with another API key may share. */
+  /** Entries with another API key may share a server model (omlx, ollama) or an LM Studio instance. */
   private isModelUsedElsewhere(entry: ModelEntry): boolean {
     const { providerPreset, baseUrl, model } = entry.settings;
-    // LM Studio unloads this entry's own instance id.
-    if (providerPreset === 'lmstudio') return false;
     for (const other of this.entries.values()) {
       if (other === entry || (other.users === 0 && !other.loaded)) continue;
       const s = other.settings;
-      if (s.providerPreset === providerPreset && s.baseUrl === baseUrl && s.model === model) return true;
+      if (s.providerPreset !== providerPreset || s.baseUrl !== baseUrl || s.model !== model) continue;
+      // LM Studio unloads by instance id, so only a shared instance blocks the unload.
+      if (providerPreset !== 'lmstudio' || other.instanceId === entry.instanceId) return true;
     }
     return false;
   }

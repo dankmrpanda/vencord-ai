@@ -127,8 +127,21 @@ async function life02AliasedEntryUnloadsActiveModel(): Promise<void> {
     await advance(60_000);
     assert(calls.filter(isUnload).length === 1, `LIFE-02 the last idle alias unloads the model once (saw ${calls.filter(isUnload).length})`);
   });
-  // LM Studio unloads by instance id, so each entry still unloads its own instance.
+  // LM Studio unloads by instance id; its id behaviour for repeated loads is unverified, so cover both.
   const lmstudio = fixtureSettings({ providerPreset: 'lmstudio', baseUrl: 'http://life02-lms.fixture/v1', model: 'shared-model' });
+  // Same instance id for both loads: the idle entry must not unload the instance under the active lease.
+  await withLifecycle((call) => Response.json(call.url.endsWith('/load') ? { instance_id: 'inst-shared' } : {}), async (lifecycle, calls, advance) => {
+    (await lifecycle.acquire({ ...lmstudio, apiKey: 'old-key' }))();
+    const active = await lifecycle.acquire({ ...lmstudio, apiKey: 'new-key' });
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    const unloads = calls.filter(isUnload).length;
+    active();
+    assert(unloads === 0, `LIFE-02 an LM Studio instance shared with an active lease must stay loaded (saw ${unloads} unload)`);
+    await advance(MODEL_IDLE_TIMEOUT_MS);
+    const unloaded = calls.filter(isUnload).map((c) => c.body.instance_id);
+    assert(unloaded.join(',') === 'inst-shared', `LIFE-02 the shared LM Studio instance is unloaded once after the last lease (unloaded: ${unloaded.join(',')})`);
+  });
+  // Different instance ids: the idle entry unloads only its own instance.
   let instance = 0;
   await withLifecycle((call) => Response.json(call.url.endsWith('/load') ? { instance_id: `inst-${++instance}` } : {}), async (lifecycle, calls, advance) => {
     (await lifecycle.acquire({ ...lmstudio, apiKey: 'old-key' }))();
@@ -136,7 +149,7 @@ async function life02AliasedEntryUnloadsActiveModel(): Promise<void> {
     await advance(MODEL_IDLE_TIMEOUT_MS);
     const unloaded = calls.filter(isUnload).map((c) => c.body.instance_id);
     active();
-    assert(unloaded.join(',') === 'inst-1', `LIFE-02 an idle LM Studio entry still unloads its own instance (unloaded: ${unloaded.join(',')})`);
+    assert(unloaded.join(',') === 'inst-1', `LIFE-02 an idle LM Studio entry unloads only its own instance, leaving inst-2 (unloaded: ${unloaded.join(',')})`);
   });
 }
 
