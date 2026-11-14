@@ -32,11 +32,13 @@ export function validateToolArguments(definition: ToolDefinition, value: unknown
   }
   const args = value as Record<string, unknown>;
   const { properties, required = [] } = definition.function.parameters;
+  // Own-property checks only, so names such as "toString" or "__proto__" are never treated as known arguments.
+  const has = (target: object, key: string) => Object.prototype.hasOwnProperty.call(target, key);
   for (const key of Object.keys(args)) {
-    if (!(key in properties)) throw new ToolArgumentError(`Unknown argument "${key}".`);
+    if (!has(properties, key)) throw new ToolArgumentError(`Unknown argument "${key}".`);
   }
   for (const key of required) {
-    if (!(key in args)) throw new ToolArgumentError(`Missing required argument "${key}".`);
+    if (!has(args, key)) throw new ToolArgumentError(`Missing required argument "${key}".`);
   }
   for (const [key, current] of Object.entries(args)) {
     const absent = current === null || (current === '' && MESSAGE_ID_ARGUMENTS.has(key));
