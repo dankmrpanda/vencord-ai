@@ -319,6 +319,32 @@ async function ui04EscapeLayering(): Promise<void> {
     'UI-Q09 innermost layer first: popup, drawer, panel');
 }
 
+/** UI-14: the global toggle exists only between startPlugin and stopPlugin. */
+async function ui14GlobalToggleLifecycle(): Promise<void> {
+  const g = globalThis as any;
+  const hadWindow = 'window' in g;
+  const hadDocument = 'document' in g;
+  const savedWindow = g.window;
+  const savedDocument = g.document;
+  const fakeWindow: Record<string, any> = { addEventListener() {}, removeEventListener() {} };
+  g.window = fakeWindow;
+  if (!hadDocument) g.document = { getElementById: () => null, querySelectorAll: () => [] };
+  try {
+    await withMemoryLocalStorage(async () => {
+      const plugin = await import('../index');
+      assert(fakeWindow.toggleVencordAIAssistant === undefined, 'UI-14 toggle must not be assigned at module load');
+      plugin.startPlugin();
+      const assigned = typeof fakeWindow.toggleVencordAIAssistant === 'function';
+      plugin.stopPlugin();
+      assert(assigned, 'UI-14 startPlugin assigns the toggle');
+      assert(!('toggleVencordAIAssistant' in fakeWindow), 'UI-14 stopPlugin removes the toggle');
+    });
+  } finally {
+    if (hadWindow) g.window = savedWindow; else delete g.window;
+    if (hadDocument) g.document = savedDocument; else delete g.document;
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -331,6 +357,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-11 base URL redacted in debug drawer', ui11BaseUrlRedacted],
   ['UI-03 scroll follows stream', ui03ScrollFollowsStream],
   ['UI-04 Escape layering', ui04EscapeLayering],
+  ['UI-14 global toggle lifecycle', ui14GlobalToggleLifecycle],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

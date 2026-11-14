@@ -378,10 +378,6 @@ const threadContextMenuPatch: NavContextMenuPatchCallback = (children, props: { 
   );
 };
 
-if (typeof window !== 'undefined') {
-  (window as any).toggleVencordAIAssistant = toggleAIAssistant;
-}
-
 function injectHeaderButton() {
   try {
     injectPluginStyles();
@@ -443,6 +439,8 @@ export function startPlugin() {
     getChatService(currentSettings);
     startAssistantRuntime(window);
     window.addEventListener('keydown', handleKeyDown);
+    // UI-14: exists only while the plugin runs, so a stopped plugin cannot be remounted from outside.
+    (window as any).toggleVencordAIAssistant = toggleAIAssistant;
 
     headerInjectionTimeout = setTimeout(injectHeaderButton, 500);
     headerPollInterval = setInterval(injectHeaderButton, 1000);
@@ -458,6 +456,7 @@ export function stopPlugin() {
   void stopAssistantRuntime();
   try {
     window.removeEventListener('keydown', handleKeyDown);
+    if ((window as any).toggleVencordAIAssistant === toggleAIAssistant) delete (window as any).toggleVencordAIAssistant;
     if (headerInjectionTimeout) {
       clearTimeout(headerInjectionTimeout);
       headerInjectionTimeout = null;
