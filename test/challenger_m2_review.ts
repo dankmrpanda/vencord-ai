@@ -299,7 +299,9 @@ export async function runAdversarialReviewChallengerTests(): Promise<void> {
   console.log('======================================================\n');
 }
 
-void runAdversarialReviewChallengerTests().catch((err) => {
-  console.error('[Challenger] Failure:', err);
-  process.exitCode = 1;
-});
+if (typeof require !== 'undefined' && require.main === module) {
+  void runAdversarialReviewChallengerTests().catch((err) => {
+    console.error('[Challenger] Failure:', err);
+    process.exitCode = 1;
+  });
+}
