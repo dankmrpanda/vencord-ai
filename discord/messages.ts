@@ -243,6 +243,14 @@ export function filterMessagesLocally(
           if (!msg.embeds || msg.embeds.length === 0) hasMatch = false;
           break;
         }
+        case 'sticker': {
+          const stickerMsg = msg as DiscordMessage & { sticker_items?: unknown[]; stickers?: unknown[] };
+          if (!stickerMsg.sticker_items?.length && !stickerMsg.stickers?.length) hasMatch = false;
+          break;
+        }
+        default:
+          // Unknown media types fail closed rather than matching every message.
+          hasMatch = false;
       }
       if (!hasMatch) continue;
     }

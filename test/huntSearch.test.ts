@@ -121,10 +121,17 @@ async function srch02StickerFilterPassesEverything(): Promise<string | null> {
     () => runMessageSearch({ has: 'sticker', limit: 10, scanLimit: 10 }, dmScope()),
   );
   const returned = result.data?.messages.map((m) => m.id) || [];
+  const problems: string[] = [];
   if (unit.length || returned.length) {
-    return `filterMessagesLocally kept ${unit.length}, pipeline returned ${JSON.stringify(returned)} for a sticker-less message (expected none)`;
+    problems.push(`filterMessagesLocally kept ${unit.length}, pipeline returned ${JSON.stringify(returned)} for a sticker-less message (expected none)`);
   }
-  return null;
+  const withItems = msg('110000000000000012', DM, 'sticker', new Date().toISOString(), { sticker_items: [{ id: '1', name: 'wave', format_type: 1 }] } as any);
+  const withLegacy = msg('110000000000000013', DM, 'sticker', new Date().toISOString(), { stickers: [{ id: '2', name: 'hi' }] } as any);
+  const kept = filterMessagesLocally([withItems, withLegacy], { has: 'sticker' }).map((m) => m.id);
+  if (kept.length !== 2) problems.push(`sticker messages kept ${JSON.stringify(kept)} (expected both)`);
+  const unknown = filterMessagesLocally([withItems, plain], { has: 'poll' as any });
+  if (unknown.length) problems.push(`unknown has='poll' kept ${unknown.length} message(s) (expected fail closed)`);
+  return problems.length ? problems.join('; ') : null;
 }
 
 /** SRCH-04: nextOffset pagination skips and repeats results, and stops early when limit > 25. */
