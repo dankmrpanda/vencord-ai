@@ -13,6 +13,16 @@ import {
   textButtonStyle,
 } from './sidebarStyles';
 
+/** UI-11: shows only origin + path, so userinfo or a query-string token never appears on screen. */
+export function displayBaseUrl(raw: string | undefined): string {
+  if (!raw?.trim()) return '(not set)';
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol === 'http:' || url.protocol === 'https:') return `${url.origin}${url.pathname}`;
+  } catch {}
+  return '(invalid URL)';
+}
+
 interface DebugDrawerProps {
   isOpen: boolean;
   logs: Array<{ time: string; level: string; message: string }>;
@@ -54,7 +64,7 @@ export const DebugDrawer: React.FC<DebugDrawerProps> = ({
           <strong>Scope:</strong> {currentScope?.isGuild ? 'Guild/Server' : currentScope?.isDM ? 'Direct Message' : 'Global'}
         </div>
         <div>
-          <strong>Model:</strong> {settings.model} @ {settings.baseUrl}
+          <strong>Model:</strong> {settings.model} @ {displayBaseUrl(settings.baseUrl)}
         </div>
       </div>
       <div style={historyListStyle}>

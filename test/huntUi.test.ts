@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
 import { classifyLink } from '../components/chatLinks';
 import { ChatMessage } from '../components/ChatMessage';
+import { displayBaseUrl } from '../components/DebugDrawer';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
@@ -254,6 +255,22 @@ async function ui01ScopeKeptUntilChannelChange(): Promise<void> {
   assert(keepScopeForChannel(null, 'c1') === null, 'UI-01 missing scope must be rebuilt');
 }
 
+/** UI-11: the debug drawer never shows userinfo, query or fragment of the base URL (screen-share exposure). */
+async function ui11BaseUrlRedacted(): Promise<void> {
+  const cases: Array<[string | undefined, string]> = [
+    ['https://user:secret@proxy.example/v1', 'https://proxy.example/v1'],
+    ['https://gw.example/v1?key=abc#frag', 'https://gw.example/v1'],
+    ['http://localhost:8000/v1/', 'http://localhost:8000/v1/'],
+    ['', '(not set)'],
+    [undefined, '(not set)'],
+    ['api.openai.com/v1?key=abc', '(invalid URL)'],
+    ['javascript:alert(1)', '(invalid URL)'],
+  ];
+  const wrong = cases.filter(([raw, expected]) => displayBaseUrl(raw) !== expected)
+    .map(([raw, expected]) => `${raw} -> ${displayBaseUrl(raw)} (expected ${expected})`);
+  assert(wrong.length === 0, `UI-11 displayBaseUrl: ${wrong.join('; ')}`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -263,6 +280,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],
   ['SEC-09 session follows channel', sec09SessionFollowsChannel],
   ['UI-01 scope kept until channel change', ui01ScopeKeptUntilChannelChange],
+  ['UI-11 base URL redacted in debug drawer', ui11BaseUrlRedacted],
 ];
 
 export async function runHuntUiTests(): Promise<void> {
