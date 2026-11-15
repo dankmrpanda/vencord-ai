@@ -686,6 +686,29 @@ async function llm17StreamErrorRedacted(): Promise<void> {
   assert(thrown.every((text) => text.length <= 300 && !text.includes('\n')), `LLM-17 stream error not capped to one short line: ${thrown[0].length} chars`);
 }
 
+/** SEC2-03: JSON-escaped or URL-encoded echoes of the key must not survive provider error redaction. */
+async function sec2_03EncodedKeyEchoesRedacted(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const cases: Array<[string, string, string, number]> = [
+    ['AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ab', '{"error":{"code":401,"detail":"key AbCdEfGhIjKlMnOpQrSt\\/UvWxYz0123456789ab rejected"}}', 'AbCdEfGhIjKlMnOpQrSt', 401],
+    ['hunter2', '{"error":{"code":"x","detail":"\\u0068unter2"}}', 'unter2', 401],
+    ['AbCdEfGhIjKlMnOp+QrStUvWx/Yz0123==', 'forbidden: key=AbCdEfGhIjKlMnOp%2BQrStUvWx%2FYz0123%3D%3D', 'AbCdEfGhIjKlMnOp', 403],
+  ];
+  const leaks: string[] = [];
+  try {
+    for (const [apiKey, body, fragment, status] of cases) {
+      (globalThis as any).fetch = async () => new Response(body, { status });
+      const transport = new OpenAICompatibleTransport(settings({ apiKey }), getProviderCapabilities('custom'));
+      const thrown = await transport.complete({ messages: [{ role: 'user', content: 'hi' }], stream: false })
+        .then(() => 'resolved', (error) => String(error?.message));
+      if (thrown.includes(fragment) || !thrown.includes(String(status))) leaks.push(thrown);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert(leaks.length === 0, `SEC2-03 an encoded key echo survived redaction: ${leaks.join(' | ')}`);
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -851,6 +874,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-15 numeric limits clamped', llm15NumericLimitsClamped],
   ['LLM-17 transport error detail and retry cap', llm17TransportErrorDetailAndRetry],
   ['LLM-17 stream error redacted', llm17StreamErrorRedacted],
+  ['SEC2-03 encoded key echoes redacted', sec2_03EncodedKeyEchoesRedacted],
   ['LLM-18 prompt matches runtime context', llm18PromptMatchesRuntime],
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],

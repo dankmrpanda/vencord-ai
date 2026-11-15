@@ -83,8 +83,10 @@ async function providerErrorDetail(response: Response, apiKey: string): Promise<
   let text = await response.text().catch(() => '');
   try {
     const parsed = JSON.parse(text);
-    const message = parsed?.error?.message ?? parsed?.error ?? parsed?.message;
-    if (typeof message === 'string') text = message;
+    // Use a decoded string field; never the JSON source, whose escapes (`\/`, `\u0068`) would hide a key echo from redaction.
+    const message = [parsed?.error?.message, parsed?.error, parsed?.message, parsed?.error?.detail, parsed?.detail]
+      .find((candidate) => typeof candidate === 'string');
+    text = message ?? '';
   } catch {}
   return redactProviderText(text, apiKey);
 }
@@ -92,7 +94,10 @@ async function providerErrorDetail(response: Response, apiKey: string): Promise<
 /** Redacts and caps provider-supplied error text; shared by non-OK responses and `error` events inside a stream. */
 function redactProviderText(text: string, apiKey: string): string {
   const key = apiKey.trim();
-  if (key) text = text.split(key).join('***');
+  if (key) {
+    // Also the percent-encoded form, which a server may echo from a query string or form body.
+    for (const form of new Set([key, encodeURIComponent(key)])) text = text.split(form).join('***');
+  }
   text = text
     .replace(/Bearer\s+\S+/gi, 'Bearer ***')
     .replace(/\b(?:sk|pk|rk|gsk|key|api[-_]?key)[-_][\w*.-]{3,}/gi, '***')
