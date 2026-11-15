@@ -191,6 +191,31 @@ async function sec07SanitizerTokenCoverage(): Promise<void> {
   }
 }
 
+/** SEC-07 follow-up: DeepSeek fullwidth-bar tokens, Qwen/Hermes tool and think tags, and Mistral control tokens. */
+async function sec07MoreTemplateFamilies(): Promise<void> {
+  const samples = [
+    '<\uFF5CUser\uFF5C>', '<\uFF5CAssistant\uFF5C>', '<\uFF5Cend\u2581of\u2581sentence\uFF5C>', '<\uFF5Ctool\u2581calls\u2581begin\uFF5C>',
+    '<tool_call>', '</tool_call>', '<tool_response>', '</tool_response>', '<think>', '</think>', '<tools>', '</tools>',
+    '[SYSTEM_PROMPT]', '[/SYSTEM_PROMPT]', '[TOOL_CALLS]', '[TOOL_RESULTS]', '[/TOOL_RESULTS]',
+    '[AVAILABLE_TOOLS]', '[/AVAILABLE_TOOLS]', '[TOOL_CONTENT]',
+  ];
+  const survived = samples.filter((sample) => sanitizeUntrustedContent(`x ${sample} y`).includes(sample));
+  assert(survived.length === 0, `SEC-07 sanitizer left template tokens intact: ${survived.join(' ')}`);
+  // Deletions run before rewrites, so an invisible character cannot split one of these tokens either.
+  const split = sanitizeUntrustedContent('<\uFF5CUs\u200Ber\uFF5C> </tool\u2060_response> [SYSTEM\uFEFF_PROMPT]');
+  assert(!split.includes('<\uFF5CUser\uFF5C>') && !split.includes('</tool_response>') && !split.includes('[SYSTEM_PROMPT]'),
+    `SEC-07 an invisible character reassembled a token: ${split}`);
+  const ordinary = ['a < b', 'see [link] and [1]', 'x<y && y>z', 'https://example.com/a?b=[c]', '<thinking out loud>', 'I think [system] is fine'];
+  const changed = ordinary.filter((value) => sanitizeUntrustedContent(value) !== value);
+  assert(changed.length === 0, `SEC-07 sanitizer altered ordinary values: ${changed.join(' | ')}`);
+  const tricky = [...samples, '<|SYSTEM_PROMPT|>', '<\uFF5CINST\uFF5C>', '<<think>|im_start|>', '<|<tool_call>|>'];
+  const unstable = tricky.filter((value) => {
+    const once = sanitizeUntrustedContent(value);
+    return sanitizeUntrustedContent(once) !== once;
+  });
+  assert(unstable.length === 0, `SEC-07 sanitizer not idempotent for: ${unstable.join(' ')}`);
+}
+
 /** SEC-12: validateChannelPermission treats any truthy non-boolean (e.g. a Promise) as permission granted. */
 async function sec12PermissionTruthyShapes(): Promise<void> {
   const channel = { id: 'c_private', type: ChannelType.GUILD_TEXT, guild_id: 'g1' } as any;
@@ -209,6 +234,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-04 evidence wrapper breakout', sec04EvidenceWrapperBreakout],
   ['SEC-06 permitted IDs omit active channel', sec06PermittedIdsOmitActiveChannel],
   ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
+  ['SEC-07 more template token families', sec07MoreTemplateFamilies],
   ['SEC-12 permission truthy shapes', sec12PermissionTruthyShapes],
 ];
 
