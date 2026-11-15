@@ -630,6 +630,39 @@ async function sec09ScopeResolvedBeforeSession(): Promise<void> {
   }
 }
 
+/** SRCH-10 wiring: stopping a run must cancel a Discord fetch that is waiting out a 429, and end the run as a user stop. */
+async function srch10ToolsReceiveAbortSignal(): Promise<void> {
+  for (const [tool, args] of [
+    ['fetch_recent_messages', { limit: 5 }],
+    ['fetch_surrounding_messages', { channel_id: ACTIVE_DM, message_id: '400000000000000001', limit: 5 }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    const controller = new AbortController();
+    let gets = 0;
+    let modelTurns = 0;
+    const started = Date.now();
+    let stoppedAt = 0;
+    const outcome = await quiet(() => withRestGet(() => {
+      gets++;
+      if (gets === 1) setTimeout(() => { stoppedAt = Date.now(); controller.abort(); }, 30);
+      throw { status: 429, body: { retry_after: 2 } };
+    }, () => withScriptedLLM(() => {
+      modelTurns++;
+      return modelTurns === 1 ? { toolCalls: [{ name: tool, args }] } : { content: 'answer after the stop' };
+    }, async () => {
+      try {
+        await new AIAssistantAgent(settings()).run('recent?', [], undefined, controller.signal, undefined, dmScope());
+        return 'completed';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    })));
+    const lag = Date.now() - (stoppedAt || started);
+    assert(/cancelled/i.test(outcome), `SRCH-10 ${tool}: a stopped run should end as cancelled, got "${outcome}" (${gets} REST calls)`);
+    assert(lag < 1000 && gets === 1, `SRCH-10 ${tool}: the 429 wait ignored the stop (${lag} ms after abort, ${gets} REST calls)`);
+    assert(modelTurns === 1, `SRCH-10 ${tool}: the model was called again after the stop (${modelTurns} turns)`);
+  }
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -803,6 +836,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-11 deleted session resurrected by run', llm11DeletedSessionResurrected],
   ['SEC-09 session follows scope channel', sec09SessionFollowsScopeChannel],
   ['SEC-09 scope resolved before session', sec09ScopeResolvedBeforeSession],
+  ['SRCH-10 tools receive the abort signal', srch10ToolsReceiveAbortSignal],
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],

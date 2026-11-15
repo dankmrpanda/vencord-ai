@@ -107,7 +107,7 @@ const searchMessages = registered('search_messages', 'discord', async (args, con
     limit,
     scanLimit: intArg(args.scan_limit, 100, limit, 500),
     beforeMessageId: args.before_message_id as string | undefined,
-  }, context.scope);
+  }, context.scope, context.signal);
   result.citations = (result.data?.messages || []).map((message) => context.addCitation(message));
   return result;
 }, () => true, 30_000);
@@ -118,7 +118,7 @@ const surroundingMessages = registered('fetch_surrounding_messages', 'discord', 
   if (!isChannelAllowedInScope(channelId, context.scope)) {
     return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted scope.' };
   }
-  const messages = await fetchSurroundingMessages(channelId, String(args.message_id), intArg(args.limit, 10, 1, 25));
+  const messages = await fetchSurroundingMessages(channelId, String(args.message_id), intArg(args.limit, 10, 1, 25), context.signal);
   const result = ok(messages.length ? 'surrounding_messages' : 'empty_results', `Retrieved ${messages.length} surrounding message${messages.length === 1 ? '' : 's'}.`, { messages });
   result.citations = messages.map((message) => context.addCitation(message));
   result.scope = { channelIds: [channelId], guildId: context.scope.guildId };
@@ -137,7 +137,7 @@ const recentMessages = registered('fetch_recent_messages', 'discord', async (arg
     return { ok: false, code: 'invalid_pattern', summary: `The pattern was rejected: ${compiled.error || 'invalid regular expression'}.` };
   }
   const limit = intArg(args.limit, 25, 1, 100);
-  const fetched = await fetchRecentMessages(channelId, limit);
+  const fetched = await fetchRecentMessages(channelId, limit, undefined, context.signal);
   const regex = compiled?.regex;
   const messages = regex
     ? fetched.filter((message) => {
