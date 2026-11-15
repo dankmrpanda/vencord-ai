@@ -56,20 +56,18 @@ function errorMessage(error: unknown): string {
   return 'Tool execution failed.';
 }
 
-/** Neutralizes chat-template tokens and control/bidi characters in every string leaf (before serialization). */
-function sanitizeDeep(value: unknown): unknown {
-  if (typeof value === 'string') return sanitizeUntrustedContent(value);
-  if (Array.isArray(value)) return value.map(sanitizeDeep);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, current]) => [key, sanitizeDeep(current)]));
-  }
-  return value;
+/**
+ * JSON.stringify replacer that neutralizes chat-template tokens and control/bidi characters in every string leaf.
+ * It runs after toJSON, so Date/moment values serialize exactly as JSON.stringify would and their output is sanitized too.
+ */
+function sanitizeStringLeaf(_key: string, value: unknown): unknown {
+  return typeof value === 'string' ? sanitizeUntrustedContent(value) : value;
 }
 
 /** Serializes the model-facing view of a tool result; UI-only fields such as citations are left out. */
 function toolMessageContent(result: ToolExecutionResult): string {
   const { citations: _citations, ...modelView } = result;
-  return compactToolResult(JSON.stringify(sanitizeDeep(modelView)));
+  return compactToolResult(JSON.stringify(modelView, sanitizeStringLeaf));
 }
 
 /**
