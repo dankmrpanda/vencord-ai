@@ -39,11 +39,11 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - `getPermittedChannelIdsForScope` returns the active channel plus the accessible channels in server mode (matching custom mode). An empty channel allowlist matches nothing; it never means "all channels".
 - **`discord/guardrails.ts`**:
   - `validateScopeBoundary` and `validateChannelPermission` hold the actual boundary checks that `isChannelAllowedInScope` delegates to. VIEW_CHANNEL counts as granted only when the permission store's `can()` returns a literal `true`; a Promise, object, string or error denies.
-  - `sanitizeUntrustedContent` neutralizes chat-template tokens and zero-width characters; `formatUntrustedEvidence` escapes the evidence wrapper's attributes and delimiter.
+  - `sanitizeUntrustedContent` neutralizes chat-template tokens (`<|…|>` ChatML/Llama/harmony, DeepSeek `<｜…｜>`, Gemma turn tags, Qwen/Hermes `<tool_call>`/`<tool_response>`/`<think>`, Llama 2 `[INST]`/`<<SYS>>`, Mistral `[SYSTEM_PROMPT]`/`[TOOL_CALLS]`/`[TOOL_RESULTS]`/`[AVAILABLE_TOOLS]`) and zero-width characters, deleting characters before rewriting tokens so the output is idempotent; `formatUntrustedEvidence` escapes the evidence wrapper's attributes and delimiter.
 - **[`discord/search.ts`](file:///Users/raymond/Documents/projects/vencord-ai/discord/search.ts)**:
   - Handles queries sent to Discord's server-side Search API.
   - Serializes request starts, respects rate limits, and owns cache keys/cursors.
-  - A 429 `retry_after` is honoured up to 5 seconds; a longer one fails the remote search so the pipeline falls back instead of stalling. Rate-limit waits end when the run is cancelled.
+  - A 429 `retry_after` is honoured up to 5 seconds; a longer one fails the remote search so the pipeline falls back instead of stalling. Rate-limit waits end when the run is cancelled; the agent passes its abort signal to `search_messages`, `fetch_recent_messages` and `fetch_surrounding_messages`, so stopping a run also ends their in-flight Discord fetches.
 - **`discord/searchPipeline.ts`** normalizes requests, runs at most three variants, scope-filters, deduplicates, reranks, and returns structured pagination.
   - The offset cursor follows the primary (first) Discord search variant only, so pages neither skip nor repeat its hits.
   - Unparseable `date`/`after_date`/`before_date` values return `invalid_date` instead of being ignored. `has: "sticker"` is filtered; unknown `has` values fail closed.
@@ -68,7 +68,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - `normalizeBaseUrl` trims the value, strips trailing slashes, uses `http://localhost:8000/v1` when empty, and accepts only absolute `http:`/`https:` URLs without a username or password. Its error messages never echo the input. The lifecycle code, the transport and the settings **Test Connection** button all call it before any request (Test Connection also refuses an empty value).
 - **`llm/transport.ts` / `llm/capabilities.ts`**:
   - One OpenAI-compatible transport with fragmented SSE handling and conservative capability presets for strict schemas, parallel calls, developer messages, streaming tools, and vision.
-  - Provider error messages are redacted to one line of at most 200 characters (the configured key, `Bearer` values, key-shaped and long opaque tokens become `***`). A provider 429 `Retry-After` is honoured up to 30 seconds.
+  - Provider error messages, from a non-OK response or from an `error` event inside a streamed response, are redacted to one line of at most 200 characters (the configured key, `Bearer` values, key-shaped and long opaque tokens become `***`). A provider 429 `Retry-After` is honoured up to 30 seconds.
 - **`llm/toolRegistry.ts`**:
   - One typed registry. Every entry contains a schema, local parser, availability predicate, timeout, execution kind, executor, and literal `readOnly: true` classification.
   - `inspect_image` is offered only when vision is enabled in settings and the provider preset declares vision (OpenAI, OpenRouter). `fetch_recent_messages` applies its `pattern` filter.
@@ -78,9 +78,9 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
 - **[`llm/agent.ts`](file:///Users/raymond/Documents/projects/vencord-ai/llm/agent.ts)**:
   - Enforces model-turn/tool/elapsed-time/record/token budgets, rejects duplicate normalized calls, validates arguments locally, and performs one tools-disabled finalization call.
   - The elapsed-time budget also applies while waiting on a hung provider call; finalization has its own deadline of min(30 s, `maxElapsedMs`). Before finalization the oldest tool results are shrunk to their summaries until the request fits the input token budget (they stay marked untrusted). A provider error on a later turn, after evidence was gathered, goes to the finalization step instead of failing the run.
-  - Every string in every tool result is sanitized (`sanitizeUntrustedContent`) before the model sees it. Channel, thread, server, group-DM and user names in the runtime context are sanitized, collapsed to one line, capped at 100 characters and JSON-quoted as user-chosen labels. The summary of older session turns is sent as sanitized user content, not in the system role.
+  - Every string in every tool result is sanitized (`sanitizeUntrustedContent`) before the model sees it; results keep `JSON.stringify` semantics (dates stay ISO strings) and strings produced by `toJSON` are sanitized too. Channel, thread, server, group-DM and user names in the runtime context are sanitized, collapsed to one line, capped at 100 characters and JSON-quoted as user-chosen labels. The summary of older session turns is sent as sanitized user content, not in the system role.
 - **`services/chatService.ts`**:
-  - Sessions are per channel. Sending with a scope for a different channel than the active session starts a fresh session for that channel (or re-tags the active session if it is still empty), so another channel's turns are never sent to the model. A session deleted while it is generating stays deleted.
+  - Sessions are per channel. `sendMessage` resolves the scope once, before it picks the session, and the agent runs on exactly that scope (it never re-resolves the channel mid-run). With no open channel or DM the run stops with "Open a channel or DM first." before any model request. Sending with a scope for a different channel than the active session starts a fresh session for that channel (or re-tags the active session if it is still empty), so another channel's turns are never sent to the model. A session deleted while it is generating stays deleted.
 
 ### 4. Components (`/components`)
 - **[`components/SidebarPanel.tsx`](file:///Users/raymond/Documents/projects/vencord-ai/components/SidebarPanel.tsx)**:

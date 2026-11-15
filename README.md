@@ -32,7 +32,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
   - **Cloud**: OpenAI (`gpt-4o-mini`, `gpt-4o`), OpenRouter, Groq (`llama-3.1-70b`), etc.
 - 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots. It is offered only when vision is enabled in settings and the provider preset declares vision support (currently OpenAI and OpenRouter).
 - 📌 **Clickable Discord Jump Citations**: Referenced messages appear as rich preview cards with one-click jump buttons directly into your Discord chat stream.
-- 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. A chat deleted while it is generating stays deleted.
+- 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. Sending while no channel or DM is open replies "Open a channel or DM first." without querying the model. A chat deleted while it is generating stays deleted.
 - 🎨 **Native Discord UI**: Sleek right-hand dockable sidebar toggled via the `✨` button in Discord's header bar or `Ctrl+Shift+A` (`Cmd+Shift+A` on macOS).
 
 ---
@@ -84,7 +84,7 @@ Open the plugin settings under **Discord Settings → Plugins → AIAssistant (G
 
 Click **⚡ Test Connection** in the settings panel to verify your endpoint.
 
-The API Base URL must be an absolute `http://` or `https://` URL and must not contain a username or password (use the API Key setting instead). The plugin checks this before sending any request, including load/unload calls and Test Connection, and shows the reason under the field when the value is invalid. Provider error messages are redacted so the API key is not shown or saved in chat history.
+The API Base URL must be an absolute `http://` or `https://` URL and must not contain a username or password (use the API Key setting instead). The plugin checks this before sending any request, including load/unload calls and Test Connection, and shows the reason under the field when the value is invalid. Provider error messages (including errors reported inside a streamed reply) are redacted so the API key is not shown or saved in chat history.
 
 ---
 
