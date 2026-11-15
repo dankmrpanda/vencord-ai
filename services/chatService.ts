@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { getCurrentScopeContext } from '../discord/scope';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
 import {
@@ -165,7 +166,13 @@ export class ChatService {
     let session: ChatSession | undefined;
     let assistantMessage: AssistantChatMessage | undefined;
     try {
-      const scopeChannelId = customScope?.channelId;
+      // Resolve the scope once, before the session is chosen. The agent runs on exactly this scope and never
+      // re-resolves it, so a channel opened while the model loads cannot pair this session's history with another scope.
+      let scope = customScope || null;
+      if (!scope) {
+        try { scope = getCurrentScopeContext(); } catch { scope = null; }
+      }
+      const scopeChannelId = scope?.channelId;
       if (!this.activeSession) await this.initSession(scopeChannelId);
       controller.signal.throwIfAborted();
       // Sessions are per channel: a run must never replay another channel's history.
@@ -223,7 +230,7 @@ export class ChatService {
         },
         controller.signal,
         launchRequest || undefined,
-        customScope || undefined,
+        scope,
       );
       controller.signal.throwIfAborted();
       reply.content = result.content;

@@ -163,11 +163,13 @@ export class AIAssistantAgent {
     callbacks?: AgentRunCallbacks,
     signal?: AbortSignal,
     launchRequest?: AssistantLaunchRequest,
-    customScope?: CurrentScopeContext,
+    customScope?: CurrentScopeContext | null,
   ): Promise<{ content: string; steps: AgentStep[]; citations: CitationItem[] }> {
     const startedAt = Date.now();
     const steps: AgentStep[] = [];
     const citationMap = new Map<string, CitationItem>();
+    // null means the caller already resolved the scope and found none; only undefined falls back to the current channel.
+    if (customScope === null) throw new Error('Open a channel or DM first.');
     const baseScope = customScope || getCurrentScopeContext();
     if (!baseScope) throw new Error('Could not determine current Discord channel context.');
     const scope = restrictScopeForUserPrompt(baseScope, userPrompt, launchRequest?.targetChannelId);

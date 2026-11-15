@@ -565,6 +565,71 @@ async function sec09SessionFollowsScopeChannel(): Promise<void> {
   }
 }
 
+/**
+ * SEC-09 follow-up: sendMessage resolves the scope once, before it picks the session, and hands that scope to the agent.
+ * A send with no resolvable scope must not reach the model, even if the user opens another DM while the model loads.
+ */
+async function sec09ScopeResolvedBeforeSession(): Promise<void> {
+  const originalAcquire = modelLifecycle.acquire;
+  const hadWindow = 'window' in globalThis;
+  const originalWindow = (globalThis as any).window;
+  const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
+  const memory = new Map<string, string>();
+  const channelA = '100000000000000001';
+  const channelB = '100000000000000002';
+  const channels: Record<string, unknown> = {
+    [channelA]: { id: channelA, type: ChannelType.DM, recipients: ['900000000000000001'] },
+    [channelB]: { id: channelB, type: ChannelType.DM, recipients: ['900000000000000002'] },
+  };
+  let selected: string | null = channelA;
+  const stores: Record<string, unknown> = {
+    SelectedChannelStore: { getChannelId: () => selected },
+    ChannelStore: { getChannel: (id: string) => channels[id] ?? null, getMutablePrivateChannels: () => ({}) },
+    UserStore: { getUser: (id: string) => ({ id, username: `u${id}` }), getCurrentUser: () => ({ id: '1', username: 'me' }) },
+  };
+  try {
+    if (!hadLocalStorage) {
+      (globalThis as any).localStorage = {
+        getItem: (key: string) => memory.get(key) ?? null,
+        setItem: (key: string, value: string) => { memory.set(key, String(value)); },
+        removeItem: (key: string) => { memory.delete(key); },
+        key: (index: number) => Array.from(memory.keys())[index] ?? null,
+        get length() { return memory.size; },
+      };
+    }
+    (globalThis as any).window = { Vencord: { Webpack: { findStore: (name: string) => stores[name] ?? null, findByProps: () => null } } };
+    modelLifecycle.acquire = async () => () => undefined;
+    await quiet(() => withScriptedLLM(() => ({ content: 'ok' }), async (requests) => {
+      const service = new ChatService(settings());
+      await service.initSession(channelA);
+      await service.sendMessage('SECRET-A question about the lawsuit');
+      const afterA = requests.length;
+      assert(afterA > 0 && service.getActiveSession()!.channelId === channelA, `fixture: first send ran in A (${afterA} requests)`);
+
+      // No channel selected at send time; the user opens DM B while the model loads.
+      selected = null;
+      modelLifecycle.acquire = async () => { selected = channelB; return () => undefined; };
+      await service.sendMessage('anything new here?');
+      const leaked = requests.slice(afterA).map((body) => JSON.stringify(body.messages));
+      assert(leaked.length === 0, `SEC-09 a send with no scope reached the model (${leaked.length} request(s)): ${leaked.join(' ').slice(0, 300)}`);
+      const reply = service.getActiveSession()!.messages.at(-1)!;
+      assert(/open a channel or dm first/i.test(reply.content), `SEC-09 no-scope send should ask the user to open a channel: "${reply.content}"`);
+
+      // B is selected at send time but A's session is still active: the scope picks a fresh B session before history is read.
+      modelLifecycle.acquire = async () => () => undefined;
+      await service.sendMessage('and in this DM?');
+      const replayed = JSON.stringify(requests.slice(afterA).map((body) => body.messages));
+      assert(requests.length > afterA && !replayed.includes('SECRET-A'), `SEC-09 a B-scoped run replayed A history: ${replayed.slice(0, 300)}`);
+      assert(service.getActiveSession()!.channelId === channelB, `SEC-09 the B turn was saved into a ${service.getActiveSession()!.channelId} session`);
+    }));
+  } finally {
+    modelLifecycle.acquire = originalAcquire;
+    if (hadWindow) (globalThis as any).window = originalWindow;
+    else delete (globalThis as any).window;
+    if (!hadLocalStorage) delete (globalThis as any).localStorage;
+  }
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -737,6 +802,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-05 history summary not system', sec05HistorySummaryNotSystem],
   ['LLM-11 deleted session resurrected by run', llm11DeletedSessionResurrected],
   ['SEC-09 session follows scope channel', sec09SessionFollowsScopeChannel],
+  ['SEC-09 scope resolved before session', sec09ScopeResolvedBeforeSession],
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],
