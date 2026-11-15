@@ -210,7 +210,8 @@ export function sanitizeUntrustedContent(text?: string | null): string {
     //    harmony and similar templates; Gemma uses bare turn tags. Llama 2 `<s>` is left alone (ordinary HTML).
     .replace(/<\|([a-z0-9_]{1,40})\|>/gi, '[$1]')
     // DeepSeek uses fullwidth bars (U+FF5C), e.g. `<｜User｜>` and `<｜end▁of▁sentence｜>`.
-    .replace(/<｜([^｜<>\n]{1,40})｜>/g, '[$1]')
+    // Brackets are excluded so a token rewritten by another rule (`<｜<think>｜>`) cannot match on a second pass.
+    .replace(/<｜([^｜<>[\]\n]{1,40})｜>/g, '[$1]')
     .replace(/<(\/?)(start_of_turn|end_of_turn)>/gi, '[$1$2]')
     // Qwen/Hermes tool and reasoning tags.
     .replace(/<(\/?)(tool_call|tool_response|think|tools)>/gi, '[$1$2]')

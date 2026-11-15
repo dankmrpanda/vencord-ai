@@ -208,7 +208,8 @@ async function sec07MoreTemplateFamilies(): Promise<void> {
   const ordinary = ['a < b', 'see [link] and [1]', 'x<y && y>z', 'https://example.com/a?b=[c]', '<thinking out loud>', 'I think [system] is fine'];
   const changed = ordinary.filter((value) => sanitizeUntrustedContent(value) !== value);
   assert(changed.length === 0, `SEC-07 sanitizer altered ordinary values: ${changed.join(' | ')}`);
-  const tricky = [...samples, '<|SYSTEM_PROMPT|>', '<\uFF5CINST\uFF5C>', '<<think>|im_start|>', '<|<tool_call>|>'];
+  const tricky = [...samples, '<|SYSTEM_PROMPT|>', '<\uFF5CINST\uFF5C>', '<<think>|im_start|>', '<|<tool_call>|>',
+    '<\uFF5C<think>\uFF5C>', '<\uFF5C<\uFF5Ca\uFF5C>\uFF5C>', '<\uFF5C<|a|>\uFF5C>', '<|<\uFF5Ca\uFF5C>|>'];
   const unstable = tricky.filter((value) => {
     const once = sanitizeUntrustedContent(value);
     return sanitizeUntrustedContent(once) !== once;
