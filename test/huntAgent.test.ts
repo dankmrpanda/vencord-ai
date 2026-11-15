@@ -663,6 +663,29 @@ async function srch10ToolsReceiveAbortSignal(): Promise<void> {
   }
 }
 
+/** LLM-17 follow-up: an `error` object inside a 200 SSE stream gets the same redaction and length cap as a non-OK response. */
+async function llm17StreamErrorRedacted(): Promise<void> {
+  const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
+  const transport = new OpenAICompatibleTransport(settings({ apiKey }), getProviderCapabilities('custom'));
+  const originalFetch = globalThis.fetch;
+  const thrown: string[] = [];
+  const payloads = [
+    { error: { message: `Incorrect API key provided: ${apiKey}. Also seen: sk-test-****cdef and Bearer ${apiKey}\n${'x'.repeat(600)}` } },
+    { error: `upstream rejected key ${apiKey}` },
+  ];
+  try {
+    for (const payload of payloads) {
+      (globalThis as any).fetch = async () => new Response(`data: ${JSON.stringify(payload)}\n\n`, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      thrown.push(await transport.complete({ messages: [{ role: 'user', content: 'hi' }] }).then(() => 'resolved', (error) => String(error?.message)));
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert(thrown[0].includes('Incorrect API key provided') && thrown[1].includes('upstream rejected key'), `LLM-17 stream error detail missing: ${thrown.join(' | ')}`);
+  assert(thrown.every((text) => !text.includes('SECRETKEY') && !text.includes('cdef')), `LLM-17 API key reached a stream error: ${thrown.join(' | ')}`);
+  assert(thrown.every((text) => text.length <= 300 && !text.includes('\n')), `LLM-17 stream error not capped to one short line: ${thrown[0].length} chars`);
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -827,6 +850,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 non-numeric message IDs rejected', sec01NonNumericMessageIdsRejected],
   ['LLM-15 numeric limits clamped', llm15NumericLimitsClamped],
   ['LLM-17 transport error detail and retry cap', llm17TransportErrorDetailAndRetry],
+  ['LLM-17 stream error redacted', llm17StreamErrorRedacted],
   ['LLM-18 prompt matches runtime context', llm18PromptMatchesRuntime],
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],

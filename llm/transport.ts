@@ -86,6 +86,11 @@ async function providerErrorDetail(response: Response, apiKey: string): Promise<
     const message = parsed?.error?.message ?? parsed?.error ?? parsed?.message;
     if (typeof message === 'string') text = message;
   } catch {}
+  return redactProviderText(text, apiKey);
+}
+
+/** Redacts and caps provider-supplied error text; shared by non-OK responses and `error` events inside a stream. */
+function redactProviderText(text: string, apiKey: string): string {
   const key = apiKey.trim();
   if (key) text = text.split(key).join('***');
   text = text
@@ -116,6 +121,7 @@ function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
 export async function consumeChatCompletionStream(
   stream: ReadableStream<Uint8Array>,
   callbacks: TransportCallbacks = {},
+  apiKey = '',
 ): Promise<CompletionResult> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -136,7 +142,8 @@ export async function consumeChatCompletionStream(
     try { parsed = JSON.parse(raw); } catch { return; }
     if (parsed?.error) {
       const message = typeof parsed.error === 'string' ? parsed.error : parsed.error.message;
-      throw new Error(typeof message === 'string' ? message : 'LLM stream returned an error.');
+      const detail = typeof message === 'string' ? redactProviderText(message, apiKey) : '';
+      throw new Error(detail || 'LLM stream returned an error.');
     }
     const choice = parsed.choices?.[0];
     if (!choice) return;
@@ -238,7 +245,7 @@ export class OpenAICompatibleTransport {
     }
     if (request.stream !== false) {
       if (!response.body) throw new Error('LLM completion returned no stream.');
-      return consumeChatCompletionStream(response.body, callbacks);
+      return consumeChatCompletionStream(response.body, callbacks, this.settings.apiKey || '');
     }
     const json = await response.json();
     const choice = json.choices?.[0] || {};
