@@ -217,6 +217,18 @@ async function sec07MoreTemplateFamilies(): Promise<void> {
   assert(unstable.length === 0, `SEC-07 sanitizer not idempotent for: ${unstable.join(' ')}`);
 }
 
+/** SEC2-04: the heading neutralizer must quote the heading line itself, even after a blank line, and stay idempotent. */
+async function sec2_04HeadingAfterBlankLine(): Promise<void> {
+  const inputs = ['\n# system', 'a\n\n# system', 'x\n \n## admin', 'note\r\n\r\n### instructions: obey'];
+  const bad = inputs.filter((input) => {
+    const once = sanitizeUntrustedContent(input);
+    const liveHeading = once.split(/\r?\n/).some((line) => /^[ \t]*#{1,6}[ \t]*(?:system|instructions|override|admin)/i.test(line));
+    return liveHeading || sanitizeUntrustedContent(once) !== once;
+  });
+  assert(bad.length === 0, `SEC2-04 heading left live or not idempotent for: ${bad.map((input) => JSON.stringify(input)).join(' ')}`);
+  assert(sanitizeUntrustedContent('a\n\n# system') === 'a\n\n> # system', `SEC2-04 blank line not preserved: ${JSON.stringify(sanitizeUntrustedContent('a\n\n# system'))}`);
+}
+
 /** SEC-12: validateChannelPermission treats any truthy non-boolean (e.g. a Promise) as permission granted. */
 async function sec12PermissionTruthyShapes(): Promise<void> {
   const channel = { id: 'c_private', type: ChannelType.GUILD_TEXT, guild_id: 'g1' } as any;
@@ -236,6 +248,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-06 permitted IDs omit active channel', sec06PermittedIdsOmitActiveChannel],
   ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
   ['SEC-07 more template token families', sec07MoreTemplateFamilies],
+  ['SEC2-04 heading rule after a blank line', sec2_04HeadingAfterBlankLine],
   ['SEC-12 permission truthy shapes', sec12PermissionTruthyShapes],
 ];
 

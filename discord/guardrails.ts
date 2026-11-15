@@ -221,7 +221,8 @@ export function sanitizeUntrustedContent(text?: string | null): string {
     .replace(/\[\/INST\]/gi, '[/INST_TAG]')
     .replace(/<<SYS>>/gi, '<<SYS_TAG>>')
     .replace(/<\/SYS>>/gi, '<</SYS_TAG>>')
-    .replace(/^(\s*#{1,6}\s*(?:system|instructions|override|admin))/gim, '> $1')
+    // Horizontal whitespace only: `\s` would match a preceding blank line and quote that line instead of the heading.
+    .replace(/^([ \t]*#{1,6}[ \t]*(?:system|instructions|override|admin))/gim, '> $1')
     .trim();
 }
 
