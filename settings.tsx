@@ -9,6 +9,7 @@ import { OptionType } from '@utils/types';
 import { React } from '@webpack/common';
 import { modelLifecycle } from './llm/modelLifecycle';
 import { normalizeBaseUrl, resolveModelIdentifier } from './llm/modelSettings';
+import { providerErrorDetail } from './llm/transport';
 import { PluginSettings, ProviderPreset } from './types';
 
 /**
@@ -263,8 +264,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
       });
 
       if (!response.ok) {
-        const text = await response.text().catch(() => response.statusText);
-        setTestStatus(`❌ Failed (${response.status}): ${text.slice(0, 120)}`);
+        // Same redaction as chat errors: the provider may echo the API key.
+        const detail = await providerErrorDetail(response, testSettings.apiKey || '');
+        setTestStatus(`❌ Failed (${response.status})${detail ? `: ${detail}` : '.'}`);
       } else {
         setTestStatus('✅ Connection successful!');
       }

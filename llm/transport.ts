@@ -79,7 +79,7 @@ const MAX_RETRY_DELAY_MS = 30_000;
  * Short, single-line provider error detail with credentials removed: the configured key, key-shaped tokens
  * (including masked echoes such as "sk-****abcd"), bearer values and long opaque strings.
  */
-async function providerErrorDetail(response: Response, apiKey: string): Promise<string> {
+export async function providerErrorDetail(response: Response, apiKey: string): Promise<string> {
   let text = await response.text().catch(() => '');
   try {
     const parsed = JSON.parse(text);

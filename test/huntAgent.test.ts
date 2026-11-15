@@ -3,6 +3,7 @@
  * Every case covers a committed fix and must stay green; each case restores the globals it patches.
  */
 
+import { readFileSync } from 'node:fs';
 import { RestAPI } from '@webpack/common';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
@@ -709,6 +710,18 @@ async function sec2_03EncodedKeyEchoesRedacted(): Promise<void> {
   assert(leaks.length === 0, `SEC2-03 an encoded key echo survived redaction: ${leaks.join(' | ')}`);
 }
 
+/** SEC2-02: Test Connection showed the provider's raw error body; it must use the same redacted detail as chat errors. */
+async function sec2_02TestConnectionRedacted(): Promise<void> {
+  const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
+  const transport: any = await import('../llm/transport');
+  assert(typeof transport.providerErrorDetail === 'function', 'SEC2-02 providerErrorDetail is not exported for Test Connection');
+  const detail = await transport.providerErrorDetail(new Response(`invalid key ${apiKey}`, { status: 401 }), apiKey);
+  assert(detail.includes('invalid key') && !detail.includes('SECRETKEY'), `SEC2-02 redacted detail wrong: ${detail}`);
+  const source = readFileSync(new URL('../settings.tsx', import.meta.url), 'utf8');
+  assert(/providerErrorDetail\(response, /.test(source) && !/text\.slice\(0, 120\)/.test(source),
+    'SEC2-02 settings.tsx Test Connection still shows the raw provider body');
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -875,6 +888,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-17 transport error detail and retry cap', llm17TransportErrorDetailAndRetry],
   ['LLM-17 stream error redacted', llm17StreamErrorRedacted],
   ['SEC2-03 encoded key echoes redacted', sec2_03EncodedKeyEchoesRedacted],
+  ['SEC2-02 Test Connection error redacted', sec2_02TestConnectionRedacted],
   ['LLM-18 prompt matches runtime context', llm18PromptMatchesRuntime],
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],
