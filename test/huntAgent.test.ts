@@ -722,6 +722,41 @@ async function sec2_02TestConnectionRedacted(): Promise<void> {
     'SEC2-02 settings.tsx Test Connection still shows the raw provider body');
 }
 
+/** SEC2-01: get_message_details and list_channel_pins must also stop on Stop during a 429 wait and not honour a huge retry_after. */
+async function sec2_01ContextToolsHonourStop(): Promise<void> {
+  const tools: Array<[string, Record<string, unknown>]> = [
+    ['get_message_details', { channel_id: ACTIVE_DM, message_id: '400000000000000001' }],
+    ['list_channel_pins', { channel_id: ACTIVE_DM }],
+  ];
+  for (const [tool, args] of tools) {
+    const controller = new AbortController();
+    let gets = 0;
+    let stoppedAt = 0;
+    const outcome = await quiet(() => withRestGet(() => {
+      gets++;
+      if (gets === 1) setTimeout(() => { stoppedAt = Date.now(); controller.abort(); }, 30);
+      throw { status: 429, body: { retry_after: 1 } };
+    }, () => withScriptedLLM((_body, index) => index === 0 ? { toolCalls: [{ name: tool, args }] } : { content: 'after stop' }, async () => {
+      try {
+        await new AIAssistantAgent(settings()).run('details?', [], undefined, controller.signal, undefined, dmScope());
+        return 'completed';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    })));
+    const lag = Date.now() - stoppedAt;
+    assert(/cancelled/i.test(outcome) && lag < 1000 && gets === 1,
+      `SEC2-01 ${tool}: Stop during a 429 wait was ignored (${outcome}; ${lag} ms after the stop, ${gets} REST calls)`);
+  }
+  // A retry_after beyond the cap fails the call at once instead of sleeping (and retrying) in the background.
+  let gets = 0;
+  const started = Date.now();
+  await quiet(() => withRestGet(() => { gets++; throw { status: 429, body: { retry_after: 60 } }; },
+    () => withScriptedLLM((_body, index) => index === 0 ? { toolCalls: [{ name: 'get_message_details', args: tools[0][1] }] } : { content: 'done' },
+      () => new AIAssistantAgent(settings({ maxSearchIterations: 1 })).run('details?', [], undefined, undefined, undefined, dmScope()))));
+  assert(Date.now() - started < 2000 && gets === 1, `SEC2-01 retry_after 60 was honoured (${Date.now() - started} ms, ${gets} REST calls)`);
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -899,6 +934,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-09 session follows scope channel', sec09SessionFollowsScopeChannel],
   ['SEC-09 scope resolved before session', sec09ScopeResolvedBeforeSession],
   ['SRCH-10 tools receive the abort signal', srch10ToolsReceiveAbortSignal],
+  ['SEC2-01 context tools honour Stop and cap retry_after', sec2_01ContextToolsHonourStop],
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],

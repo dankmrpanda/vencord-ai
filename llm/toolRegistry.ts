@@ -170,13 +170,13 @@ const inspectImage = registered('inspect_image', 'discord', async (args, context
 }, (_, settings) => Boolean(settings.enableVision) && getProviderCapabilities(settings.providerPreset).vision, 30_000);
 
 const messageDetails = registered('get_message_details', 'discord', async (args, context) => {
-  const result = await getMessageDetails(context.scope, String(args.channel_id), String(args.message_id), intArg(args.reply_depth ?? 3, 0, 0, 5));
+  const result = await getMessageDetails(context.scope, String(args.channel_id), String(args.message_id), intArg(args.reply_depth ?? 3, 0, 0, 5), context.signal);
   if (result.data) result.citations = [result.data.message, ...result.data.replyChain].map((message) => context.addCitation(message));
   return result;
 });
 
 const channelPins = registered('list_channel_pins', 'discord', async (args, context) => {
-  const result = await listChannelPins(context.scope, String(args.channel_id || context.scope.channelId), intArg(args.limit, 25, 1, 50), args.before as string | undefined);
+  const result = await listChannelPins(context.scope, String(args.channel_id || context.scope.channelId), intArg(args.limit, 25, 1, 50), args.before as string | undefined, context.signal);
   if (result.data) result.citations = result.data.messages.map((message) => context.addCitation(message));
   return result;
 });
@@ -187,6 +187,7 @@ const threads = registered('list_threads', 'discord', async (args, context) => {
     args.channel_id as string | undefined,
     intArg(args.limit, 25, 1, 50),
     Boolean(args.include_archived),
+    context.signal,
   );
   result.citations = result.data?.threads.flatMap((item) =>
     item.starterMessage ? [context.addCitation(item.starterMessage)] : [],
