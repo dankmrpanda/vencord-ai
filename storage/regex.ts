@@ -292,11 +292,6 @@ function charSetsOverlap(a: Set<string> | null, b: Set<string> | null): boolean 
   return false;
 }
 
-function containsUnboundedQuantifier(node: RegexNode): boolean {
-  if (node.quantifier?.max === Infinity) return true;
-  return Boolean(node.alternatives?.some((alt) => alt.nodes.some(containsUnboundedQuantifier)));
-}
-
 /** A quantifier that can match more than one width (`?`, `*`, `+`, `{m,n}` with n > m); `{1,500}` backtracks like `+`. */
 function isVariableWidth(q?: Quantifier): boolean {
   return Boolean(q && q.max > q.min);
@@ -307,8 +302,17 @@ function containsVariableQuantifier(node: RegexNode): boolean {
   return Boolean(node.alternatives?.some((alt) => alt.nodes.some(containsVariableQuantifier)));
 }
 
-/** Two consecutive iterations of a repeated group must not be able to split the same text two ways. */
-function repeatedBodyIsSeparated(node: RegexNode, flags: string): boolean {
+/**
+ * Two consecutive iterations of a repeated group must not be able to split the same text two ways, e.g.
+ * `(\w+\s?)+` is rejected but `(\d+\.){3}` passes because the mandatory `\.` separates iterations. A final
+ * top-level group of at most two iterations may use the tail exemption, since nothing after it can fail.
+ */
+function repeatedBodyIsSeparated(node: RegexNode, flags: string, isTail: boolean): boolean {
+  const alternatives = node.alternatives || [];
+  if (alternatives.length === 1) {
+    const body = alternatives[0].nodes;
+    return checkUnboundedSequence([...body, ...body], flags, isTail && node.quantifier!.max === 2);
+  }
   const once: RegexNode = { ...node, quantifier: undefined };
   return checkUnboundedSequence([once, once], flags, false);
 }
@@ -386,16 +390,15 @@ function checkASTSafety(alternatives: RegexAlternative[], flags = '', topLevel =
       }
     }
 
-    for (const node of nodes) {
+    for (const [index, node] of nodes.entries()) {
       if (node.type === 'group') {
         const isRepeated = isDangerousRepetition(node.quantifier);
         const repeatsMoreThanOnce = Boolean(node.quantifier && node.quantifier.max > 1);
 
-        if (repeatsMoreThanOnce && node.alternatives?.some((a) => a.nodes.some(containsUnboundedQuantifier))) {
-          return false;
-        }
-
-        if (repeatsMoreThanOnce && containsVariableQuantifier({ ...node, quantifier: undefined }) && !repeatedBodyIsSeparated(node, flags)) {
+        const isTail = topLevel && !nodes.slice(index + 1).some((next) =>
+          next.type === 'assertion' || !next.quantifier || next.quantifier.min > 0);
+        if (repeatsMoreThanOnce && containsVariableQuantifier({ ...node, quantifier: undefined })
+          && !repeatedBodyIsSeparated(node, flags, isTail)) {
           return false;
         }
 

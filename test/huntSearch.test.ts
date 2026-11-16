@@ -131,6 +131,17 @@ const REDOS_CORPUS: Array<{ id: string; pattern: string; expect: 'reject' | 'pas
   { id: 'REV-DSC-01', pattern: '[A-Z]{2,5}-\\d{1,6}', expect: 'pass', measured: 'passed before' },
   { id: 'REV-DSC-01', pattern: 'https?://(www\\.)?\\S+', expect: 'pass', measured: 'passed before' },
   { id: 'REV-DSC-01', pattern: '\\d{1,2}:\\d{2}', expect: 'pass', measured: 'passed before' },
+  { id: 'REV-DSC-02', pattern: '(\\d+\\.){3}\\d+', expect: 'pass', measured: "8.6 ms on ('1' x1000 + '.') x3 + 'x' x997" },
+  { id: 'REV-DSC-02', pattern: '(\\w+ ){2}\\w+', expect: 'pass', measured: "11.8 ms on 'a' x2000 + ' ' + 'a' x1999" },
+  { id: 'REV-DSC-02', pattern: '(?:\\s*\\w+){2}', expect: 'pass', measured: "10.7 ms on ' ' x3998 + 'a!'" },
+  { id: 'REV-DSC-02', pattern: '(?:\\w+ ){5}\\w+!', expect: 'pass', measured: "7.1 ms on 'a' x4000" },
+  { id: 'REV-DSC-02', pattern: '(?:\\w+\\.){9}x', expect: 'pass', measured: "6.2 ms on 'a' x4000" },
+  { id: 'REV-DSC-02', pattern: '(?:\\s*\\w+){2}!', expect: 'reject', measured: "7.8 s on 'a' x4000" },
+  { id: 'REV-DSC-02', pattern: '(?:\\s*\\w+){19}', expect: 'reject', measured: "719 ms on ('a' x18 + '!') x210" },
+  { id: 'REV-DSC-02', pattern: '(\\w+\\s?){2}!', expect: 'reject', measured: ">10 s on 'a' x4000" },
+  { id: 'REV-DSC-02', pattern: 'a.*b.*c', expect: 'reject', measured: "3.6 s on 'ab' x2000 (kept rejected: polynomial)" },
+  { id: 'REV-DSC-02', pattern: 'foo.*bar.*baz', expect: 'reject', measured: "323 ms on 'foobar' x666 (kept rejected: polynomial)" },
+  { id: 'REV-DSC-02', pattern: '.*a.*b', expect: 'reject', measured: "8.5 s on 'a' x4000 (kept rejected: polynomial)" },
 ];
 
 function redosCorpusProblems(id: string): string | null {
@@ -143,6 +154,11 @@ function redosCorpusProblems(id: string): string | null {
 /** REV-DSC-01: the screen only checked overlap for unbounded quantifiers, so bounded ones like {1,500} slipped through. */
 async function revDsc01BoundedQuantifierRedos(): Promise<string | null> {
   return redosCorpusProblems('REV-DSC-01');
+}
+
+/** REV-DSC-02: a finitely repeated group with an unbounded body was rejected even when a mandatory separator makes it linear. */
+async function revDsc02SeparatedRepeatedGroup(): Promise<string | null> {
+  return redosCorpusProblems('REV-DSC-02');
 }
 
 /** SRCH-02: has='sticker' has no local implementation, so local scan returns every message. */
@@ -419,6 +435,7 @@ async function srch12SearchCacheUnbounded(): Promise<string | null> {
 const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
   ['REV-DSC-01 bounded-quantifier ReDoS', revDsc01BoundedQuantifierRedos],
+  ['REV-DSC-02 separated repeated group', revDsc02SeparatedRepeatedGroup],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
