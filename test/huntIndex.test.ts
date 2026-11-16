@@ -6,6 +6,7 @@
 import { getSessionById, getSessionsForChannel, saveSession } from '../storage/chatHistory';
 import { InvertedIndex } from '../storage/index/invertedIndex';
 import { WorkerBridge } from '../storage/index/workerBridge';
+import { MessageDatabase } from '../storage/db';
 import { ChatSession, DiscordMessage } from '../types';
 import { assert } from './assert';
 
@@ -289,6 +290,46 @@ async function idx07WorkerErrorRejectsPending(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-05: MessageDatabase writes settle (and fall back to memory) when the  */
+/* transaction fires only `abort`; a failed open is not cached forever.      */
+/* ------------------------------------------------------------------------ */
+async function idx05WritesSettleOnAbort(): Promise<void> {
+  const restoreIdb = installFakeIndexedDB({ outcome: 'abortAfterSuccess' });
+  try {
+    const mdb = new MessageDatabase();
+    const m = msg('abort_1', 'chan1', 'quota');
+    const snap = new InvertedIndex(16).exportSnapshot();
+    const ops: Array<[string, () => Promise<void>]> = [
+      ['saveMessages', () => mdb.saveMessages([m])],
+      ['deleteMessages', () => mdb.deleteMessages(['abort_1'])],
+      ['clearAll', () => mdb.clearAll()],
+      ['saveIndexSnapshot', () => mdb.saveIndexSnapshot(snap)],
+      ['setChannelSyncState', () => mdb.setChannelSyncState({ channelId: 'chan1', messageCount: 1, lastSyncTimestamp: 1 })],
+    ];
+    const hung: string[] = [];
+    for (const [name, run] of ops) {
+      const out = await withTimeout(run().then(() => 'SETTLED', () => 'SETTLED'), 300);
+      if (out === 'TIMEOUT') hung.push(name);
+    }
+    assert(hung.length === 0, `IDX-05 never settled after the transaction fired only \`abort\`: [${hung.join(',')}]`);
+    const fb = mdb as any;
+    assert(fb.memoryFallbackSnapshot === snap, 'IDX-05 saveIndexSnapshot reported success although its transaction aborted (no memory fallback)');
+    assert(fb.memoryFallbackSync.has('chan1'), 'IDX-05 setChannelSyncState reported success although its transaction aborted (no memory fallback)');
+  } finally {
+    restoreIdb();
+  }
+  const prev = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+  delete (globalThis as any).indexedDB;
+  try {
+    const mdb = new MessageDatabase();
+    await mdb.saveMessages([msg('open_fail', 'chan1', 'x')]);
+    assert((mdb as any).dbPromise === null, 'IDX-05 a failed IndexedDB open stays cached, so every later call uses the memory fallback');
+  } finally {
+    if (prev) Object.defineProperty(globalThis, 'indexedDB', prev);
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -296,6 +337,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-04 localStorage-fallback sessions merged by id, newest wins', idx04MergesLocalStorageSessions],
   ['IDX-07 ingest exception rejects the request', idx07IngestErrorRejects],
   ['IDX-07 worker error rejects pending requests', idx07WorkerErrorRejectsPending],
+  ['IDX-05 MessageDatabase writes settle on abort-only transactions', idx05WritesSettleOnAbort],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

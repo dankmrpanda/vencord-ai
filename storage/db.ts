@@ -56,6 +56,11 @@ export class MessageDatabase {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
+    // Do not cache a failed open: a transient failure must not pin the memory fallback forever.
+    const opening = this.dbPromise;
+    opening.catch(() => {
+      if (this.dbPromise === opening) this.dbPromise = null;
+    });
 
     return this.dbPromise;
   }
@@ -80,6 +85,8 @@ export class MessageDatabase {
           }
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
+          tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
         });
       }
     } catch {
@@ -147,6 +154,7 @@ export class MessageDatabase {
         }
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
       });
     } catch {
       for (const id of messageIds) {
@@ -166,7 +174,8 @@ export class MessageDatabase {
         const store = tx.objectStore(STORES.SNAPSHOTS);
         const record = { id: 'current_snapshot', snapshot, savedAt: Date.now() };
         const req = store.put(record);
-        req.onsuccess = () => resolve();
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
         req.onerror = () => reject(req.error);
       });
     } catch {
@@ -202,7 +211,8 @@ export class MessageDatabase {
         const tx = db.transaction(STORES.SYNC_STATE, 'readwrite');
         const store = tx.objectStore(STORES.SYNC_STATE);
         const req = store.put(state);
-        req.onsuccess = () => resolve();
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
         req.onerror = () => reject(req.error);
       });
     } catch {
@@ -250,6 +260,7 @@ export class MessageDatabase {
         tx.objectStore(STORES.SYNC_STATE).clear();
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
       });
     } catch {
       this.memoryFallbackMessages.clear();
