@@ -188,14 +188,9 @@ export class InvertedIndex {
     let added = 0;
 
     for (const msg of messages) {
-      if (!msg?.id || this.messageIdToDocId.has(msg.id)) {
-        continue;
-      }
+      if (!msg?.id) continue;
 
-      const docId = this.nextDocId++;
-      const fullText = `${msg.content || ''} ${msg.attachments?.map((a) => a.filename).join(' ') || ''}`;
-      const tokenized = tokenizeText(fullText);
-
+      const attachmentNames = msg.attachments?.map((a) => a.filename);
       let flags = 0;
       if (msg.attachments && msg.attachments.length > 0) flags |= MESSAGE_FLAGS.HAS_ATTACHMENTS;
       if (msg.embeds && msg.embeds.length > 0) flags |= MESSAGE_FLAGS.HAS_EMBEDS;
@@ -203,6 +198,23 @@ export class InvertedIndex {
       if (msg.pinned) flags |= MESSAGE_FLAGS.IS_PINNED;
       if (msg.mentions && msg.mentions.length > 0) flags |= MESSAGE_FLAGS.HAS_MENTIONS;
       if (msg.message_reference?.message_id) flags |= MESSAGE_FLAGS.HAS_REPLY;
+
+      // An id that is already indexed: identical copies are no-ops; an edited copy (content,
+      // attachments or flags changed) replaces the stored one.
+      const existingDocId = this.messageIdToDocId.get(msg.id);
+      if (existingDocId !== undefined) {
+        const prev = this.docRecords.get(existingDocId);
+        if (prev && prev.content === (msg.content || '') && prev.flags === flags
+          && (prev.attachmentNames ?? []).join('\n') === (attachmentNames ?? []).join('\n')) {
+          continue;
+        }
+        this.freezeDynamicPostings();
+        this.deleteMessages([msg.id]);
+      }
+
+      const docId = this.nextDocId++;
+      const fullText = `${msg.content || ''} ${attachmentNames?.join(' ') || ''}`;
+      const tokenized = tokenizeText(fullText);
 
       const rawTs = typeof msg.timestamp === 'number'
         ? msg.timestamp
@@ -221,7 +233,7 @@ export class InvertedIndex {
         tokenLength: tokenized.totalTokens,
         flags,
         replyParentId: msg.message_reference?.message_id,
-        attachmentNames: msg.attachments?.map((a) => a.filename),
+        attachmentNames,
       };
 
       this.docRecords.set(docId, record);

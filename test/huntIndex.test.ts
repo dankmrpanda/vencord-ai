@@ -418,6 +418,29 @@ async function idx06MutationsApplyInOrder(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-09: re-adding an id with changed content (an edit) replaces the old   */
+/* text; an identical re-add stays a no-op.                                  */
+/* ------------------------------------------------------------------------ */
+async function idx09EditedMessageReplacesOld(): Promise<void> {
+  const index = new InvertedIndex(16);
+  index.addBatch([msg('m1', 'chan1', 'original wording here'), msg('m2', 'chan1', 'wording elsewhere')]);
+  const same = index.addBatch([msg('m1', 'chan1', 'original wording here')]);
+  assert(same === 0, `IDX-09 identical re-add returned ${same} (expected 0: no-op)`);
+  const edited = index.addBatch([msg('m1', 'chan1', 'edited replacement wording')]);
+  const repl = index.search({ query: 'replacement', limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  const orig = index.search({ query: 'original', limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  const wording = index.search({ query: 'wording', limit: 10, boostRecency: 0 }).records.map((r) => r.id).sort();
+  const stats = index.getStats();
+  assert(edited === 1 && repl.join(',') === 'm1' && orig.length === 0 && wording.join(',') === 'm1,m2' && stats.totalDocs === 2,
+    `IDX-09 addBatch with an edited message (same id) returned added=${edited}; search('replacement') -> [${repl.join(',')}], search('original') -> [${orig.join(',')}], search('wording') -> [${wording.join(',')}], totalDocs=${stats.totalDocs} (expected 1, [m1], [], [m1,m2], 2)`);
+  // Two copies of one id in the same batch: the later (edited) copy wins.
+  index.addBatch([msg('m3', 'chan1', 'first draft'), msg('m3', 'chan1', 'second draft')]);
+  const draft = index.search({ query: 'draft', limit: 10, boostRecency: 0 }).records.map((r) => r.content);
+  const first = index.search({ query: 'first', limit: 10, boostRecency: 0 }).hits.length;
+  assert(draft.join(',') === 'second draft' && first === 0, `IDX-09 in-batch edit: search('draft') -> [${draft.join(',')}], search('first') hits=${first} (expected [second draft], 0)`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -429,6 +452,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-08 invalid or wrong-version snapshot leaves live state intact', idx08BadSnapshotLeavesStateIntact],
   ['IDX-08 JSON round-tripped snapshot imports correctly', idx08JsonRoundTripSnapshot],
   ['IDX-06 CLEAR/DELETE during a chunked ingest apply in order', idx06MutationsApplyInOrder],
+  ['IDX-09 edited message (same id) replaces the old text', idx09EditedMessageReplacesOld],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {
