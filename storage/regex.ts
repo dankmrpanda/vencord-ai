@@ -266,22 +266,47 @@ function containsAnyQuantifier(node: RegexNode): boolean {
 }
 
 const OVERLAP_SAMPLE_CHARS = (() => {
-  const chars: string[] = ['\t', '\n', '\r', ' ', 'é', 'É', 'ж', 'Ж', '中', '😀'];
+  // ASCII, a few non-Latin letters, every non-ASCII \s character, and the two non-ASCII \w characters under /iu.
+  const chars: string[] = ['\t', '\n', '\r', '\v', '\f', 'é', 'É', 'ж', 'Ж', '中', '😀', '\u017f', '\u212a',
+    '\u00a0', '\u1680', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff'];
   for (let code = 0x20; code < 0x7f; code++) chars.push(String.fromCharCode(code));
+  for (let code = 0x2000; code <= 0x200a; code++) chars.push(String.fromCharCode(code));
   return chars;
 })();
 
-/** Sample characters a single-character atom can consume; null when it cannot be modelled (groups, backreferences). */
-function atomCharSet(node: RegexNode, flags: string): Set<string> | null {
-  if (node.type !== 'literal' && node.type !== 'charClass' && node.type !== 'wildcard') return null;
-  try {
-    const matcher = new RegExp(`^(?:${node.raw})$`, flags.replace(/[gy]/g, ''));
-    const chars = new Set(OVERLAP_SAMPLE_CHARS.filter((char) => matcher.test(char)));
-    // An atom that matches no sample character is unknown, not disjoint: treat it as overlapping.
-    return chars.size ? chars : null;
-  } catch {
-    return null;
+interface ScreenContext {
+  flags: string;
+  /** The fixed sample plus every character the pattern names, so two class ranges are compared at their endpoints. */
+  sample: string[];
+  charSets: Map<RegexNode, Set<string> | null>;
+}
+
+function createScreenContext(pattern: string, flags: string): ScreenContext {
+  const named = Array.from(pattern);
+  for (const m of pattern.matchAll(/\\x([0-9a-fA-F]{2})|\\u\{([0-9a-fA-F]{1,6})\}|\\u([0-9a-fA-F]{4})/g)) {
+    const code = parseInt(m[1] ?? m[2] ?? m[3], 16);
+    if (code <= 0x10ffff) named.push(String.fromCodePoint(code));
   }
+  const sample = new Set(OVERLAP_SAMPLE_CHARS);
+  for (const char of named) [char, char.toLowerCase(), char.toUpperCase()].forEach((c) => sample.add(c));
+  return { flags, sample: Array.from(sample), charSets: new Map() };
+}
+
+/** Sample characters a single-character atom can consume; null when it cannot be modelled (groups, backreferences). */
+function atomCharSet(node: RegexNode, ctx: ScreenContext): Set<string> | null {
+  if (node.type !== 'literal' && node.type !== 'charClass' && node.type !== 'wildcard') return null;
+  if (ctx.charSets.has(node)) return ctx.charSets.get(node)!;
+  let result: Set<string> | null = null;
+  try {
+    const matcher = new RegExp(`^(?:${node.raw})$`, ctx.flags.replace(/[gy]/g, ''));
+    const chars = new Set(ctx.sample.filter((char) => matcher.test(char)));
+    // An atom that matches no sample character is unknown, not disjoint: treat it as overlapping.
+    result = chars.size ? chars : null;
+  } catch {
+    result = null;
+  }
+  ctx.charSets.set(node, result);
+  return result;
 }
 
 function charSetsOverlap(a: Set<string> | null, b: Set<string> | null): boolean {
@@ -307,14 +332,14 @@ function containsVariableQuantifier(node: RegexNode): boolean {
  * `(\w+\s?)+` is rejected but `(\d+\.){3}` passes because the mandatory `\.` separates iterations. A final
  * top-level group of at most two iterations may use the tail exemption, since nothing after it can fail.
  */
-function repeatedBodyIsSeparated(node: RegexNode, flags: string, isTail: boolean): boolean {
+function repeatedBodyIsSeparated(node: RegexNode, ctx: ScreenContext, isTail: boolean): boolean {
   const alternatives = node.alternatives || [];
   if (alternatives.length === 1) {
     const body = alternatives[0].nodes;
-    return checkUnboundedSequence([...body, ...body], flags, isTail && node.quantifier!.max === 2);
+    return checkUnboundedSequence([...body, ...body], ctx, isTail && node.quantifier!.max === 2);
   }
   const once: RegexNode = { ...node, quantifier: undefined };
-  return checkUnboundedSequence([once, once], flags, false);
+  return checkUnboundedSequence([once, once], ctx, false);
 }
 
 interface SequenceAtom {
@@ -328,7 +353,7 @@ interface SequenceAtom {
  * `a{0,1000}a{0,1000}b`). A top-level atom followed only by optional, non-assertion nodes is exempt, because
  * nothing after it can fail and force backtracking.
  */
-function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: boolean): boolean {
+function checkUnboundedSequence(nodes: RegexNode[], ctx: ScreenContext, allowTail: boolean): boolean {
   const atoms: SequenceAtom[] = [];
   const separate = (chars: Set<string> | null) => atoms.forEach((atom) => atom.separators.push(chars));
 
@@ -340,7 +365,7 @@ function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: bo
 
       // An optional group (`?`, max 1) is walked like a plain group; any other variable-width node is one atom.
       if (isVariableWidth(node.quantifier) && (node.type !== 'group' || node.quantifier!.max > 1)) {
-        const chars = node.type === 'group' ? null : atomCharSet(node, flags);
+        const chars = node.type === 'group' ? null : atomCharSet(node, ctx);
         const isTail = topLevel && allowTail && !sequence.slice(index + 1).some((next) =>
           next.type === 'assertion' || !next.quantifier || next.quantifier.min > 0);
         for (const previous of isTail ? [] : atoms) {
@@ -362,7 +387,7 @@ function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: bo
         }
         atoms.push(...added);
       } else if (mandatory) {
-        separate(node.type === 'group' ? null : atomCharSet(node, flags));
+        separate(node.type === 'group' ? null : atomCharSet(node, ctx));
       }
     }
     return true;
@@ -371,11 +396,11 @@ function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: bo
   return walk(nodes, true);
 }
 
-function checkASTSafety(alternatives: RegexAlternative[], flags = '', topLevel = true): boolean {
+function checkASTSafety(alternatives: RegexAlternative[], ctx: ScreenContext, topLevel = true): boolean {
   for (const alt of alternatives) {
     const nodes = alt.nodes;
 
-    if (!checkUnboundedSequence(nodes, flags, topLevel)) return false;
+    if (!checkUnboundedSequence(nodes, ctx, topLevel)) return false;
 
     for (let j = 0; j < nodes.length - 1; j++) {
       const n1 = nodes[j];
@@ -398,14 +423,14 @@ function checkASTSafety(alternatives: RegexAlternative[], flags = '', topLevel =
         const isTail = topLevel && !nodes.slice(index + 1).some((next) =>
           next.type === 'assertion' || !next.quantifier || next.quantifier.min > 0);
         if (repeatsMoreThanOnce && containsVariableQuantifier({ ...node, quantifier: undefined })
-          && !repeatedBodyIsSeparated(node, flags, isTail)) {
+          && !repeatedBodyIsSeparated(node, ctx, isTail)) {
           return false;
         }
 
         if (repeatsMoreThanOnce && node.alternatives && node.alternatives.length > 1) {
           const firstSets = node.alternatives.map((a) => {
             const first = a.nodes[0];
-            return first?.type === 'literal' ? atomCharSet(first, flags) : null;
+            return first?.type === 'literal' ? atomCharSet(first, ctx) : null;
           });
           for (let a1 = 0; a1 < firstSets.length; a1++) {
             for (let a2 = a1 + 1; a2 < firstSets.length; a2++) {
@@ -467,7 +492,7 @@ function checkASTSafety(alternatives: RegexAlternative[], flags = '', topLevel =
         }
 
         if (node.alternatives) {
-          if (!checkASTSafety(node.alternatives, flags, false)) {
+          if (!checkASTSafety(node.alternatives, ctx, false)) {
             return false;
           }
         }
@@ -495,7 +520,7 @@ export function isRegexSafe(patternStr: string, flags = ''): boolean {
   const ast = parseRegexAST(patternStr);
   if (!ast) return false;
 
-  return checkASTSafety(ast, flags);
+  return checkASTSafety(ast, createScreenContext(patternStr, flags));
 }
 
 /**

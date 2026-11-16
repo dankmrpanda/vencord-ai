@@ -142,6 +142,14 @@ const REDOS_CORPUS: Array<{ id: string; pattern: string; expect: 'reject' | 'pas
   { id: 'REV-DSC-02', pattern: 'a.*b.*c', expect: 'reject', measured: "3.6 s on 'ab' x2000 (kept rejected: polynomial)" },
   { id: 'REV-DSC-02', pattern: 'foo.*bar.*baz', expect: 'reject', measured: "323 ms on 'foobar' x666 (kept rejected: polynomial)" },
   { id: 'REV-DSC-02', pattern: '.*a.*b', expect: 'reject', measured: "8.5 s on 'a' x4000 (kept rejected: polynomial)" },
+  { id: 'RPT6-2d', pattern: '[aα-ω]+[bα-ω]+[cα-ω]+!', expect: 'reject', measured: "1.0 s on 'α' x300, >10 s on 'α' x1000" },
+  { id: 'RPT6-2d', pattern: '[a\\u03b1-\\u03c9]+[b\\u03b1-\\u03c9]+[c\\u03b1-\\u03c9]+!', expect: 'reject', measured: "1.1 s on 'α' x300" },
+  { id: 'RPT6-2d', pattern: '[aα-ω]+[bβ-ψ]+!', expect: 'reject', measured: "8.8 s on 'β' x4000" },
+  { id: 'RPT6-2d', pattern: '[a\\x80-\\xff]+[b\\s]+!', expect: 'reject', measured: ">10 s on U+00A0 x4000" },
+  { id: 'RPT6-2d', pattern: '/[aΑ-Ω]+[bα-ω]+!/i', expect: 'reject', measured: ">10 s on 'α' x4000" },
+  { id: 'RPT6-2d', pattern: '[α-ω]+ [α-ω]+!', expect: 'pass', measured: 'separated by a space, passed before' },
+  { id: 'RPT6-2d', pattern: '/\\p{L}+@\\p{L}+/u', expect: 'pass', measured: 'separated by @, passed before' },
+  { id: 'RPT6-2d', pattern: '[a-zà-ÿ]+\\d+', expect: 'pass', measured: 'disjoint classes, passed before' },
 ];
 
 function redosCorpusProblems(id: string): string | null {
@@ -159,6 +167,11 @@ async function revDsc01BoundedQuantifierRedos(): Promise<string | null> {
 /** REV-DSC-02: a finitely repeated group with an unbounded body was rejected even when a mandatory separator makes it linear. */
 async function revDsc02SeparatedRepeatedGroup(): Promise<string | null> {
   return redosCorpusProblems('REV-DSC-02');
+}
+
+/** Report section 6 (2d): overlap was judged on a fixed character sample, so classes overlapping only outside it passed. */
+async function rpt6SampleCharOverlap(): Promise<string | null> {
+  return redosCorpusProblems('RPT6-2d');
 }
 
 /** SRCH-02: has='sticker' has no local implementation, so local scan returns every message. */
@@ -436,6 +449,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
   ['REV-DSC-01 bounded-quantifier ReDoS', revDsc01BoundedQuantifierRedos],
   ['REV-DSC-02 separated repeated group', revDsc02SeparatedRepeatedGroup],
+  ['RPT6-2d sample-character overlap', rpt6SampleCharOverlap],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
