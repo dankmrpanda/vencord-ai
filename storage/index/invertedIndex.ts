@@ -5,7 +5,7 @@
  */
 
 import { DiscordMessage } from '../../types';
-import { extractQueryTokens, tokenizeText } from './tokenizer';
+import { extractQueryTokens, TOKENIZER_VERSION, tokenizeText } from './tokenizer';
 import {
   BM25Config,
   DocId,
@@ -18,7 +18,7 @@ import {
   StoredMessageRecord,
 } from './types';
 
-/** Bump when tokenization changes: stored postings were built with the old tokenizer. */
+/** Snapshot format version. Tokenizer changes are tracked separately by TOKENIZER_VERSION. */
 export const SNAPSHOT_VERSION = 1;
 
 /** Accepts a typed array, a plain array, or the object form a typed array takes after JSON. */
@@ -522,6 +522,7 @@ export class InvertedIndex {
 
     return {
       version: SNAPSHOT_VERSION,
+      tokenizerVersion: TOKENIZER_VERSION,
       stats: this.getStats(),
       nextDocId: this.nextDocId,
       documents: Array.from(this.docRecords.values()),
@@ -541,6 +542,11 @@ export class InvertedIndex {
   public importSnapshot(snapshot: IndexSnapshot): void {
     if (!snapshot || snapshot.version !== SNAPSHOT_VERSION) {
       throw new Error(`Unsupported index snapshot version: ${snapshot?.version}`);
+    }
+    // Postings built by another tokenizer would not match new queries, and deleteMessages
+    // re-tokenizes stored content: such a snapshot must be rebuilt, not loaded.
+    if ((snapshot.tokenizerVersion ?? 1) !== TOKENIZER_VERSION) {
+      throw new Error(`Index snapshot was built with tokenizer v${snapshot.tokenizerVersion ?? 1}; rebuild required`);
     }
     if (!Array.isArray(snapshot.documents) || !Array.isArray(snapshot.postings)) {
       throw new Error('Invalid index snapshot: documents and postings must be arrays');

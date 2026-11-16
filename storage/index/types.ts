@@ -131,6 +131,7 @@ export interface ScoredIndexHit {
  */
 export interface IndexSnapshot {
   version: number;
+  tokenizerVersion?: number; // TOKENIZER_VERSION the postings were built with; absent = 1
   stats: IndexStats;
   nextDocId?: number;
   documents: StoredMessageRecord[];

@@ -54,6 +54,12 @@ function isPunctuationOrSymbolCode(code: number): boolean {
   return false;
 }
 
+/**
+ * Bump whenever tokenization output changes; snapshots record it and are rejected on mismatch.
+ * v2: NFC normalization (IDX-12), emoji and variation selectors separate words (IDX-10).
+ */
+export const TOKENIZER_VERSION = 2;
+
 export function isWordCharCode(code: number): boolean {
   if (
     (code >= 48 && code <= 57) ||  // 0-9
@@ -63,10 +69,22 @@ export function isWordCharCode(code: number): boolean {
   ) {
     return true;
   }
+  // Surrogates are classified per code point by the tokenizer loop; variation selectors are separators.
+  if ((code >= 0xD800 && code <= 0xDFFF) || (code >= 0xFE00 && code <= 0xFE0F)) return false;
   if (code >= 192 && code <= 65535) {
     return !isPunctuationOrSymbolCode(code);
   }
   return false;
+}
+
+const SUPPLEMENTARY_WORD_RE = /[\p{L}\p{M}\p{N}]/u;
+
+// A UTF-16 surrogate (either half of a pair) is a word character only when its code point is a
+// letter, mark or number (e.g. CJK Extension B); emoji and other symbols separate words.
+function isSurrogateWordChar(text: string, i: number): boolean {
+  const hi = text.charCodeAt(i) <= 0xDBFF ? i : i - 1;
+  const cp = hi >= 0 ? text.codePointAt(hi) : undefined;
+  return cp !== undefined && cp > 0xFFFF && SUPPLEMENTARY_WORD_RE.test(String.fromCodePoint(cp));
 }
 
 export function isCJKCharCode(code: number): boolean {
@@ -131,7 +149,7 @@ export function tokenizeText(
     maxTokenLen = 64,
   } = options;
 
-  const text = sanitizeDiscordText(rawText);
+  const text = sanitizeDiscordText(rawText).normalize('NFC');
   const len = text.length;
   const frequencies = new Map<string, number>();
   const terms: string[] = [];
@@ -156,7 +174,8 @@ export function tokenizeText(
   for (let i = 0; i <= len; i++) {
     const code = i < len ? text.charCodeAt(i) : 32;
 
-    if (isWordCharCode(code)) {
+    const isWord = code >= 0xD800 && code <= 0xDFFF ? isSurrogateWordChar(text, i) : isWordCharCode(code);
+    if (isWord) {
       if (start === -1) {
         start = i;
       }

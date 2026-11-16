@@ -5,6 +5,7 @@
 
 import { getSessionById, getSessionsForChannel, saveSession } from '../storage/chatHistory';
 import { InvertedIndex } from '../storage/index/invertedIndex';
+import { extractQueryTokens, tokenizeText } from '../storage/index/tokenizer';
 import { WorkerBridge } from '../storage/index/workerBridge';
 import { MessageDatabase } from '../storage/db';
 import { ChatSession, DiscordMessage } from '../types';
@@ -441,6 +442,40 @@ async function idx09EditedMessageReplacesOld(): Promise<void> {
   assert(draft.join(',') === 'second draft' && first === 0, `IDX-09 in-batch edit: search('draft') -> [${draft.join(',')}], search('first') hits=${first} (expected [second draft], 0)`);
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-12 / IDX-10: tokens are NFC-normalized; emoji and other supplementary */
+/* symbols separate words (supplementary letters still do not); snapshots    */
+/* built by the old tokenizer are rejected (version bump).                   */
+/* ------------------------------------------------------------------------ */
+async function idx12UnicodeNormalization(): Promise<void> {
+  const index = new InvertedIndex(16);
+  index.addBatch([msg('nfd', 'chan1', 'cafe\u0301 opening'), msg('nfc', 'chan1', 'na\u00efve plan')]);
+  const nfcQuery = index.search({ query: 'caf\u00e9', limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  const nfdQuery = index.search({ query: 'nai\u0308ve', limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  assert(nfcQuery.join(',') === 'nfd' && nfdQuery.join(',') === 'nfc', `IDX-12 NFC query "caf\\u00e9" -> [${nfcQuery.join(',')}] for NFD content, NFD query "nai\\u0308ve" -> [${nfdQuery.join(',')}] for NFC content (expected [nfd], [nfc])`);
+  const snap = index.exportSnapshot();
+  let rejected = false;
+  try {
+    new InvertedIndex(16).importSnapshot({ ...snap, tokenizerVersion: undefined });
+  } catch {
+    rejected = true;
+  }
+  assert(snap.tokenizerVersion === 2 && rejected, `IDX-12 snapshot tokenizerVersion is ${snap.tokenizerVersion} and a snapshot from the old tokenizer was ${rejected ? 'rejected' : 'accepted'} (expected 2, old rejected)`);
+}
+
+async function idx10EmojiSeparatesWords(): Promise<void> {
+  const terms = tokenizeText('deploy\u{1F525} broke prod').terms;
+  const query = extractQueryTokens('deploy\u{1F525} failed');
+  const vs = tokenizeText('\u2764\uFE0F love').terms;
+  const extB = tokenizeText('\u{20000}\u{20001} test').terms;
+  const index = new InvertedIndex(16);
+  index.addBatch([msg('e1', 'chan1', 'deploy\u{1F525} broke prod')]);
+  const hits = index.search({ query: 'deploy', limit: 10, boostRecency: 0 }).hits.length;
+  assert(terms.join(',') === 'deploy,broke,prod' && query.join(',') === 'deploy,failed' && vs.join(',') === 'love' && hits === 1,
+    `IDX-10 tokenizeText('deploy\u{1F525} broke prod') -> [${terms.join(',')}], extractQueryTokens('deploy\u{1F525} failed') -> [${query.join(',')}], tokenizeText('\u2764\uFE0F love') -> [${vs.join(',')}], search('deploy') hits=${hits} (expected [deploy,broke,prod], [deploy,failed], [love], 1)`);
+  assert(extB.includes('\u{20000}\u{20001}'), `IDX-10 supplementary-plane letters (CJK Ext. B) must stay word characters (got [${extB.join(',')}])`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -453,6 +488,8 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-08 JSON round-tripped snapshot imports correctly', idx08JsonRoundTripSnapshot],
   ['IDX-06 CLEAR/DELETE during a chunked ingest apply in order', idx06MutationsApplyInOrder],
   ['IDX-09 edited message (same id) replaces the old text', idx09EditedMessageReplacesOld],
+  ['IDX-12 tokens NFC-normalized; snapshot version bumped', idx12UnicodeNormalization],
+  ['IDX-10 emoji and variation selectors separate words', idx10EmojiSeparatesWords],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {
