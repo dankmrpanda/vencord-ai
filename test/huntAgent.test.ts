@@ -346,6 +346,38 @@ async function llm15NumericLimitsClamped(): Promise<void> {
   assert(bad.length === 0, `LLM-15 non-positive or fractional limits reached Discord: ${JSON.stringify(limits)}`);
 }
 
+/** LLM-16: OpenAI reasoning models reject max_tokens and a custom temperature (HTTP 400). */
+async function llm16OpenAiReasoningParams(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const payloads: Array<Record<string, unknown>> = [];
+  const send = async (preset: PluginSettings['providerPreset'], model: string) => {
+    const runSettings = settings({ providerPreset: preset, model, baseUrl: 'https://api.openai.test/v1' });
+    await new OpenAICompatibleTransport(runSettings, getProviderCapabilities(preset))
+      .complete({ messages: [{ role: 'user', content: 'hi' }], stream: false });
+  };
+  try {
+    (globalThis as any).fetch = async (_url: string, init: RequestInit) => {
+      payloads.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+    };
+    await send('openai', 'o3-mini');
+    await send('openai', 'gpt-5-mini');
+    await send('openai', 'gpt-4o');
+    await send('custom', 'o3-mini');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const [o3, gpt5, gpt4o, custom] = payloads;
+  const shape = (p: Record<string, unknown>) => JSON.stringify({ max_tokens: p.max_tokens, max_completion_tokens: p.max_completion_tokens, temperature: p.temperature });
+  assert(o3.max_tokens === undefined && o3.max_completion_tokens === 512 && o3.temperature === undefined, `LLM-16 openai o3-mini: ${shape(o3)}`);
+  assert(gpt5.max_tokens === undefined && gpt5.max_completion_tokens === 512 && gpt5.temperature === undefined, `LLM-16 openai gpt-5-mini: ${shape(gpt5)}`);
+  assert(gpt4o.max_tokens === undefined && gpt4o.max_completion_tokens === 512 && gpt4o.temperature === 0.2, `LLM-16 openai gpt-4o keeps temperature: ${shape(gpt4o)}`);
+  assert(custom.max_tokens === 512 && custom.max_completion_tokens === undefined && custom.temperature === 0.2, `LLM-16 other servers keep max_tokens: ${shape(custom)}`);
+  const settingsSource = readFileSync(new URL('../settings.tsx', import.meta.url), 'utf8');
+  assert(!/^\s*max_tokens: 10,/m.test(settingsSource) && settingsSource.includes("'openai' ? 'max_completion_tokens' : 'max_tokens'"),
+    'LLM-16 Test Connection uses max_completion_tokens for OpenAI');
+}
+
 /** LLM-17: redacted provider error detail, capped Retry-After, trailing slashes stripped. */
 async function llm17TransportErrorDetailAndRetry(): Promise<void> {
   const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
@@ -1108,6 +1140,7 @@ async function revLlm01FinalizationIdleTimer(): Promise<void> {
 
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-01 citations crowd out evidence', llm01CitationsCrowdOutEvidence],
+  ['LLM-16 OpenAI reasoning model parameters', llm16OpenAiReasoningParams],
   ['REV-LLM-02 ranked search compaction keeps the head', revLlm02RankedSearchCompactionKeepsHead],
   ['SEC-03 tool output sanitized', sec03ToolOutputSanitized],
   ['SEC-03 sanitizer keeps toJSON semantics', sec03SanitizerKeepsToJson],

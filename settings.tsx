@@ -258,7 +258,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         body: JSON.stringify({
           model: await resolveModelIdentifier(testSettings),
           messages: [{ role: 'user', content: 'Say "connected" if you hear me.' }],
-          max_tokens: 10,
+          // OpenAI reasoning models reject max_tokens (LLM-16); other servers expect it.
+          [testSettings.providerPreset === 'openai' ? 'max_completion_tokens' : 'max_tokens']: 10,
         }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       });

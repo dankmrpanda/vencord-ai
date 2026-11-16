@@ -188,6 +188,8 @@ export async function consumeChatCompletionStream(
   return { content, toolCalls: calls.length ? calls : undefined, finishReason };
 }
 
+const OPENAI_REASONING_MODEL = /^(o\d|gpt-5)/i;
+
 export class OpenAICompatibleTransport {
   constructor(
     private settings: PluginSettings,
@@ -210,13 +212,17 @@ export class OpenAICompatibleTransport {
     const messages = request.messages.map((message) => message.role === 'developer' && !this.capabilities.developerMessages
       ? { ...message, role: 'system' as const }
       : message);
-    const payload: Record<string, unknown> = {
-      model: await resolveModelIdentifier(this.settings),
-      messages,
-      temperature: request.temperature ?? this.settings.temperature ?? 0.7,
-      max_tokens: request.maxTokens ?? this.settings.maxTokens ?? 2048,
-      stream: request.stream !== false,
-    };
+    const model = await resolveModelIdentifier(this.settings);
+    const temperature = request.temperature ?? this.settings.temperature ?? 0.7;
+    const maxTokens = request.maxTokens ?? this.settings.maxTokens ?? 2048;
+    const payload: Record<string, unknown> = { model, messages, temperature, max_tokens: maxTokens, stream: request.stream !== false };
+    if (this.settings.providerPreset === 'openai') {
+      // OpenAI replaced max_tokens with max_completion_tokens, and its reasoning models (o-series, gpt-5) reject both
+      // max_tokens and a non-default temperature with HTTP 400. Other servers keep the widely supported max_tokens.
+      delete payload.max_tokens;
+      payload.max_completion_tokens = maxTokens;
+      if (OPENAI_REASONING_MODEL.test(model)) delete payload.temperature;
+    }
     if (request.tools?.length && request.toolChoice !== 'none') {
       payload.tools = normalizeTools(request.tools, this.capabilities);
       payload.tool_choice = request.toolChoice || 'auto';
