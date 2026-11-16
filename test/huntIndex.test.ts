@@ -476,6 +476,24 @@ async function idx10EmojiSeparatesWords(): Promise<void> {
   assert(extB.includes('\u{20000}\u{20001}'), `IDX-10 supplementary-plane letters (CJK Ext. B) must stay word characters (got [${extB.join(',')}])`);
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-13: equal scores are tie-broken by message id (newer snowflake first), */
+/* not by internal docId history.                                            */
+/* ------------------------------------------------------------------------ */
+async function idx13StableTieBreak(): Promise<void> {
+  const ids = ['998', '1000', '1001', '1002', '1003', '1004'];
+  const a = new InvertedIndex(16);
+  a.addBatch(ids.map((id) => msg(id, 'chan1', 'tie word')));
+  const b = new InvertedIndex(16);
+  b.addBatch([...ids].reverse().map((id) => msg(id, 'chan1', 'tie word')));
+  b.deleteMessages(['1003']);
+  b.addBatch([msg('1003', 'chan1', 'tie word')]);
+  const q = { query: 'tie', limit: 3, boostRecency: 0 };
+  const ra = a.search(q).hits.map((h) => h.messageId);
+  const rb = b.search(q).hits.map((h) => h.messageId);
+  assert(ra.join(',') === '1004,1003,1002' && rb.join(',') === ra.join(','), `IDX-13 equal-score top-3: insertion order A -> [${ra.join(',')}], reversed + re-added B -> [${rb.join(',')}] (expected both [1004,1003,1002]: newer message id first)`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -490,6 +508,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-09 edited message (same id) replaces the old text', idx09EditedMessageReplacesOld],
   ['IDX-12 tokens NFC-normalized; snapshot version bumped', idx12UnicodeNormalization],
   ['IDX-10 emoji and variation selectors separate words', idx10EmojiSeparatesWords],
+  ['IDX-13 equal scores tie-break by message id', idx13StableTieBreak],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

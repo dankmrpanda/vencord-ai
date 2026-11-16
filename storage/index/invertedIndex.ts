@@ -36,6 +36,17 @@ function toTypedArray<T extends Uint32Array | Uint8Array>(
 }
 
 /**
+ * Total order on hits: lower score is worse; equal scores fall back to the message id (snowflakes
+ * compare numerically: shorter is older; older is worse), so ties do not depend on docId history.
+ */
+function isWorseHit(a: ScoredIndexHit, b: ScoredIndexHit): boolean {
+  if (a.score !== b.score) return a.score < b.score;
+  const x = a.messageId;
+  const y = b.messageId;
+  return x.length !== y.length ? x.length < y.length : x < y;
+}
+
+/**
  * Min-Heap implementation for Top-K candidate collection in O(M log K).
  */
 export class TopKHeap {
@@ -47,14 +58,14 @@ export class TopKHeap {
     if (this.heap.length < this.maxK) {
       this.heap.push(item);
       this.siftUp(this.heap.length - 1);
-    } else if (item.score > this.heap[0].score) {
+    } else if (isWorseHit(this.heap[0], item)) {
       this.heap[0] = item;
       this.siftDown(0);
     }
   }
 
   public getSortedResults(): ScoredIndexHit[] {
-    return [...this.heap].sort((a, b) => b.score - a.score);
+    return [...this.heap].sort((a, b) => (isWorseHit(a, b) ? 1 : isWorseHit(b, a) ? -1 : 0));
   }
 
   public get size(): number {
@@ -65,7 +76,7 @@ export class TopKHeap {
     let current = index;
     while (current > 0) {
       const parent = (current - 1) >>> 1;
-      if (this.heap[current].score < this.heap[parent].score) {
+      if (isWorseHit(this.heap[current], this.heap[parent])) {
         this.swap(current, parent);
         current = parent;
       } else {
@@ -82,10 +93,10 @@ export class TopKHeap {
       const right = left + 1;
       let smallest = current;
 
-      if (left < len && this.heap[left].score < this.heap[smallest].score) {
+      if (left < len && isWorseHit(this.heap[left], this.heap[smallest])) {
         smallest = left;
       }
-      if (right < len && this.heap[right].score < this.heap[smallest].score) {
+      if (right < len && isWorseHit(this.heap[right], this.heap[smallest])) {
         smallest = right;
       }
       if (smallest !== current) {
