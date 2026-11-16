@@ -9,7 +9,7 @@ This repository is a TypeScript/React Vencord plugin. `index.tsx` registers the 
 - `npm install` installs the local dependencies.
 - `npm run typecheck` runs strict TypeScript checking through `tsconfig.dev.json` without emitting files.
 - `npm run build` currently performs the same no-emit compilation check.
-- `npm test` runs `test/scope.test.ts` followed by `test/search.test.ts` with `tsx`.
+- `npm test` runs `test/run.ts` with `tsx`, which runs every suite registered there in one process.
 - `npm run sync` copies the plugin into the maintainer's local Vencord checkout. `build:vencord` and `inject` also depend on the machine-specific `/Users/raymond/Documents/Vencord` path; adjust these scripts locally before using them elsewhere.
 
 ## Coding Style & Naming Conventions
@@ -18,7 +18,7 @@ Use strict TypeScript, two-space indentation, semicolons, single-quoted imports/
 
 ## Testing Guidelines
 
-Tests are executable TypeScript scripts using `console.assert`, not a separate test framework. Add focused assertions to the closest existing suite or create another `test/<feature>.test.ts` file and include it in the `test` script. Run `npm test` and `npm run typecheck` before submitting. There is no coverage threshold; prioritize search edge cases, Discord data-shape variations, and scope/privacy failures.
+Tests are executable TypeScript scripts using the throwing `assert` from `test/assert.ts`, not a separate test framework. Add focused assertions to the closest existing suite or create another `test/<feature>.test.ts` file and register it in `test/run.ts`. Suites share one process, so a suite that patches `fetch`, timers, `Date`, `indexedDB` or other globals must restore them in `finally`. Run `npm test` and `npm run typecheck` before submitting. There is no coverage threshold; prioritize search edge cases, Discord data-shape variations, and scope/privacy failures.
 
 ## Commit & Pull Request Guidelines
 

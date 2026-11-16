@@ -1,5 +1,9 @@
 # Test Readiness Report: 100,000+ Message Indexing & Retrieval Subsystem
 
+> **Status (2026-11):** the numbers below come from `npm run test:benchmark`, which measures `InMemoryBM25Index`, a
+> class that exists only in `test/benchmark100k.ts`. They do not measure `storage/index`, and no production code
+> fills that index yet, so local retrieval is not exercised in the running plugin.
+
 **Project:** Vencord AI Assistant (`vencord-ai`)  
 **Target Environment:** Vencord / Discord Desktop (Electron) & Web  
 **Date:** 2026-09-02  

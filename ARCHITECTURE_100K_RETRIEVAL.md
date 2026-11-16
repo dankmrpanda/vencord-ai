@@ -1,5 +1,10 @@
 # Vencord AI - 100,000+ Message Indexing & Retrieval Architecture
 
+> **Status (2026-11):** this describes a design, not what ships. No production code fills the local index or
+> message database in `storage/`, so the plugin's `local_index` search step always finds nothing and answers come
+> from Discord's own search and message APIs. The benchmark in section 4 measures `InMemoryBM25Index`, a class that
+> exists only in `test/benchmark100k.ts`, not `storage/index`.
+
 ## 1. Executive Summary & Problem Formulation
 
 ### 1.1 The Challenge at Scale (100k+ Messages)

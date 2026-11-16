@@ -53,7 +53,7 @@ This implementation is split into five stacked phase branches. Review and merge 
 ## Phase 5 — Hardening and release
 
 - Diagnostics log only provider capability flags, counts, durations, retries, truncation counts, and stopping reason.
-- Provider errors no longer include response bodies; image inspection is Discord-CDN-only and capped at 10 MB.
+- Provider errors include a short, single-line excerpt of the provider's error message with the API key, key-shaped tokens and bearer values redacted; image inspection is Discord-CDN-only and capped at 10 MB.
 - `npm test`, `npm run typecheck`, `npm run build`, and the full Vencord build pass.
 - Live local/cloud smoke tests were not run because no endpoint/key was provisioned; offline contracts are mandatory and pass.
 - Manual read-only scan finds no Discord `POST`, `PUT`, `PATCH`, or `DELETE`; the only production POST is the configured LLM completion transport.
