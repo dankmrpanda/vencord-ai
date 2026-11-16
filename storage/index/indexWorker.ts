@@ -51,7 +51,9 @@ export function handleWorkerMessage(
   try {
     switch (request.type) {
       case 'INGEST_BATCH': {
-        void handleIngestBatch(request.id, request.messages, post);
+        handleIngestBatch(request.id, request.messages, post).catch((err: any) => {
+          post({ id: request.id, type: 'ERROR', error: err?.message || String(err) });
+        });
         break;
       }
       case 'DELETE_MESSAGES': {

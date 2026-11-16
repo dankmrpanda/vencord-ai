@@ -5,6 +5,7 @@
 
 import { getSessionById, getSessionsForChannel, saveSession } from '../storage/chatHistory';
 import { InvertedIndex } from '../storage/index/invertedIndex';
+import { WorkerBridge } from '../storage/index/workerBridge';
 import { ChatSession, DiscordMessage } from '../types';
 import { assert } from './assert';
 
@@ -240,11 +241,61 @@ async function idx04MergesLocalStorageSessions(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-07: an ingest exception and a worker error must reject the pending    */
+/* request instead of leaving it unsettled.                                  */
+/* ------------------------------------------------------------------------ */
+async function idx07IngestErrorRejects(): Promise<void> {
+  const seen: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { seen.push(reason); };
+  process.on('unhandledRejection', onUnhandled);
+  const bridge = new WorkerBridge();
+  try {
+    const bad = msg('bad_1', 'chan1', 'boom', 'u1', { attachments: [null as any] });
+    const out = await withTimeout(bridge.ingestBatch([bad]).then(() => 'RESOLVED', () => 'REJECTED'), 300);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert(out === 'REJECTED' && seen.length === 0, `IDX-07 ingestBatch after addBatch threw: ${out} (expected REJECTED; unhandled rejections seen: ${seen.length})`);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+    await bridge.clear();
+  }
+}
+
+async function idx07WorkerErrorRejectsPending(): Promise<void> {
+  const prevWorker = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
+  const prevConsoleError = console.error;
+  class FakeWorker {
+    onmessage: ((e: any) => void) | null = null;
+    onerror: ((e: any) => void) | null = null;
+    terminated = false;
+    postMessage(): void {
+      setTimeout(() => this.onerror?.({ message: 'worker crashed' }), 0);
+    }
+    terminate(): void { this.terminated = true; }
+  }
+  Object.defineProperty(globalThis, 'Worker', { configurable: true, writable: true, value: FakeWorker });
+  console.error = () => {};
+  const bridge = new WorkerBridge();
+  try {
+    await bridge.init();
+    const out = await withTimeout(bridge.search({ query: 'alpha' }).then(() => 'RESOLVED', () => 'REJECTED'), 200);
+    assert(out === 'REJECTED', `IDX-07 search() ${out === 'TIMEOUT' ? 'still pending 200 ms' : out} after the worker raised an error event (expected REJECTED)`);
+    const later = await withTimeout(bridge.getStats().then(() => 'RESOLVED', () => 'REJECTED'), 200);
+    assert(later === 'RESOLVED', `IDX-07 a request after the worker error was ${later} (expected RESOLVED via the in-process engine)`);
+  } finally {
+    console.error = prevConsoleError;
+    if (prevWorker) Object.defineProperty(globalThis, 'Worker', prevWorker);
+    else delete (globalThis as any).Worker;
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
   ['IDX-02 channelIds:[] + authorId matches nothing', idx02EmptyAllowlistPlusAuthorMatchesNothing],
   ['IDX-04 localStorage-fallback sessions merged by id, newest wins', idx04MergesLocalStorageSessions],
+  ['IDX-07 ingest exception rejects the request', idx07IngestErrorRejects],
+  ['IDX-07 worker error rejects pending requests', idx07WorkerErrorRejectsPending],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

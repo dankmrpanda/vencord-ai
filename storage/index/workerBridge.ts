@@ -36,13 +36,28 @@ export class WorkerBridge {
         // In browser / Electron mod runtime with bundler URL support
         this.worker = new Worker(new URL('./indexWorker', import.meta.url), { type: 'module' });
         this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => this.onMessage(e.data);
-        this.worker.onerror = (err) => console.error('[VencordAI] IndexWorker error:', err);
+        this.worker.onerror = (err) => this.onWorkerError(err);
         return;
       } catch {
         console.warn('[VencordAI] Web Worker initialization failed, using in-process engine.');
       }
     }
     this.fallbackIndex = new InvertedIndex();
+  }
+
+  // A worker error leaves its in-flight requests unanswered: reject them all and route later
+  // requests to the in-process engine instead of hanging on a dead worker.
+  private onWorkerError(err: unknown): void {
+    console.error('[VencordAI] IndexWorker error; falling back to the in-process engine.');
+    try {
+      this.worker?.terminate();
+    } catch {
+      // ignore
+    }
+    this.worker = null;
+    const message = (err as { message?: string })?.message || 'Index worker error';
+    for (const handler of this.pendingRequests.values()) handler.reject(new Error(message));
+    this.pendingRequests.clear();
   }
 
   private post(request: WorkerRequest, onProgress?: (indexed: number, total: number) => void): Promise<any> {
