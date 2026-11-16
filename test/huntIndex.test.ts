@@ -8,6 +8,7 @@ import { InvertedIndex } from '../storage/index/invertedIndex';
 import { extractQueryTokens, tokenizeText } from '../storage/index/tokenizer';
 import { WorkerBridge } from '../storage/index/workerBridge';
 import { MessageDatabase } from '../storage/db';
+import { HybridRetrievalEngine } from '../storage/retrieval';
 import { ChatSession, DiscordMessage } from '../types';
 import { assert } from './assert';
 
@@ -494,6 +495,28 @@ async function idx13StableTieBreak(): Promise<void> {
   assert(ra.join(',') === '1004,1003,1002' && rb.join(',') === ra.join(','), `IDX-13 equal-score top-3: insertion order A -> [${ra.join(',')}], reversed + re-added B -> [${rb.join(',')}] (expected both [1004,1003,1002]: newer message id first)`);
 }
 
+/* ------------------------------------------------------------------------ */
+/* SRCH-07: a pattern-only search examines every in-scope indexed record,    */
+/* not only the 100 newest.                                                  */
+/* ------------------------------------------------------------------------ */
+async function srch07PatternOnlySearchesWholeIndex(): Promise<void> {
+  const index = new InvertedIndex(256);
+  const old = msg('code_1', 'chan1', 'your code is 482913', 'u1', { timestamp: new Date(Date.UTC(2025, 0, 1)).toISOString() });
+  const filler = Array.from({ length: 150 }, (_, i) => msg(`fill_${i}`, 'chan1', `filler chatter number ${i}`, 'u1', {
+    timestamp: new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString(),
+  }));
+  index.addBatch([old, ...filler, msg('other_1', 'chan2', 'other code 777111')]);
+  const bridge = {
+    search: async (q: any) => index.search(q),
+    createSnapshot: async () => index.exportSnapshot(),
+  } as unknown as WorkerBridge;
+  const engine = new HybridRetrievalEngine(bridge);
+  const res = await engine.search({ pattern: '\\b\\d{6}\\b', channelIds: ['chan1'], limit: 10 });
+  const ids = res.hits.map((h) => h.messageId);
+  const outOfScope = res.hits.filter((h) => h.record.channelId !== 'chan1').length;
+  assert(ids[0] === 'code_1' && outOfScope === 0, `SRCH-07 pattern-only search with 150 newer in-scope messages returned [${ids.slice(0, 5).join(',')}${ids.length > 5 ? ',...' : ''}] with ${outOfScope} out-of-scope hits (expected code_1 first, 0 out of scope)`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -509,6 +532,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-12 tokens NFC-normalized; snapshot version bumped', idx12UnicodeNormalization],
   ['IDX-10 emoji and variation selectors separate words', idx10EmojiSeparatesWords],
   ['IDX-13 equal scores tie-break by message id', idx13StableTieBreak],
+  ['SRCH-07 pattern-only search examines the whole in-scope index', srch07PatternOnlySearchesWholeIndex],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

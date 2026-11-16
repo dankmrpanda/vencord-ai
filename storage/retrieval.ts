@@ -158,7 +158,15 @@ export class HybridRetrievalEngine {
     }
 
     let candidateRecords = bm25Result.records || [];
-    const bm25Hits = bm25Result.hits || [];
+    let bm25Hits = bm25Result.hits || [];
+
+    // A pattern-only query has no lexical tokens, so the index returns only its newest in-scope
+    // records (top-K by recency); the pattern must instead see every in-scope record.
+    const patternOnly = Boolean(query.pattern) && extractQueryTokens(indexQuery.query ?? '').length === 0;
+    if (patternOnly) {
+      candidateRecords = [];
+      bm25Hits = [];
+    }
 
     // Fallback if BM25 found 0 candidates (e.g. pattern-only query or disjoint semantic query)
     if (candidateRecords.length === 0 && (query.pattern || query.semanticQuery || !query.query)) {
