@@ -20,6 +20,11 @@ import {
 
 /** Snapshot format version. Tokenizer changes are tracked separately by TOKENIZER_VERSION. */
 export const SNAPSHOT_VERSION = 1;
+/**
+ * Upper bound on docIds accepted from a snapshot (REV4-03). docLengths is indexed by docId, so an unbounded id would
+ * allocate gigabytes; 2^26 (64M ids, a 128 MB array) is far beyond any per-user index, and postings store Uint32 ids.
+ */
+const MAX_SNAPSHOT_DOC_ID = 2 ** 26;
 
 /** Accepts a typed array, a plain array, or the object form a typed array takes after JSON. */
 function toTypedArray<T extends Uint32Array | Uint8Array>(
@@ -568,7 +573,7 @@ export class InvertedIndex {
     let maxDocId = -1;
     let totalTokens = 0;
     for (const doc of snapshot.documents) {
-      if (!doc || !Number.isInteger(doc.docId) || doc.docId < 0 || typeof doc.id !== 'string'
+      if (!doc || !Number.isInteger(doc.docId) || doc.docId < 0 || doc.docId >= MAX_SNAPSHOT_DOC_ID || typeof doc.id !== 'string'
         || typeof doc.channelId !== 'string' || typeof doc.authorId !== 'string'
         || typeof doc.content !== 'string' || !Number.isFinite(doc.tokenLength)
         || docRecords.has(doc.docId) || messageIdToDocId.has(doc.id)) {
@@ -609,9 +614,14 @@ export class InvertedIndex {
 
     const snapNext = Number.isInteger(snapshot.nextDocId) ? snapshot.nextDocId! : 0;
     const nextDocId = Math.max(snapNext, maxDocId + 1);
+    if (nextDocId > MAX_SNAPSHOT_DOC_ID) throw new Error('Invalid index snapshot: nextDocId out of range');
 
+    // Allocate before clearing, so a failed allocation also leaves the live index intact.
+    const capacity = Math.max(this.capacity, nextDocId);
+    const docLengths = new Uint16Array(capacity);
     this.clear();
-    this.ensureCapacity(nextDocId);
+    this.docLengths = docLengths;
+    this.capacity = capacity;
     this.docRecords = docRecords;
     this.messageIdToDocId = messageIdToDocId;
     this.termDict = termDict;

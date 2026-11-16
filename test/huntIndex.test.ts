@@ -349,6 +349,8 @@ async function idx08BadSnapshotLeavesStateIntact(): Promise<void> {
     ['version 99', { ...snap, version: 99 }],
     ['negative docId', { ...snap, documents: snap.documents.map((d) => ({ ...d, docId: -1 })) }],
     ['documents not an array', { ...snap, documents: null }],
+    ['docId past the docId range (REV4-03)', { ...snap, documents: [...snap.documents, { ...snap.documents[0], docId: Number.MAX_SAFE_INTEGER, id: 'evil' }] }],
+    ['nextDocId past the docId range (REV4-03)', { ...snap, nextDocId: 2 ** 40 }],
   ];
   for (const [label, candidate] of bad) {
     const live = new InvertedIndex(16);
