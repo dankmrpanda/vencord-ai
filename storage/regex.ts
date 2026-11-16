@@ -617,8 +617,21 @@ export function extractMatchesFromText(
 
   const safe = compileSafeRegex(pattern);
   if (!safe.isSafe || !safe.regex) return [];
+  return extractMatchesWithRegex(text, safe.regex, maxMatches, timeLimitMs);
+}
 
-  const regex = safe.regex;
+/**
+ * Same as extractMatchesFromText for a regex already returned by compileSafeRegex, so a caller scanning many
+ * records screens and compiles the pattern once (REV4-01). Only pass a regex that compileSafeRegex accepted.
+ */
+export function extractMatchesWithRegex(
+  text: string,
+  regex: RegExp,
+  maxMatches = 50,
+  timeLimitMs = 15,
+): string[] {
+  if (!text) return [];
+  regex.lastIndex = 0;
   const matches: string[] = [];
   const boundedText = text.slice(0, 10_000); // 10k character limit per scan
   const startTime = Date.now();

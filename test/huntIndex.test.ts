@@ -5,6 +5,7 @@
 
 import { getSessionById, getSessionsForChannel, saveSession } from '../storage/chatHistory';
 import { InvertedIndex } from '../storage/index/invertedIndex';
+import { compileSafeRegex, extractMatchesFromText, extractMatchesWithRegex } from '../storage/regex';
 import { extractQueryTokens, tokenizeText } from '../storage/index/tokenizer';
 import { WorkerBridge } from '../storage/index/workerBridge';
 import { MessageDatabase } from '../storage/db';
@@ -498,6 +499,18 @@ async function idx13StableTieBreak(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------------ */
+/* REV4-01: retrieval compiles the pattern once and reuses it per record; the  */
+/* reused regex must give the same matches as compiling it for each record.   */
+async function rev401CompiledPatternReuse(): Promise<void> {
+  const texts = ['code 123456 and 654321', 'nothing here', 'one 111111', 'two 222222 three 333333', ''];
+  const pattern = '\\b\\d{6}\\b';
+  const safe = compileSafeRegex(pattern);
+  assert(Boolean(safe.isSafe && safe.regex), 'REV4-01 fixture pattern compiles');
+  const reused = texts.map((text) => extractMatchesWithRegex(text, safe.regex!).join(','));
+  const fresh = texts.map((text) => extractMatchesFromText(text, pattern).join(','));
+  assert(JSON.stringify(reused) === JSON.stringify(fresh), `REV4-01 reused regex matched ${JSON.stringify(reused)} (expected ${JSON.stringify(fresh)})`);
+}
+
 /* SRCH-07: a pattern-only search examines every in-scope indexed record,    */
 /* not only the 100 newest.                                                  */
 /* ------------------------------------------------------------------------ */
@@ -617,6 +630,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-10 emoji and variation selectors separate words', idx10EmojiSeparatesWords],
   ['IDX-13 equal scores tie-break by message id', idx13StableTieBreak],
   ['SRCH-07 pattern-only search examines the whole in-scope index', srch07PatternOnlySearchesWholeIndex],
+  ['REV4-01 one compiled pattern matches like a fresh one per record', rev401CompiledPatternReuse],
   ['IDX differential: incremental index equals one rebuilt from surviving messages', idxDifferentialIncrementalVsRebuilt],
 ];
 
