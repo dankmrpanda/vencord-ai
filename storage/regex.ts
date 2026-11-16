@@ -137,6 +137,9 @@ function parseRegexAST(pattern: string): RegexAlternative[] | null {
           node = { type: 'assertion', raw: pattern.slice(start, i) };
         } else if (/[1-9]/.test(escCh)) {
           node = { type: 'backref', raw: pattern.slice(start, i) };
+        } else if (escCh === 'k' && pattern[i] === '<' && pattern.indexOf('>', i) !== -1) {
+          i = pattern.indexOf('>', i) + 1;
+          node = { type: 'backref', raw: pattern.slice(start, i) };
         } else if (escCh === 'x') {
           i += 2;
           node = { type: 'literal', raw: pattern.slice(start, i) };
@@ -253,6 +256,12 @@ function isDangerousRepetition(q?: Quantifier): boolean {
   return q.max === Infinity || q.max >= 20 || (q.max > 1 && q.max - q.min >= 10);
 }
 
+/** True when a group below `node` has more than one branch, e.g. the `(b|bc)` in `(a(b|bc)|c)+`. */
+function containsNestedAlternation(node: RegexNode): boolean {
+  return Boolean(node.alternatives?.some((alt) => alt.nodes.some((child) =>
+    child.type === 'group' && ((child.alternatives?.length ?? 0) > 1 || containsNestedAlternation(child)))));
+}
+
 function containsAnyQuantifier(node: RegexNode): boolean {
   if (node.quantifier) return true;
   if (node.type === 'group' && node.alternatives) {
@@ -295,6 +304,8 @@ function createScreenContext(pattern: string, flags: string): ScreenContext {
 /** Sample characters a single-character atom can consume; null when it cannot be modelled (groups, backreferences). */
 function atomCharSet(node: RegexNode, ctx: ScreenContext): Set<string> | null {
   if (node.type !== 'literal' && node.type !== 'charClass' && node.type !== 'wildcard') return null;
+  // Property escapes (`\p{sc=Thai}`) cover characters no sample can enumerate: treat the class as unknown.
+  if (/\\[pP]\{/.test(node.raw)) return null;
   if (ctx.charSets.has(node)) return ctx.charSets.get(node)!;
   let result: Set<string> | null = null;
   try {
@@ -416,6 +427,9 @@ function checkASTSafety(alternatives: RegexAlternative[], ctx: ScreenContext, to
     }
 
     for (const [index, node] of nodes.entries()) {
+      // A quantified backreference (`(a+)\1*`) repeats text of unknown width and character set.
+      if (node.type === 'backref' && isVariableWidth(node.quantifier)) return false;
+
       if (node.type === 'group') {
         const isRepeated = isDangerousRepetition(node.quantifier);
         const repeatsMoreThanOnce = Boolean(node.quantifier && node.quantifier.max > 1);
@@ -444,6 +458,8 @@ function checkASTSafety(alternatives: RegexAlternative[], ctx: ScreenContext, to
         }
 
         if (isRepeated) {
+          // A branch point inside a repeated group lets each iteration parse the same text two ways.
+          if (containsNestedAlternation(node)) return false;
           if (node.alternatives) {
             for (const groupAlt of node.alternatives) {
               for (const child of groupAlt.nodes) {

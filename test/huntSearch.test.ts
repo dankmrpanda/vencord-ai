@@ -150,6 +150,18 @@ const REDOS_CORPUS: Array<{ id: string; pattern: string; expect: 'reject' | 'pas
   { id: 'RPT6-2d', pattern: '[α-ω]+ [α-ω]+!', expect: 'pass', measured: 'separated by a space, passed before' },
   { id: 'RPT6-2d', pattern: '/\\p{L}+@\\p{L}+/u', expect: 'pass', measured: 'separated by @, passed before' },
   { id: 'RPT6-2d', pattern: '[a-zà-ÿ]+\\d+', expect: 'pass', measured: 'disjoint classes, passed before' },
+  { id: 'REV3-01', pattern: '^(a(b|bc)|c)+$', expect: 'reject', measured: "17.5 s on 'abc' x28 + '!'" },
+  { id: 'REV3-01', pattern: '(a(b|bc)|c)+!', expect: 'reject', measured: "13.2 s on 'abc' x26" },
+  { id: 'REV3-01', pattern: '(?:x(?:y|yz)|z)*!', expect: 'reject', measured: 'same shape as above' },
+  { id: 'REV3-01', pattern: '(foo|bar)+', expect: 'pass', measured: 'distinct branches, passed before' },
+  { id: 'REV3-01', pattern: '(?:(?:jan|feb) \\d{1,2}),?', expect: 'pass', measured: 'alternation not repeated, passed before' },
+  { id: 'REV3-02', pattern: '(a+)\\1*\\1*\\1*\\1*b', expect: 'reject', measured: "39.2 s on 'a' x200" },
+  { id: 'REV3-02', pattern: '(a)\\1+\\1+!', expect: 'reject', measured: 'quantified backreferences overlap' },
+  { id: 'REV3-02', pattern: '(?<x>a)\\k<x>*\\k<x>*!', expect: 'reject', measured: 'named form of the same shape' },
+  { id: 'REV3-02', pattern: '(\\w)\\1', expect: 'pass', measured: 'unquantified backreference, passed before' },
+  { id: 'REV3-03', pattern: '/[\\p{sc=Thai}a]*[\\p{sc=Thai}b]*[\\p{sc=Thai}c]*[\\p{sc=Thai}d]*[\\p{sc=Thai}e]*!/u', expect: 'reject', measured: "1.5 s on Thai x90" },
+  { id: 'REV3-03', pattern: '/[\\P{L}a]+[\\P{L}b]+!/u', expect: 'reject', measured: 'negated property classes share every non-letter' },
+  { id: 'REV3-03', pattern: '/[\\p{L}]+@[\\p{L}]+/u', expect: 'pass', measured: 'separated by @' },
 ];
 
 function redosCorpusProblems(id: string): string | null {
@@ -172,6 +184,14 @@ async function revDsc02SeparatedRepeatedGroup(): Promise<string | null> {
 /** Report section 6 (2d): overlap was judged on a fixed character sample, so classes overlapping only outside it passed. */
 async function rpt6SampleCharOverlap(): Promise<string | null> {
   return redosCorpusProblems('RPT6-2d');
+}
+
+/** REV3-01..03 (confirmation review): ambiguous nested alternation, quantified backreferences, property-escape classes. */
+async function rev3RedosScreenGaps(): Promise<string | null> {
+  const problems = ['REV3-01', 'REV3-02', 'REV3-03']
+    .map((id) => redosCorpusProblems(id))
+    .filter((problem): problem is string => problem !== null);
+  return problems.length ? problems.join('  ') : null;
 }
 
 /** SRCH-02: has='sticker' has no local implementation, so local scan returns every message. */
@@ -469,6 +489,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['REV-DSC-01 bounded-quantifier ReDoS', revDsc01BoundedQuantifierRedos],
   ['REV-DSC-02 separated repeated group', revDsc02SeparatedRepeatedGroup],
   ['RPT6-2d sample-character overlap', rpt6SampleCharOverlap],
+  ['REV3-01..03 ReDoS screen gaps', rev3RedosScreenGaps],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
