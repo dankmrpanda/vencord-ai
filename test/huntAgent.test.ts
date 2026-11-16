@@ -579,6 +579,43 @@ async function sec09SessionFollowsScopeChannel(): Promise<void> {
   }
 }
 
+/** HARD-01: a scope with `channelId: ''` skipped the per-channel session check and replayed another channel's history. */
+async function rpt6EmptyChannelScopeFailsClosed(): Promise<void> {
+  const originalAcquire = modelLifecycle.acquire;
+  const originalRun = AIAssistantAgent.prototype.run;
+  const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
+  const memory = new Map<string, string>();
+  const runs: Array<{ history: number; scope: string }> = [];
+  try {
+    if (!hadLocalStorage) {
+      (globalThis as any).localStorage = {
+        getItem: (key: string) => memory.get(key) ?? null,
+        setItem: (key: string, value: string) => { memory.set(key, String(value)); },
+        removeItem: (key: string) => { memory.delete(key); },
+        key: (index: number) => Array.from(memory.keys())[index] ?? null,
+        get length() { return memory.size; },
+      };
+    }
+    modelLifecycle.acquire = async () => () => undefined;
+    AIAssistantAgent.prototype.run = async (_prompt, history, _callbacks, _signal, _launch, scope) => {
+      runs.push({ history: history.length, scope: scope === null ? 'null' : JSON.stringify(scope?.channelId) });
+      return { content: 'reply', steps: [], citations: [] };
+    };
+    const channelA = `${Date.now()}00003`;
+    const service = new ChatService(settings());
+    await service.initSession(channelA);
+    await service.sendMessage('what did alice say', null, { ...dmScope(), channelId: channelA } as CurrentScopeContext);
+    await service.sendMessage('and now?', null, { ...dmScope(), channelId: '' } as CurrentScopeContext);
+    const second = runs[1];
+    assert(second && (second.scope === 'null' || second.history === 0),
+      `HARD-01 a scope with channelId '' ran with scope ${second?.scope} and ${second?.history} history entries from channel A`);
+  } finally {
+    modelLifecycle.acquire = originalAcquire;
+    AIAssistantAgent.prototype.run = originalRun;
+    if (!hadLocalStorage) delete (globalThis as any).localStorage;
+  }
+}
+
 /**
  * SEC-09 follow-up: sendMessage resolves the scope once, before it picks the session, and hands that scope to the agent.
  * A send with no resolvable scope must not reach the model, even if the user opens another DM while the model loads.
@@ -1080,6 +1117,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-11 deleted session resurrected by run', llm11DeletedSessionResurrected],
   ['SEC-09 session follows scope channel', sec09SessionFollowsScopeChannel],
   ['SEC-09 scope resolved before session', sec09ScopeResolvedBeforeSession],
+  ['HARD-01 empty-channel scope fails closed', rpt6EmptyChannelScopeFailsClosed],
   ['SRCH-10 tools receive the abort signal', srch10ToolsReceiveAbortSignal],
   ['SEC2-01 context tools honour Stop and cap retry_after', sec2_01ContextToolsHonourStop],
   ['REV-SEC-03 list_threads honours Stop', revSec03ListThreadsHonoursStop],

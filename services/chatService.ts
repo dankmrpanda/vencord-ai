@@ -172,6 +172,8 @@ export class ChatService {
       if (!scope) {
         try { scope = getCurrentScopeContext(); } catch { scope = null; }
       }
+      // A scope without a channel cannot be paired with a session: fail closed (the agent refuses a null scope).
+      if (scope && !scope.channelId) scope = null;
       const scopeChannelId = scope?.channelId;
       if (!this.activeSession) await this.initSession(scopeChannelId);
       controller.signal.throwIfAborted();
