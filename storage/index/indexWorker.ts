@@ -44,6 +44,21 @@ async function handleIngestBatch(
   });
 }
 
+// Mutating requests (ingest, delete, clear, snapshot load) run strictly in issue order: a chunked
+// ingest yields between chunks, and a CLEAR or DELETE sent meanwhile must not be undone by the
+// chunks that follow. Reads (search, stats, snapshot export) are answered immediately.
+let mutationTail: Promise<void> = Promise.resolve();
+
+function enqueueMutation(
+  id: string,
+  post: (msg: WorkerResponse) => void,
+  run: () => void | Promise<void>,
+): void {
+  mutationTail = mutationTail.then(run).catch((err: any) => {
+    post({ id: id || 'unknown', type: 'ERROR', error: err?.message || String(err) });
+  });
+}
+
 export function handleWorkerMessage(
   request: WorkerRequest,
   post: (response: WorkerResponse) => void,
@@ -51,17 +66,15 @@ export function handleWorkerMessage(
   try {
     switch (request.type) {
       case 'INGEST_BATCH': {
-        handleIngestBatch(request.id, request.messages, post).catch((err: any) => {
-          post({ id: request.id, type: 'ERROR', error: err?.message || String(err) });
-        });
+        const { id, messages } = request;
+        enqueueMutation(id, post, () => handleIngestBatch(id, messages, post));
         break;
       }
       case 'DELETE_MESSAGES': {
-        const deletedCount = index.deleteMessages(request.messageIds);
-        post({
-          id: request.id,
-          type: 'DELETE_COMPLETE',
-          deletedCount,
+        const { id, messageIds } = request;
+        enqueueMutation(id, post, () => {
+          const deletedCount = index.deleteMessages(messageIds);
+          post({ id, type: 'DELETE_COMPLETE', deletedCount });
         });
         break;
       }
@@ -94,19 +107,18 @@ export function handleWorkerMessage(
         break;
       }
       case 'LOAD_SNAPSHOT': {
-        index.importSnapshot(request.snapshot);
-        post({
-          id: request.id,
-          type: 'LOAD_SNAPSHOT_COMPLETE',
-          totalDocs: index.getStats().totalDocs,
+        const { id, snapshot } = request;
+        enqueueMutation(id, post, () => {
+          index.importSnapshot(snapshot);
+          post({ id, type: 'LOAD_SNAPSHOT_COMPLETE', totalDocs: index.getStats().totalDocs });
         });
         break;
       }
       case 'CLEAR_INDEX': {
-        index.clear();
-        post({
-          id: request.id,
-          type: 'CLEAR_COMPLETE',
+        const { id } = request;
+        enqueueMutation(id, post, () => {
+          index.clear();
+          post({ id, type: 'CLEAR_COMPLETE' });
         });
         break;
       }

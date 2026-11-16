@@ -389,6 +389,35 @@ async function idx08JsonRoundTripSnapshot(): Promise<void> {
   assert(a.join(',') === 's1' && n.join(',') === 'newone' && total === 3, `IDX-08 after importing a JSON-round-tripped snapshot: search('alpha') -> [${a.join(',')}], search('newone') -> [${n.join(',')}], totalDocs=${total} (expected [s1], [newone], 3)`);
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-06: mutating requests apply in issue order, so a CLEAR or DELETE sent */
+/* while a multi-chunk ingest is running is not undone by later chunks.      */
+/* ------------------------------------------------------------------------ */
+function idx06Batch(n: number): DiscordMessage[] {
+  return Array.from({ length: n }, (_, i) => msg(`del_${i}`, 'chan1', `filler message number ${i}`));
+}
+
+async function idx06MutationsApplyInOrder(): Promise<void> {
+  const bridge = new WorkerBridge();
+  try {
+    await bridge.clear();
+    const ingest = bridge.ingestBatch(idx06Batch(1200));
+    await bridge.clear();
+    await ingest;
+    const afterClear = (await bridge.getStats()).totalDocs;
+    assert(afterClear === 0, `IDX-06 clear() issued after ingestBatch(1200) left ${afterClear} docs in the index (expected 0: requests should apply in order)`);
+
+    const ingest2 = bridge.ingestBatch(idx06Batch(1200));
+    const del = await bridge.deleteMessages(['del_1100']);
+    await ingest2;
+    const snap = await bridge.createSnapshot();
+    const resurrected = snap.documents.some((d) => d.id === 'del_1100');
+    assert(del.deletedCount === 1 && !resurrected, `IDX-06 deleteMessages(['del_1100']) issued after ingestBatch returned deletedCount=${del.deletedCount}; still indexed afterwards: ${resurrected} (expected 1, false)`);
+  } finally {
+    await bridge.clear();
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -399,6 +428,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-05 MessageDatabase writes settle on abort-only transactions', idx05WritesSettleOnAbort],
   ['IDX-08 invalid or wrong-version snapshot leaves live state intact', idx08BadSnapshotLeavesStateIntact],
   ['IDX-08 JSON round-tripped snapshot imports correctly', idx08JsonRoundTripSnapshot],
+  ['IDX-06 CLEAR/DELETE during a chunked ingest apply in order', idx06MutationsApplyInOrder],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {
