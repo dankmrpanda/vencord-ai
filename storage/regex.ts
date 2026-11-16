@@ -256,10 +256,30 @@ function isDangerousRepetition(q?: Quantifier): boolean {
   return q.max === Infinity || q.max >= 20 || (q.max > 1 && q.max - q.min >= 10);
 }
 
-/** True when a group below `node` has more than one branch, e.g. the `(b|bc)` in `(a(b|bc)|c)+`. */
-function containsNestedAlternation(node: RegexNode): boolean {
-  return Boolean(node.alternatives?.some((alt) => alt.nodes.some((child) =>
-    child.type === 'group' && ((child.alternatives?.length ?? 0) > 1 || containsNestedAlternation(child)))));
+/**
+ * True when a group below `node` has branches that can start with the same character, e.g. the `(b|bc)` in
+ * `(a(b|bc)|c)+`, so each iteration can parse the same text two ways. `((cat|dog) )+` is unambiguous: the next
+ * character picks the branch. A branch whose start cannot be modelled (empty, optional, or a group) counts as overlapping.
+ */
+function containsAmbiguousNestedAlternation(node: RegexNode, ctx: ScreenContext): boolean {
+  const firstChars = (alt: RegexAlternative): Set<string> | null => {
+    const first = alt.nodes[0];
+    if (!first || (first.quantifier && first.quantifier.min === 0)) return null;
+    return atomCharSet(first, ctx);
+  };
+  return Boolean(node.alternatives?.some((alt) => alt.nodes.some((child) => {
+    if (child.type !== 'group') return false;
+    const branches = child.alternatives ?? [];
+    if (branches.length > 1) {
+      const sets = branches.map(firstChars);
+      for (let a = 0; a < sets.length; a++) {
+        for (let b = a + 1; b < sets.length; b++) {
+          if (charSetsOverlap(sets[a], sets[b])) return true;
+        }
+      }
+    }
+    return containsAmbiguousNestedAlternation(child, ctx);
+  })));
 }
 
 function containsAnyQuantifier(node: RegexNode): boolean {
@@ -459,7 +479,7 @@ function checkASTSafety(alternatives: RegexAlternative[], ctx: ScreenContext, to
 
         if (isRepeated) {
           // A branch point inside a repeated group lets each iteration parse the same text two ways.
-          if (containsNestedAlternation(node)) return false;
+          if (containsAmbiguousNestedAlternation(node, ctx)) return false;
           if (node.alternatives) {
             for (const groupAlt of node.alternatives) {
               for (const child of groupAlt.nodes) {
