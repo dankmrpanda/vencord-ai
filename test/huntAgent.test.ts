@@ -835,6 +835,26 @@ async function llm12LoopTurnFailureSkipsFinalization(): Promise<void> {
   assert(firstTurn.startsWith('threw'), `LLM-12 a first-turn provider error should still fail the run: ${firstTurn}`);
 }
 
+/** REV-LLM-03: a persistent provider error first seen on turn 2+ was returned as a generic answer without the error detail. */
+async function revLlm03PersistentTurnTwoErrorSurfaces(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  let outcome = '';
+  try {
+    let calls = 0;
+    (globalThis as any).fetch = async () => {
+      calls++;
+      if (calls === 1) return new Response(sseBody({ toolCalls: [{ name: 'get_current_context', args: {} }] }, 'c1'), { status: 200 });
+      return new Response(JSON.stringify({ error: { message: 'maximum context length is 8192 tokens' } }), { status: 400 });
+    };
+    outcome = await quiet(() => new AIAssistantAgent(settings()).run('who am i?', [], undefined, undefined, undefined, dmScope()))
+      .then((result) => `returned: ${result.content}`, (error) => `threw: ${error?.message}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert(outcome.startsWith('threw') && outcome.includes('400') && outcome.includes('maximum context length'),
+    `REV-LLM-03 a persistent turn-2 provider error was masked: ${outcome}`);
+}
+
 /** LLM-13: inspect_image is offered whenever enableVision is on (default) but always fails for presets without declared vision (default omlx). */
 async function llm13VisionToolOfferedButAlwaysFails(): Promise<void> {
   const broken: string[] = [];
@@ -1002,6 +1022,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC2-01 context tools honour Stop and cap retry_after', sec2_01ContextToolsHonourStop],
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
+  ['REV-LLM-03 persistent turn-2 provider error surfaces', revLlm03PersistentTurnTwoErrorSurfaces],
   ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],
 ];
 

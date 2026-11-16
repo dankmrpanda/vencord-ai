@@ -257,6 +257,7 @@ export class AIAssistantAgent {
     };
     const tools = availableToolDefinitions(toolContext);
     let stoppingReason = 'completed';
+    let loopProviderError: unknown;
 
     const executeToolCalls = async (toolCalls: LLMToolCall[]): Promise<void> => {
       const executions = toolCalls.map(async (call) => {
@@ -391,6 +392,7 @@ export class AIAssistantAgent {
           if (budget.modelTurns <= 1) throw error;
           thought.content = 'The model request failed; answering from the evidence gathered so far.';
           stoppingReason = 'provider_error';
+          loopProviderError = error;
         }
         callbacks?.onStepUpdated?.(thought);
         break;
@@ -444,6 +446,8 @@ export class AIAssistantAgent {
       finalAnswer = final.content.trim();
     } catch {
       if (signal?.aborted) throw new Error('Agent execution cancelled by user.');
+      // The provider failed on the loop turn and again here: surface its (redacted) error, not a generic answer.
+      if (loopProviderError && !streamedAnswer.trim()) throw loopProviderError;
       stoppingReason = 'finalization_failed';
       finalAnswer = streamedAnswer.trim()
         ? `${streamedAnswer.trim()}\n\n(The answer was cut off because the model stopped responding. Please retry for a complete answer.)`
