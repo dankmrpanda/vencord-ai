@@ -68,13 +68,15 @@ export function compactToolResult(content: string, maxChars = 12_000): string {
     };
 
     // Trim records in a way that keeps the most useful ones: the newest of an ascending
-    // (chronological) list, the records nearest the anchor of a surrounding-context window,
-    // and the top of a ranked/newest-first list.
+    // (chronological) recent-messages or pins list, the records nearest the anchor of a
+    // surrounding-context window, and the head of anything else (ranked or explicitly sorted
+    // search results keep the order the model asked for).
     const records = parsed?.data?.messages || parsed?.data?.hits;
     const time = (record: any) => Date.parse(record?.timestamp ?? '');
+    const chronological = parsed?.code === 'recent_messages' || parsed?.code === 'channel_pins';
     const policy = parsed?.code === 'surrounding_messages'
       ? 'edges'
-      : Array.isArray(records) && records.length > 1 && time(records[0]) < time(records[records.length - 1])
+      : chronological && Array.isArray(records) && records.length > 1 && time(records[0]) < time(records[records.length - 1])
         ? 'oldest'
         : 'tail';
     const dropOne = (list: any[]) => {

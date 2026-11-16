@@ -156,6 +156,19 @@ async function llm01CitationsCrowdOutEvidence(): Promise<void> {
     `LLM-01 surrounding-window compaction did not keep the records nearest the anchor: ${JSON.stringify(kept)}`);
 }
 
+/** REV-LLM-02: compaction treated a ranked (or explicitly ascending) search result as chronological and dropped its head. */
+async function revLlm02RankedSearchCompactionKeepsHead(): Promise<void> {
+  // Ranked hits: the best hit (rank 0) is the oldest, the last hit the newest.
+  const hits = Array.from({ length: 25 }, (_, index) => ({
+    ...message(`3000000000000003${String(index).padStart(2, '0')}`, `RANK${index} ${'y'.repeat(1500)}`),
+    timestamp: new Date(Date.UTC(2023, 0, 1) + index * 30 * 86_400_000).toISOString(),
+  }));
+  const compacted = JSON.parse(compactToolResult(JSON.stringify({ ok: true, code: 'search_results', summary: 's', data: { messages: hits } })));
+  const kept: string[] = compacted.data.messages.map((entry: DiscordMessage) => entry.content.split(' ')[0]);
+  assert(kept.includes('RANK0') && kept.includes('RANK1') && !kept.includes('RANK24') && compacted.truncation.returned === kept.length,
+    `REV-LLM-02 ranked search compaction dropped the top-ranked hits: ${JSON.stringify(kept)}`);
+}
+
 /** LLM-02: fetch_recent_messages advertises `pattern` but never applies it. */
 async function llm02RecentMessagesIgnorePattern(): Promise<void> {
   const tool = TOOL_REGISTRY.get('fetch_recent_messages')!;
@@ -960,6 +973,7 @@ async function revLlm01FinalizationIdleTimer(): Promise<void> {
 
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-01 citations crowd out evidence', llm01CitationsCrowdOutEvidence],
+  ['REV-LLM-02 ranked search compaction keeps the head', revLlm02RankedSearchCompactionKeepsHead],
   ['SEC-03 tool output sanitized', sec03ToolOutputSanitized],
   ['SEC-03 sanitizer keeps toJSON semantics', sec03SanitizerKeepsToJson],
   ['SEC-11 local tools untrusted', sec11LocalToolsUntrusted],
