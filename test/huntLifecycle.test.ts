@@ -236,6 +236,21 @@ async function life07NormalizeBaseUrlContract(): Promise<void> {
   }
 }
 
+/** HARD-04: a base URL with a query or fragment was accepted, so `/chat/completions` landed inside the query or fragment. */
+async function hard04BaseUrlQueryFragmentRejected(): Promise<void> {
+  const accepted: string[] = [];
+  for (const input of ['http://localhost:8000/v1?rejected-host=1', 'http://localhost:8000/v1#rejected-host', 'http://localhost:8000/v1?', 'https://api.example.test/v1/?a=rejected-host/']) {
+    let message = '';
+    try {
+      normalizeBaseUrl(input);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    if (!message || message.includes('rejected-host')) accepted.push(`${input} -> ${message || 'accepted'}`);
+  }
+  assert(accepted.length === 0, `HARD-04 normalizeBaseUrl accepted (or echoed) a query/fragment base URL: ${accepted.join('; ')}`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LIFE-01 unbounded idle-unload retry', life01UnboundedUnloadRetry],
   ['LIFE-02 aliased entry unloads active model', life02AliasedEntryUnloadsActiveModel],
@@ -243,6 +258,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LIFE-04b credentials echoed in acquire error', life04bCredentialsInLoadError],
   ['LIFE-07 relative baseUrl sends API key', life07RelativeBaseUrlSendsKey],
   ['LIFE-07 normalizeBaseUrl contract', life07NormalizeBaseUrlContract],
+  ['HARD-04 base URL query/fragment rejected', hard04BaseUrlQueryFragmentRejected],
 ];
 
 export async function runHuntLifecycleTests(): Promise<void> {

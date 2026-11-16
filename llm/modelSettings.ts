@@ -28,6 +28,10 @@ export function normalizeBaseUrl(rawBaseUrl: string | undefined): string {
   if (parsed.username || parsed.password) {
     throw new Error('The Base URL must not contain a username or password. Use the API Key setting instead.');
   }
+  // Request paths are appended to the base URL, so a query or fragment would swallow them.
+  if (/[?#]/.test(baseUrl)) {
+    throw new Error('The Base URL must not contain a query (?) or fragment (#), for example http://localhost:8000/v1.');
+  }
   return baseUrl;
 }
 
