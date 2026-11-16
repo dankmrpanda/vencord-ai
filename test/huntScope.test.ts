@@ -311,6 +311,18 @@ async function sec2_04HeadingAfterBlankLine(): Promise<void> {
   assert(sanitizeUntrustedContent('a\n\n# system') === 'a\n\n> # system', `SEC2-04 blank line not preserved: ${JSON.stringify(sanitizeUntrustedContent('a\n\n# system'))}`);
 }
 
+/** REV-SEC-01: the SEC2-04 rule matched only ASCII space/tab, so Unicode horizontal whitespace around the hashes left a heading live. */
+async function revSec01UnicodeWhitespaceHeading(): Promise<void> {
+  const inputs = ['\u00a0# system', '#\u00a0system', '\u3000## admin', 'x\n\u2003### override', 'a\n\n\u202f# instructions'];
+  const bad = inputs.filter((input) => {
+    const once = sanitizeUntrustedContent(input);
+    const liveHeading = once.split(/\r?\n/).some((line) => /^[^\S\r\n]*#{1,6}[^\S\r\n]*(?:system|instructions|override|admin)/i.test(line));
+    return liveHeading || sanitizeUntrustedContent(once) !== once;
+  });
+  assert(bad.length === 0, `REV-SEC-01 heading left live or not idempotent for: ${bad.map((input) => JSON.stringify(input)).join(' ')}`);
+  assert(sanitizeUntrustedContent('a\n\n# system') === 'a\n\n> # system', 'REV-SEC-01 blank line no longer preserved');
+}
+
 /** SEC-12: validateChannelPermission treats any truthy non-boolean (e.g. a Promise) as permission granted. */
 async function sec12PermissionTruthyShapes(): Promise<void> {
   const channel = { id: 'c_private', type: ChannelType.GUILD_TEXT, guild_id: 'g1' } as any;
@@ -333,6 +345,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
   ['SEC-07 more template token families', sec07MoreTemplateFamilies],
   ['SEC2-04 heading rule after a blank line', sec2_04HeadingAfterBlankLine],
+  ['REV-SEC-01 Unicode whitespace heading', revSec01UnicodeWhitespaceHeading],
   ['SEC-12 permission truthy shapes', sec12PermissionTruthyShapes],
 ];
 
