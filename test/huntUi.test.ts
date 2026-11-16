@@ -98,6 +98,16 @@ async function sec10SpoofedLinkHostHidden(): Promise<void> {
     `SEC-10 external link shows only "${visibleText}" while its href is https://evil.example/... (host not visible)`);
 }
 
+/** REV-UI-01: a blocked link (http:, scheme-less) dropped its URL, so the user could not see or copy the destination. */
+async function revUi01BlockedLinkKeepsUrlText(): Promise<void> {
+  const problems: string[] = [];
+  for (const [content, url] of [['[the article](http://news.example/x)', 'http://news.example/x'], ['[site](www.example.com)', 'www.example.com']]) {
+    const markup = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: assistantMessage(content) }));
+    if (!markup.includes(url) || /<a [^>]*href=/i.test(markup)) problems.push(`${content} -> ${markup.slice(0, 200)}`);
+  }
+  assert(problems.length === 0, `REV-UI-01 blocked link lost its URL text or became clickable: ${problems.join(' | ')}`);
+}
+
 /** SEC-10: the link classifier allows only Discord jump links and https:, and anchors host checks. */
 async function sec10ClassifyLink(): Promise<void> {
   const cases: Array<[string, string, Record<string, unknown>?]> = [
@@ -517,6 +527,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
   ['SEC-10 spoofed link host hidden', sec10SpoofedLinkHostHidden],
+  ['REV-UI-01 blocked link keeps its URL text', revUi01BlockedLinkKeepsUrlText],
   ['UI-10 nested inline links', ui10NestedInlineLinks],
   ['UI-07 base URL validation', ui07BaseUrlValidation],
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],

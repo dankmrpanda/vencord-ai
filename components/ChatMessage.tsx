@@ -22,7 +22,11 @@ interface ChatMessageProps {
 function renderLink(text: string, rawHref: string, key: number): React.ReactNode {
   const target = classifyLink(rawHref);
   // Model output is untrusted: blocked schemes render as plain text, never as an href (middle-click skips onClick).
-  if (target.kind === 'blocked') return <span key={key}>{text}</span>;
+  // The destination stays visible as inert text so the user can still read or copy it.
+  if (target.kind === 'blocked') {
+    const destination = rawHref.trim().slice(0, 200);
+    return <span key={key}>{text}{destination && destination !== text ? <> <span style={linkUrlStyle}>({destination})</span></> : null}</span>;
+  }
 
   if (target.kind === 'jump') {
     return (
