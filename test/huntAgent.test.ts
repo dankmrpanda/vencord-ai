@@ -707,6 +707,10 @@ async function sec2_03EncodedKeyEchoesRedacted(): Promise<void> {
     ['AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ab', '{"error":{"code":401,"detail":"key AbCdEfGhIjKlMnOpQrSt\\/UvWxYz0123456789ab rejected"}}', 'AbCdEfGhIjKlMnOpQrSt', 401],
     ['hunter2', '{"error":{"code":"x","detail":"\\u0068unter2"}}', 'unter2', 401],
     ['AbCdEfGhIjKlMnOp+QrStUvWx/Yz0123==', 'forbidden: key=AbCdEfGhIjKlMnOp%2BQrStUvWx%2FYz0123%3D%3D', 'AbCdEfGhIjKlMnOp', 403],
+    // REV-SEC-04: JSON-escaped echoes inside bodies that do not parse as JSON.
+    ['AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ab', 'data: {"error":{"detail":"key AbCdEfGhIjKlMnOpQrSt\\/UvWxYz0123456789ab rejected"}}', 'AbCdEfGhIjKlMnOpQrSt', 401],
+    ['AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ab', '{"error":{"detail":"key AbCdEfGhIjKlMnOpQrSt\\/UvWxYz0123456789ab rejected', 'AbCdEfGhIjKlMnOpQrSt', 401],
+    ['AbCdEfGhIjKlMnOpQrSt/UvWxYz0123456789ab', '<html><pre>{"detail":"key AbCdEfGhIjKlMnOpQrSt\\/UvWxYz0123456789ab"}</pre></html>', 'AbCdEfGhIjKlMnOpQrSt', 401],
   ];
   const leaks: string[] = [];
   try {

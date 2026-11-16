@@ -97,8 +97,10 @@ export async function providerErrorDetail(response: Response, apiKey: string): P
 function redactProviderText(text: string, apiKey: string): string {
   const key = apiKey.trim();
   if (key) {
-    // Also the percent-encoded form, which a server may echo from a query string or form body.
-    for (const form of new Set([key, encodeURIComponent(key)])) text = text.split(form).join('***');
+    // Also the percent-encoded form, which a server may echo from a query string or form body, and the
+    // JSON-escaped forms (with and without `\/`), which survive in bodies that do not parse as JSON.
+    const jsonEscaped = JSON.stringify(key).slice(1, -1);
+    for (const form of new Set([key, encodeURIComponent(key), jsonEscaped, jsonEscaped.replace(/\//g, '\\/')])) text = text.split(form).join('***');
   }
   text = text
     .replace(/Bearer\s+\S+/gi, 'Bearer ***')
