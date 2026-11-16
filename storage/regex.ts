@@ -297,15 +297,32 @@ function containsUnboundedQuantifier(node: RegexNode): boolean {
   return Boolean(node.alternatives?.some((alt) => alt.nodes.some(containsUnboundedQuantifier)));
 }
 
+/** A quantifier that can match more than one width (`?`, `*`, `+`, `{m,n}` with n > m); `{1,500}` backtracks like `+`. */
+function isVariableWidth(q?: Quantifier): boolean {
+  return Boolean(q && q.max > q.min);
+}
+
+function containsVariableQuantifier(node: RegexNode): boolean {
+  if (isVariableWidth(node.quantifier)) return true;
+  return Boolean(node.alternatives?.some((alt) => alt.nodes.some(containsVariableQuantifier)));
+}
+
+/** Two consecutive iterations of a repeated group must not be able to split the same text two ways. */
+function repeatedBodyIsSeparated(node: RegexNode, flags: string): boolean {
+  const once: RegexNode = { ...node, quantifier: undefined };
+  return checkUnboundedSequence([once, once], flags, false);
+}
+
 interface SequenceAtom {
   chars: Set<string> | null;
   separators: Array<Set<string> | null>;
 }
 
 /**
- * Rejects two unbounded atoms that can consume the same characters when nothing mandatory and disjoint
- * separates them (e.g. `\w+\s*\w+!`, `a*[a-z]*b`, `(a+)?(a+)?b`). A top-level atom followed only by optional,
- * non-assertion nodes is exempt, because nothing after it can fail and force backtracking.
+ * Rejects two variable-width atoms (unbounded or bounded, e.g. `\w{1,500}`) that can consume the same characters
+ * when nothing mandatory and disjoint separates them (e.g. `\w+\s*\w+!`, `a*[a-z]*b`, `(a+)?(a+)?b`,
+ * `a{0,1000}a{0,1000}b`). A top-level atom followed only by optional, non-assertion nodes is exempt, because
+ * nothing after it can fail and force backtracking.
  */
 function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: boolean): boolean {
   const atoms: SequenceAtom[] = [];
@@ -317,7 +334,8 @@ function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: bo
       const mandatory = !node.quantifier || node.quantifier.min > 0;
       if (node.type === 'assertion' || node.type === 'backref' || node.isLookaround) continue;
 
-      if (node.quantifier?.max === Infinity) {
+      // An optional group (`?`, max 1) is walked like a plain group; any other variable-width node is one atom.
+      if (isVariableWidth(node.quantifier) && (node.type !== 'group' || node.quantifier!.max > 1)) {
         const chars = node.type === 'group' ? null : atomCharSet(node, flags);
         const isTail = topLevel && allowTail && !sequence.slice(index + 1).some((next) =>
           next.type === 'assertion' || !next.quantifier || next.quantifier.min > 0);
@@ -328,7 +346,7 @@ function checkUnboundedSequence(nodes: RegexNode[], flags: string, allowTail: bo
         }
         if (mandatory) separate(chars);
         atoms.push({ chars, separators: [] });
-      } else if (node.type === 'group' && containsUnboundedQuantifier(node)) {
+      } else if (node.type === 'group' && containsVariableQuantifier(node)) {
         // Separators inside an optional group or a single branch only apply while that branch is taken.
         const base = atoms.map((atom) => atom.separators.length);
         const scoped = !mandatory || (node.alternatives?.length ?? 0) > 1;
@@ -374,6 +392,10 @@ function checkASTSafety(alternatives: RegexAlternative[], flags = '', topLevel =
         const repeatsMoreThanOnce = Boolean(node.quantifier && node.quantifier.max > 1);
 
         if (repeatsMoreThanOnce && node.alternatives?.some((a) => a.nodes.some(containsUnboundedQuantifier))) {
+          return false;
+        }
+
+        if (repeatsMoreThanOnce && containsVariableQuantifier({ ...node, quantifier: undefined }) && !repeatedBodyIsSeparated(node, flags)) {
           return false;
         }
 

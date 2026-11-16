@@ -114,6 +114,37 @@ async function srch01RedosScreenBypass(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
+/**
+ * ReDoS screen corpus, compile-only (nothing here is executed). Each must-reject entry records the blow-up measured
+ * in a killed child process; each must-pass entry newly accepted by a fix records its worst case on 4,000 chars.
+ */
+const REDOS_CORPUS: Array<{ id: string; pattern: string; expect: 'reject' | 'pass'; measured: string }> = [
+  { id: 'REV-DSC-01', pattern: '(a{1,10}){1,10}b', expect: 'reject', measured: ">10 s on 'a' x40" },
+  { id: 'REV-DSC-01', pattern: 'a{0,1000}a{0,1000}a{0,1000}b', expect: 'reject', measured: ">10 s on 'a' x1000" },
+  { id: 'REV-DSC-01', pattern: '\\w{1,500}\\w{1,500}\\w{1,500}!', expect: 'reject', measured: ">10 s on 'a' x1500" },
+  { id: 'REV-DSC-01', pattern: '(\\w{1,9}\\s?){1,9}$', expect: 'reject', measured: ">10 s on 'a' x60 + '!'" },
+  { id: 'REV-DSC-01', pattern: '\\w{0,100}\\w{0,100}\\w{0,100}!', expect: 'reject', measured: "6.1 s on 'a' x4000" },
+  { id: 'REV-DSC-01', pattern: '(\\d{3}-){2}\\d{4}', expect: 'pass', measured: 'fixed width, passed before' },
+  { id: 'REV-DSC-01', pattern: '(\\d{1,3}\\.){3}\\d{1,3}', expect: 'pass', measured: 'separated by \\., passed before' },
+  { id: 'REV-DSC-01', pattern: '(?:\\d{1,3}\\.){3}\\d{1,3}', expect: 'pass', measured: 'separated by \\., passed before' },
+  { id: 'REV-DSC-01', pattern: '\\+?\\d{1,3}[ -]?\\d{3}[ -]?\\d{4}', expect: 'pass', measured: 'passed before' },
+  { id: 'REV-DSC-01', pattern: '[A-Z]{2,5}-\\d{1,6}', expect: 'pass', measured: 'passed before' },
+  { id: 'REV-DSC-01', pattern: 'https?://(www\\.)?\\S+', expect: 'pass', measured: 'passed before' },
+  { id: 'REV-DSC-01', pattern: '\\d{1,2}:\\d{2}', expect: 'pass', measured: 'passed before' },
+];
+
+function redosCorpusProblems(id: string): string | null {
+  const wrong = REDOS_CORPUS
+    .filter((entry) => entry.id === id && (compileRegexSafely(entry.pattern) !== null) !== (entry.expect === 'pass'))
+    .map((entry) => `${entry.expect === 'reject' ? 'accepted' : 'rejected'} ${entry.pattern}`);
+  return wrong.length ? wrong.join('  ') : null;
+}
+
+/** REV-DSC-01: the screen only checked overlap for unbounded quantifiers, so bounded ones like {1,500} slipped through. */
+async function revDsc01BoundedQuantifierRedos(): Promise<string | null> {
+  return redosCorpusProblems('REV-DSC-01');
+}
+
 /** SRCH-02: has='sticker' has no local implementation, so local scan returns every message. */
 async function srch02StickerFilterPassesEverything(): Promise<string | null> {
   const plain = msg('110000000000000011', DM, 'no sticker here', new Date().toISOString());
@@ -387,6 +418,7 @@ async function srch12SearchCacheUnbounded(): Promise<string | null> {
 
 const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
+  ['REV-DSC-01 bounded-quantifier ReDoS', revDsc01BoundedQuantifierRedos],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
