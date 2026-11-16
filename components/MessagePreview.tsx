@@ -24,6 +24,8 @@ export function attachmentDisplay(url: string): { kind: 'image' | 'file'; name: 
   const segment = path.split('/').filter(Boolean).pop() || 'attachment';
   let name = segment;
   try { name = decodeURIComponent(segment); } catch {}
+  // Bidi and tag characters could make `invoice<U+202E>fdp.exe` display as `invoiceexe.pdf`.
+  name = name.replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/gu, '') || 'attachment';
   return { kind: IMAGE_EXTENSIONS.test(name) ? 'image' : 'file', name };
 }
 

@@ -108,6 +108,14 @@ async function revUi01BlockedLinkKeepsUrlText(): Promise<void> {
   assert(problems.length === 0, `REV-UI-01 blocked link lost its URL text or became clickable: ${problems.join(' | ')}`);
 }
 
+/** HARD-03 (UI side): attachment chip names kept bidi controls, so `invoice<U+202E>fdp.exe` displayed as `invoiceexe.pdf`. */
+async function hard03ChipNameBidiStripped(): Promise<void> {
+  const names = ['invoice%E2%80%AEfdp.exe', 'a%E2%81%A6b.txt', 'x%F3%A0%80%81y.png'].map((segment) => attachmentDisplay(`https://cdn.discordapp.com/attachments/1/2/${segment}`).name);
+  const bad = names.filter((name) => /[\u200E\u200F\u202A-\u202E\u2066-\u2069\u061C]|[\u{E0000}-\u{E007F}]/u.test(name));
+  assert(bad.length === 0, `HARD-03 attachment chip names kept bidi/tag characters: ${JSON.stringify(bad)}`);
+  assert(names[0] === 'invoicefdp.exe', `HARD-03 chip name: ${JSON.stringify(names[0])}`);
+}
+
 /** SEC-10: the link classifier allows only Discord jump links and https:, and anchors host checks. */
 async function sec10ClassifyLink(): Promise<void> {
   const cases: Array<[string, string, Record<string, unknown>?]> = [
@@ -528,6 +536,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
   ['SEC-10 spoofed link host hidden', sec10SpoofedLinkHostHidden],
   ['REV-UI-01 blocked link keeps its URL text', revUi01BlockedLinkKeepsUrlText],
+  ['HARD-03 chip name bidi stripped', hard03ChipNameBidiStripped],
   ['UI-10 nested inline links', ui10NestedInlineLinks],
   ['UI-07 base URL validation', ui07BaseUrlValidation],
   ['UI-02 stale history copy overwrites answer', ui02StaleCopyOverwritesAnswer],

@@ -206,6 +206,8 @@ export function sanitizeUntrustedContent(text?: string | null): string {
     //    (U+200C/U+200D) are kept because emoji sequences and several scripts need them. All deletions run
     //    before the token rewrites below, so an invisible character cannot be used to split a token.
     .replace(/[\u200B\u2060-\u2064\uFEFF]/g, '')
+    // Unicode tag characters (U+E0000-E007F) are invisible and can carry hidden text.
+    .replace(/[\u{E0000}-\u{E007F}]/gu, '')
     // 4. Neutralize LLM special tokens / prompt hijacking markers. `<|name|>` covers ChatML, Llama 3,
     //    harmony and similar templates; Gemma uses bare turn tags. Llama 2 `<s>` is left alone (ordinary HTML).
     .replace(/<\|([a-z0-9_]{1,40})\|>/gi, '[$1]')
