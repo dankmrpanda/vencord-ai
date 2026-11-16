@@ -146,9 +146,6 @@ export class InvertedIndex {
   // Term -> PostingList
   private termDict: Map<string, PostingList> = new Map();
 
-  // Dynamic accumulator lists used during batch ingestion
-  private dynamicPostings: Map<string, { docIds: number[]; tfs: number[] }> = new Map();
-
   // Filter Indices
   private channelDocs: Map<string, Set<DocId>> = new Map();
   private authorDocs: Map<string, Set<DocId>> = new Map();
@@ -219,7 +216,6 @@ export class InvertedIndex {
           && (prev.attachmentNames ?? []).join('\n') === (attachmentNames ?? []).join('\n')) {
           continue;
         }
-        this.freezeDynamicPostings();
         this.deleteMessages([msg.id]);
       }
 
@@ -255,21 +251,13 @@ export class InvertedIndex {
 
       this.addToFilterMaps(record);
 
-      // Postings accumulation
-      for (const [term, tf] of tokenized.frequencies.entries()) {
-        let post = this.dynamicPostings.get(term);
-        if (!post) {
-          post = { docIds: [], tfs: [] };
-          this.dynamicPostings.set(term, post);
-        }
-        post.docIds.push(docId);
-        post.tfs.push(Math.min(tf, 255));
+      for (const [term, tf] of tokenized.frequencies) {
+        this.appendPosting(term, docId, tf);
       }
 
       added++;
     }
 
-    this.freezeDynamicPostings();
     return added;
   }
 
@@ -285,6 +273,9 @@ export class InvertedIndex {
       this.messageIdToDocId.delete(msgId);
       const record = this.docRecords.get(docId);
       if (record) {
+        // Remove the record first so compaction below already treats this docId as dead.
+        this.docRecords.delete(docId);
+
         const chSet = this.channelDocs.get(record.channelId);
         if (chSet) chSet.delete(docId);
 
@@ -300,13 +291,14 @@ export class InvertedIndex {
             post.df = Math.max(0, post.df - 1);
             if (post.df <= 0) {
               this.termDict.delete(term);
+            } else if (post.length >= 16 && (post.length - post.df) * 2 > post.length) {
+              this.compactPosting(post); // lazy: only once dead entries outnumber live ones
             }
           }
         }
 
         this.totalTokens -= record.tokenLength;
         this.docCount--;
-        this.docRecords.delete(docId);
         this.docLengths[docId] = 0;
         deleted++;
       }
@@ -315,48 +307,52 @@ export class InvertedIndex {
   }
 
   /**
-   * Compiles dynamic postings into frozen contiguous Uint32Array / Uint8Array structures.
+   * Appends one entry to a term's posting list. Lists are capacity-doubling typed arrays with a
+   * `length` field, so a batch only touches the terms it adds (no re-filtering of existing
+   * entries). Entries of deleted docs stay in place until the list grows or is compacted.
+   * Exported arrays are never written in place: a full list is always reallocated.
    */
-  private freezeDynamicPostings(): void {
-    for (const [term, dyn] of this.dynamicPostings.entries()) {
-      const existing = this.termDict.get(term);
-      if (!existing) {
-        this.termDict.set(term, {
-          term,
-          df: dyn.docIds.length,
-          docIds: new Uint32Array(dyn.docIds),
-          termFreqs: new Uint8Array(dyn.tfs),
-        });
-      } else {
-        // Filter surviving docIds from existing postings
-        const survivingDocIds: number[] = [];
-        const survivingTfs: number[] = [];
-        for (let i = 0; i < existing.docIds.length; i++) {
-          const d = existing.docIds[i];
-          if (this.docRecords.has(d)) {
-            survivingDocIds.push(d);
-            survivingTfs.push(existing.termFreqs[i]);
-          }
-        }
+  private appendPosting(term: string, docId: DocId, tf: number): void {
+    let post = this.termDict.get(term);
+    if (!post) {
+      post = { term, df: 0, length: 0, docIds: new Uint32Array(4), termFreqs: new Uint8Array(4) };
+      this.termDict.set(term, post);
+    } else if (post.length === post.docIds.length) {
+      if (post.df < post.length) this.compactPosting(post);
+      const cap = Math.max(4, post.length * 2);
+      const docIds = new Uint32Array(cap);
+      const termFreqs = new Uint8Array(cap);
+      docIds.set(post.docIds.subarray(0, post.length));
+      termFreqs.set(post.termFreqs.subarray(0, post.length));
+      post.docIds = docIds;
+      post.termFreqs = termFreqs;
+    }
+    post.docIds[post.length] = docId;
+    post.termFreqs[post.length] = Math.min(tf, 255);
+    post.length++;
+    post.df++;
+  }
 
-        const combinedLen = survivingDocIds.length + dyn.docIds.length;
-        const newDocIds = new Uint32Array(combinedLen);
-        const newTfs = new Uint8Array(combinedLen);
-
-        newDocIds.set(survivingDocIds, 0);
-        newDocIds.set(dyn.docIds, survivingDocIds.length);
-        newTfs.set(survivingTfs, 0);
-        newTfs.set(dyn.tfs, survivingTfs.length);
-
-        this.termDict.set(term, {
-          term,
-          df: combinedLen,
-          docIds: newDocIds,
-          termFreqs: newTfs,
-        });
+  /** Drops entries of deleted docs into new exact-length arrays and recomputes df from them. */
+  private compactPosting(post: PostingList): void {
+    let live = 0;
+    for (let i = 0; i < post.length; i++) {
+      if (this.docRecords.has(post.docIds[i])) live++;
+    }
+    const docIds = new Uint32Array(live);
+    const termFreqs = new Uint8Array(live);
+    let j = 0;
+    for (let i = 0; i < post.length; i++) {
+      if (this.docRecords.has(post.docIds[i])) {
+        docIds[j] = post.docIds[i];
+        termFreqs[j] = post.termFreqs[i];
+        j++;
       }
     }
-    this.dynamicPostings.clear();
+    post.docIds = docIds;
+    post.termFreqs = termFreqs;
+    post.length = live;
+    post.df = live;
   }
 
   /**
@@ -412,7 +408,7 @@ export class InvertedIndex {
         const idf = Math.max(1e-4, Math.log(1 + Math.max(0, N - df + 0.5) / (df + 0.5)));
         const docIds = posting.docIds;
         const tfs = posting.termFreqs;
-        const len = docIds.length;
+        const len = posting.length;
 
         for (let i = 0; i < len; i++) {
           const docId = docIds[i];
@@ -538,7 +534,11 @@ export class InvertedIndex {
       nextDocId: this.nextDocId,
       documents: Array.from(this.docRecords.values()),
       docLengths: this.docLengths.slice(0, this.nextDocId),
-      postings: Array.from(this.termDict.values()),
+      postings: Array.from(this.termDict.values(), (post) => {
+        // Exact-length, live-only arrays; after this they are shared, never written in place.
+        if (post.df !== post.length || post.docIds.length !== post.length) this.compactPosting(post);
+        return { term: post.term, df: post.df, docIds: post.docIds, termFreqs: post.termFreqs };
+      }),
       channelDocMap,
       authorDocMap,
     };
@@ -600,6 +600,7 @@ export class InvertedIndex {
         termDict.set(post.term, {
           term: post.term,
           df: liveIds.length,
+          length: liveIds.length,
           docIds: new Uint32Array(liveIds),
           termFreqs: new Uint8Array(liveTfs),
         });
@@ -627,7 +628,6 @@ export class InvertedIndex {
     this.docRecords.clear();
     this.messageIdToDocId.clear();
     this.termDict.clear();
-    this.dynamicPostings.clear();
     this.channelDocs.clear();
     this.authorDocs.clear();
     this.docCount = 0;

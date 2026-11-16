@@ -136,6 +136,24 @@ export function sanitizeDiscordText(text: string): string {
     .replace(/[。、，．！？：；【】「」『』（）〔〕《》〈〉〜～・]/g, ' '); // CJK punctuation -> space
 }
 
+// One shared word segmenter (construction costs ~6 us, far more than segmenting a token).
+// undefined = not built yet; null = unavailable.
+let cjkSegmenter: { segment(input: string): Iterable<{ segment: string }> } | null | undefined;
+
+function getCjkSegmenter(): typeof cjkSegmenter {
+  if (cjkSegmenter === undefined) {
+    cjkSegmenter = null;
+    if (typeof Intl !== 'undefined' && (Intl as any).Segmenter) {
+      try {
+        cjkSegmenter = new (Intl as any).Segmenter(['ja', 'zh', 'ko'], { granularity: 'word' });
+      } catch {
+        // fallback if the segmenter cannot be built
+      }
+    }
+  }
+  return cjkSegmenter;
+}
+
 /**
  * Tokenizes text into normalized lower-case terms, computing exact term frequencies.
  */
@@ -193,9 +211,9 @@ export function tokenizeText(
           addTerm(token);
 
           // Word segmentation via Intl.Segmenter if available
-          if (typeof Intl !== 'undefined' && (Intl as any).Segmenter) {
+          const segmenter = getCjkSegmenter();
+          if (segmenter) {
             try {
-              const segmenter = new (Intl as any).Segmenter(['ja', 'zh', 'ko'], { granularity: 'word' });
               for (const seg of segmenter.segment(token)) {
                 const segText = seg.segment.trim().toLowerCase();
                 if (segText && segText !== token) {

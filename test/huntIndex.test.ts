@@ -517,6 +517,88 @@ async function srch07PatternOnlySearchesWholeIndex(): Promise<void> {
   assert(ids[0] === 'code_1' && outOfScope === 0, `SRCH-07 pattern-only search with 150 newer in-scope messages returned [${ids.slice(0, 5).join(',')}${ids.length > 5 ? ',...' : ''}] with ${outOfScope} out-of-scope hits (expected code_1 first, 0 out of scope)`);
 }
 
+/* ------------------------------------------------------------------------ */
+/* Differential guard for the posting-list layout: an index mutated by       */
+/* random adds, edits, deletes, duplicate adds and snapshot round trips must */
+/* equal one rebuilt from the surviving messages (compact version of         */
+/* scratchpad idx-scratch/differential.mts).                                 */
+/* ------------------------------------------------------------------------ */
+function seededRng(seed: number): () => number {
+  let x = seed >>> 0;
+  return () => {
+    x = (x * 1664525 + 1013904223) >>> 0;
+    return x / 2 ** 32;
+  };
+}
+
+function livePostings(index: InvertedIndex): string {
+  const internal = index as any;
+  const out: string[] = [];
+  for (const [term, p] of internal.termDict as Map<string, any>) {
+    const live: string[] = [];
+    for (let i = 0; i < (p.length ?? p.docIds.length); i++) {
+      const rec = internal.docRecords.get(p.docIds[i]);
+      if (rec) live.push(`${rec.id}:${p.termFreqs[i]}`);
+    }
+    out.push(`${term}|${p.df}|${live.sort().join(',')}`);
+  }
+  return out.sort().join('\n');
+}
+
+async function idxDifferentialIncrementalVsRebuilt(): Promise<void> {
+  const vocab = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', '\u6df1\u5ea6\u5b66\u4e60', 'caf\u00e9', 'deploy', 'server'];
+  const problems: string[] = [];
+  for (const seed of [7, 2024]) {
+    const r = seededRng(seed);
+    let version = 0;
+    const make = (id: string): DiscordMessage => {
+      const words = Array.from({ length: 1 + Math.floor(r() * 10) }, () => vocab[Math.floor(r() * vocab.length)]);
+      return msg(id, `c${Math.floor(r() * 3)}`, `${words.join(' ')} v${++version}`, `u${Math.floor(r() * 4)}`, {
+        timestamp: new Date(Date.UTC(2026, 0, 1) + Math.floor(r() * 1e9)).toISOString(),
+      });
+    };
+    let inc = new InvertedIndex(8);
+    const truth = new Map<string, DiscordMessage>();
+    for (let step = 0; step < 400; step++) {
+      const op = r();
+      if (op < 0.45) {
+        const batch = Array.from({ length: 1 + Math.floor(r() * 8) }, () => make(`m${Math.floor(r() * 150)}`));
+        for (const m of batch) {
+          truth.delete(m.id);
+          truth.set(m.id, m);
+        }
+        inc.addBatch(batch);
+      } else if (op < 0.75) {
+        const ids = Array.from({ length: 1 + Math.floor(r() * 5) }, () => `m${Math.floor(r() * 150)}`);
+        ids.forEach((id) => truth.delete(id));
+        inc.deleteMessages([...ids, `unknown_${step}`]);
+      } else if (op < 0.85) {
+        const fresh = new InvertedIndex(8);
+        fresh.importSnapshot(structuredClone(inc.exportSnapshot()));
+        inc = fresh;
+      } else {
+        inc.addBatch(Array.from(truth.values()).slice(0, 3));
+      }
+    }
+    const rebuilt = new InvertedIndex(8);
+    rebuilt.addBatch(Array.from(truth.values()));
+    const a = inc.getStats();
+    const b = rebuilt.getStats();
+    if (a.totalDocs !== b.totalDocs || a.totalTokens !== b.totalTokens || a.uniqueTerms !== b.uniqueTerms) {
+      problems.push(`seed ${seed} stats docs ${a.totalDocs}/${b.totalDocs} tokens ${a.totalTokens}/${b.totalTokens} terms ${a.uniqueTerms}/${b.uniqueTerms}`);
+    }
+    if (livePostings(inc) !== livePostings(rebuilt)) problems.push(`seed ${seed} live postings differ`);
+    for (const query of ['alpha', 'bravo charlie', 'deploy server', '\u6df1\u5ea6', 'caf\u00e9', 'v1']) {
+      for (const channelIds of [undefined, ['c1'], ['c0', 'c2']]) {
+        const q = { query, channelIds, limit: 100, boostRecency: 0, boostExact: 0, minScore: 0 };
+        const fmt = (res: ReturnType<InvertedIndex['search']>) => res.hits.map((h) => `${h.messageId}:${h.score.toFixed(9)}`).join(',');
+        if (fmt(inc.search(q)) !== fmt(rebuilt.search(q))) problems.push(`seed ${seed} search('${query}', ${channelIds}) differs`);
+      }
+    }
+  }
+  assert(problems.length === 0, `differential incremental vs rebuilt index: ${problems.slice(0, 4).join(' | ')}`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -533,6 +615,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-10 emoji and variation selectors separate words', idx10EmojiSeparatesWords],
   ['IDX-13 equal scores tie-break by message id', idx13StableTieBreak],
   ['SRCH-07 pattern-only search examines the whole in-scope index', srch07PatternOnlySearchesWholeIndex],
+  ['IDX differential: incremental index equals one rebuilt from surviving messages', idxDifferentialIncrementalVsRebuilt],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

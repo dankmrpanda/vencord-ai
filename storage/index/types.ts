@@ -48,8 +48,9 @@ export interface StoredMessageRecord {
  */
 export interface PostingList {
   term: string;
-  df: number; // Document frequency n(t)
-  docIds: Uint32Array; // Strictly ascending sorted DocIDs
+  df: number; // Document frequency n(t): live entries
+  length: number; // Used entries (live + not yet compacted dead); the arrays may have spare capacity
+  docIds: Uint32Array; // Strictly ascending sorted DocIDs (first `length` entries)
   termFreqs: Uint8Array; // Term frequencies f(t, D) (clamped at 255)
 }
 
