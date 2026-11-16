@@ -16,6 +16,8 @@ import { normalizeBaseUrl, resolveModelIdentifier } from './modelSettings';
 export interface TransportCallbacks {
   onToken?: (token: string) => void;
   onToolCallDelta?: (toolCalls: LLMToolCall[]) => void;
+  /** Called for every chunk read from a streamed response, including reasoning-only and keep-alive chunks. */
+  onChunk?: () => void;
 }
 
 function normalizeTools(tools: ToolDefinition[], capabilities: ProviderCapabilities): ToolDefinition[] {
@@ -168,6 +170,7 @@ export async function consumeChatCompletionStream(
     while (!finished) {
       const { done, value } = await reader.read();
       if (done) break;
+      callbacks.onChunk?.();
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';

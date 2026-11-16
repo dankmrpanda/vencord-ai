@@ -908,6 +908,56 @@ async function sec11LocalToolsUntrusted(): Promise<void> {
   }));
 }
 
+/** Streams `count` content chunks `gapMs` apart, then [DONE]; `stallAfter` stops sending (until abort) after that many. */
+function slowStream(signal: AbortSignal, count: number, gapMs: number, stallAfter = Infinity): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      signal.addEventListener('abort', () => { try { controller.error(signal.reason); } catch { /* already closed */ } }, { once: true });
+      for (let index = 0; index < count; index++) {
+        if (signal.aborted) return;
+        if (index >= stallAfter) return;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: `t${index} ` } }] })}\n\n`));
+        await new Promise((resolve) => setTimeout(resolve, gapMs));
+      }
+      if (signal.aborted) return;
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+}
+
+/** REV-LLM-01: the finalization deadline was a total-duration cap, so a slow but live stream was cut and its text replaced. */
+async function revLlm01FinalizationIdleTimer(): Promise<void> {
+  const originalFetch = globalThis.fetch;
+  const originalElapsed = DEFAULT_AGENT_RUN_BUDGET.maxElapsedMs;
+  const run = async (stallAfter: number) => {
+    let calls = 0;
+    (globalThis as any).fetch = async (_url: string, init: any) => {
+      calls++;
+      if (calls === 1) return new Response(sseBody({ content: 'thinking' }, 'call_1'), { status: 200 });
+      return new Response(slowStream(init.signal, 30, 20, stallAfter), { status: 200 });
+    };
+    let streamed = '';
+    const startedAt = Date.now();
+    const result = await quiet(() => new AIAssistantAgent(settings()).run('what is a closure?', [], { onToken: (token) => { streamed += token; } }, undefined, undefined, dmScope()));
+    return { content: result.content, streamed, ms: Date.now() - startedAt };
+  };
+  try {
+    // A 250 ms budget; the healthy stream takes about 600 ms in total but never pauses for more than 20 ms.
+    DEFAULT_AGENT_RUN_BUDGET.maxElapsedMs = 250;
+    const live = await run(Infinity);
+    assert(live.content.includes('t29'), `REV-LLM-01 a steadily streaming final answer was cut off and replaced: ${JSON.stringify(live.content.slice(0, 120))}`);
+    // A stream that stalls after 3 chunks still ends near the idle window, and keeps the streamed text.
+    const stalled = await run(3);
+    assert(stalled.ms < 2_000, `REV-LLM-01 a stalled final stream was not ended (${stalled.ms} ms)`);
+    assert(stalled.content.includes('t2') && /cut off/i.test(stalled.content), `REV-LLM-01 a stalled final stream lost the streamed text: ${JSON.stringify(stalled.content.slice(0, 160))}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+    DEFAULT_AGENT_RUN_BUDGET.maxElapsedMs = originalElapsed;
+  }
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-01 citations crowd out evidence', llm01CitationsCrowdOutEvidence],
   ['SEC-03 tool output sanitized', sec03ToolOutputSanitized],
@@ -928,6 +978,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-07 failed call cannot be retried', llm07FailedCallCannotBeRetried],
   ['LLM-08 late citations after tool timeout', llm08LateCitationsAfterTimeout],
   ['LLM-09 elapsed budget ignored during call', llm09ElapsedBudgetIgnoredDuringCall],
+  ['REV-LLM-01 finalization deadline is an idle timer', revLlm01FinalizationIdleTimer],
   ['SEC-11 untrusted names in system message', sec11UntrustedNamesInSystemMessage],
   ['SEC-05 history summary not system', sec05HistorySummaryNotSystem],
   ['LLM-11 deleted session resurrected by run', llm11DeletedSessionResurrected],
