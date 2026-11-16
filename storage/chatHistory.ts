@@ -128,26 +128,28 @@ export async function deleteSession(sessionId: string): Promise<void> {
 }
 
 export async function getSessionById(id: string): Promise<ChatSession | null> {
+  let session: ChatSession | null = null;
   try {
     const db = await openDB();
-    const session = await new Promise<ChatSession | null>((resolve) => {
+    session = await new Promise<ChatSession | null>((resolve) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
       const req = store.get(id);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => resolve(null);
     });
-    if (session) return session;
   } catch {}
 
+  // Same rule as getSessionsForChannel: a newer localStorage-fallback copy wins over the IndexedDB copy.
   try {
     if (typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem(`${LS_PREFIX}${id}`);
-      if (raw) return JSON.parse(raw);
+      const fallback: ChatSession | null = raw ? JSON.parse(raw) : null;
+      if (fallback && (!session || fallback.updatedAt > session.updatedAt)) return fallback;
     }
   } catch {}
 
-  return null;
+  return session;
 }
 
 export async function getLatestSession(): Promise<ChatSession | null> {

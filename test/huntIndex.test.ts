@@ -3,7 +3,7 @@
  * Cases that patch globals (indexedDB, localStorage) restore them in `finally`.
  */
 
-import { getSessionsForChannel, saveSession } from '../storage/chatHistory';
+import { getSessionById, getSessionsForChannel, saveSession } from '../storage/chatHistory';
 import { InvertedIndex } from '../storage/index/invertedIndex';
 import { ChatSession, DiscordMessage } from '../types';
 import { assert } from './assert';
@@ -71,7 +71,7 @@ function installFakeIndexedDB(opts: { outcome: TxOutcome; getAllResult?: unknown
     const store = {
       put: () => track(undefined),
       delete: () => track(undefined),
-      get: () => track(undefined),
+      get: (id: string) => track((opts.getAllResult as any[] | undefined)?.find((entry) => entry?.id === id)),
       getAll: () => track(opts.getAllResult ?? []),
       clear: () => track(undefined),
       index: () => ({
@@ -229,6 +229,11 @@ async function idx04MergesLocalStorageSessions(): Promise<void> {
     const byId = new Map(list.map((s) => [s.id, s]));
     assert(byId.get('session_both_ls_newer')?.title === 'ls copy', 'IDX-04 the newer localStorage copy must win over an older IDB copy');
     assert(byId.get('session_both_idb_newer')?.title === 'idb copy', 'IDX-04 the newer IDB copy must win over a stale localStorage copy');
+    // REV-DSC-05: the single-session reader (used to restore the active session) applies the same newest-wins rule.
+    const restored = await getSessionById('session_both_ls_newer');
+    assert(restored?.title === 'ls copy', `REV-DSC-05 getSessionById returned the stale IDB copy (${restored?.title}) over a newer localStorage copy`);
+    const kept = await getSessionById('session_both_idb_newer');
+    assert(kept?.title === 'idb copy', `REV-DSC-05 getSessionById returned a stale localStorage copy (${kept?.title}) over a newer IDB copy`);
   } finally {
     ls.restore();
     restoreIdb();
