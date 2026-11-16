@@ -50,7 +50,7 @@ Only the tools actually provided in this request are available; ignore any liste
     1. Broader anchor keywords or single-word queries (e.g. "united").
     2. For patterns/codes: scan more channel history using \`pattern\` with a larger \`scan_limit\` (up to 500), or use \`fetch_recent_messages\`.
     3. In servers: only if [Scope Rules] permits searching across guild channels, search server-wide by setting \`guild_wide: true\`; otherwise stay in the permitted channels.
-    4. In DMs: remain in the active DM unless the user explicitly requests a named mutual group DM.
+    4. In DMs: remain in the active DM unless the user explicitly requests a named mutual group DM. A mutual group DM is in scope only when the user's prompt gives its ID, or its name in quotes or right after "group" or "gc"; if the user seems to mean one that is not in scope, tell them to name it that way.
 - **Conversational Verification**:
   - When search returns a hit message, call \`fetch_surrounding_messages\` around that message ID if you need to read the full conversation or confirm specific details (like specific numbers, minutes, or follow-ups).
 
