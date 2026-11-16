@@ -21,19 +21,23 @@ const ACTIVE = 'chan_active';
 const ALLOWED = 'chan_allowed';
 const DENIED = 'chan_denied';
 const VOICE = 'chan_voice';
+const STRAY_GDM = 'chan_stray_gdm';
 
 const channels: Record<string, DiscordChannel> = {
   [ACTIVE]: { id: ACTIVE, name: 'general', type: ChannelType.GUILD_TEXT, guild_id: GUILD_ID },
   [ALLOWED]: { id: ALLOWED, name: 'dev', type: ChannelType.GUILD_TEXT, guild_id: GUILD_ID },
   [DENIED]: { id: DENIED, name: 'mods-only', type: ChannelType.GUILD_TEXT, guild_id: GUILD_ID },
   [VOICE]: { id: VOICE, name: 'voice', type: ChannelType.GUILD_VOICE, guild_id: GUILD_ID },
+  [STRAY_GDM]: { id: STRAY_GDM, name: 'stray', type: ChannelType.GROUP_DM },
 };
+let includeStrayGroupDm = false;
 
 /** GuildChannelStore-like shape: grouped `{ channel }` entries plus scalar metadata. */
 function guildChannelGroups() {
   return {
     SELECTABLE: [{ channel: channels[ACTIVE] }, { channel: channels[ALLOWED] }, { channel: channels[DENIED] }],
     VOCAL: [{ channel: channels[VOICE] }],
+    ...(includeStrayGroupDm ? { PRIVATE: [{ channel: channels[STRAY_GDM] }] } : {}),
     id: GUILD_ID,
     count: 4,
   };
@@ -106,6 +110,17 @@ function caseMissingPermissionStoreFailsClosed(): boolean {
   return getAccessibleGuildChannels(GUILD_ID).length === 0;
 }
 
+// Mutant I: no PermissionStore must mean no channels, even for an entry that needs no guild permission.
+function caseMissingPermissionStoreWithStrayDmFailsClosed(): boolean {
+  includeStrayGroupDm = true;
+  try {
+    installStores(null);
+    return getAccessibleGuildChannels(GUILD_ID).length === 0;
+  } finally {
+    includeStrayGroupDm = false;
+  }
+}
+
 function caseNonFunctionCanFailsClosed(): boolean {
   installStores({ can: true });
   return getAccessibleGuildChannels(GUILD_ID).length === 0;
@@ -153,6 +168,7 @@ const CASES: Array<[string, () => boolean]> = [
   ['getAccessibleGuildChannels excludes a channel the PermissionStore denies', caseDeniedChannelExcluded],
   ['getAccessibleGuildChannels excludes non-text channels', caseNonTextChannelExcluded],
   ['getAccessibleGuildChannels fails closed without a PermissionStore', caseMissingPermissionStoreFailsClosed],
+  ['getAccessibleGuildChannels fails closed without a PermissionStore for a DM-typed entry', caseMissingPermissionStoreWithStrayDmFailsClosed],
   ['getAccessibleGuildChannels fails closed when PermissionStore.can is not a function', caseNonFunctionCanFailsClosed],
   ['getAccessibleGuildChannels fails closed when PermissionStore.can throws', caseThrowingCanFailsClosed],
   ['getCurrentScopeContext builds a permission-limited guild allowlist', caseContextAllowlistIsPermissionLimited],
