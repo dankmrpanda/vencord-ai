@@ -108,7 +108,7 @@ function runTests() {
     isChannelAllowedInScope('gdm_project', dmContext) === false,
     'Mutual group DM must be blocked until explicitly requested'
   );
-  const explicitDmContext = restrictScopeForUserPrompt(dmContext, 'Search the Project Alpha group DM for the launch notes.');
+  const explicitDmContext = restrictScopeForUserPrompt(dmContext, 'Search group DM Project Alpha for the launch notes.');
   assert(
     isChannelAllowedInScope('gdm_project', explicitDmContext) === true,
     'A specifically named mutual group DM should be allowed for this run'

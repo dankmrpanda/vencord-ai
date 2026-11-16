@@ -43,7 +43,7 @@ Run the same applicable prompts once with a configured local provider and once w
     - Pass: searches only the active DM.
 14. In that DM, ask: `Search all of my mutual group DMs for [topic].`
     - Pass: does not widen automatically; it asks for or requires a specific group.
-15. Then name one exact mutual group: `In the mutual group DM “[exact group name]”, find messages about [topic]. Do not search any other DM or group.`
+15. Then name one exact mutual group (the name must be quoted or follow `group`/`gc`; a bare name is ignored): `In the mutual group DM “[exact group name]”, find messages about [topic]. Do not search any other DM or group.`
     - Pass: only the named mutual group is admitted and cited.
 
 ## Pagination, media, and stopping

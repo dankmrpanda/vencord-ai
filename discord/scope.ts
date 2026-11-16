@@ -252,6 +252,69 @@ function containsWholeToken(text: string, token: string): boolean {
   return false;
 }
 
+const CJK_CHARACTER = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}]/u;
+
+/** Letters, digits and underscore of scripts that separate words with spaces (everything except Han/kana). */
+function isSpacedWordCharacter(char: string | undefined): boolean {
+  return !!char && WORD_CHARACTER.test(char) && !CJK_CHARACTER.test(char);
+}
+
+const charBefore = (text: string, index: number) => Array.from(text.slice(Math.max(0, index - 2), index)).pop();
+const charAt = (text: string, index: number) => Array.from(text.slice(index, index + 2))[0];
+
+// [opener, closer, guarded]; a guarded quote doubles as an apostrophe, so it must not touch a spaced word character.
+const QUOTE_PAIRS: Array<[string, string, boolean]> = [
+  ['"', '"', false],
+  ['\'', '\'', true],
+  ['“', '”', false],
+  ['‘', '’', true],
+  ['«', '»', false],
+  ['「', '」', false],
+  ['『', '』', false],
+];
+
+/** Normalized contents of every quoted span in `text`, pairing each opener with the next valid closer. */
+function quotedLabels(text: string): Set<string> {
+  const labels = new Set<string>();
+  for (const [opener, closer, guarded] of QUOTE_PAIRS) {
+    let start = text.indexOf(opener);
+    while (start !== -1) {
+      if (guarded && isSpacedWordCharacter(charBefore(text, start))) {
+        start = text.indexOf(opener, start + 1);
+        continue;
+      }
+      let end = text.indexOf(closer, start + 1);
+      while (guarded && end !== -1 && isSpacedWordCharacter(charAt(text, end + 1))) end = text.indexOf(closer, end + 1);
+      if (end === -1) break;
+      labels.add(normalizedLabel(text.slice(start + 1, end)));
+      start = text.indexOf(opener, end + 1);
+    }
+  }
+  return labels;
+}
+
+/** Normalized text after each "group", "group dm(s)", "group chat(s)" or "gc" keyword (longest wins) and whitespace. */
+function textAfterGroupKeywords(text: string): string[] {
+  const remainders: string[] = [];
+  for (const match of text.matchAll(/group|gc/giu)) {
+    const index = match.index ?? 0;
+    if (isSpacedWordCharacter(charBefore(text, index))) continue;
+    let end = index + match[0].length;
+    const longer = match[0].length === 5 ? /^\s+(?:dms?|chats?)/iu.exec(text.slice(end)) : null;
+    if (longer && !isSpacedWordCharacter(charAt(text, end + longer[0].length))) end += longer[0].length;
+    // Only whitespace may separate keyword and name; punctuation ("group - chat", "group (the") breaks the link.
+    const gap = /^\s+(?=[\p{L}\p{N}])/u.exec(text.slice(end));
+    if (gap) remainders.push(normalizedLabel(text.slice(end + gap[0].length)));
+  }
+  return remainders;
+}
+
+/** True when `remainder` starts with `name` and the name does not run on into a word of a space-delimited script. */
+function startsWithGroupName(remainder: string, name: string): boolean {
+  if (!remainder.startsWith(name)) return false;
+  return CJK_CHARACTER.test(Array.from(name).pop() || '') || !isSpacedWordCharacter(charAt(remainder, name.length));
+}
+
 export function restrictScopeForUserPrompt(
   context: CurrentScopeContext,
   userPrompt: string,
@@ -264,11 +327,16 @@ export function restrictScopeForUserPrompt(
       explicitMutualGroupDMIds: context.mutualGroupDMs.map((group) => group.id),
     };
   }
-  const normalizedPrompt = normalizedLabel(userPrompt);
+  // A name counts only when quoted or directly after "group"/"gc"; after a keyword only the longest matching name counts.
+  const quoted = quotedLabels(userPrompt);
+  const names = context.mutualGroupDMs.map((group) => normalizedLabel(group.name)).filter((name) => name.length >= 3);
+  const afterKeyword = new Set(textAfterGroupKeywords(userPrompt).map((remainder) => names
+    .filter((name) => startsWithGroupName(remainder, name))
+    .reduce((longest, name) => (name.length > longest.length ? name : longest), '')));
   const explicitlyRequested = context.mutualGroupDMs.filter((group) => {
     if (launchTargetChannelId === group.id || containsWholeToken(userPrompt, group.id)) return true;
     const groupName = normalizedLabel(group.name);
-    return groupName.length >= 3 && containsWholeToken(normalizedPrompt, groupName);
+    return groupName.length >= 3 && (quoted.has(groupName) || afterKeyword.has(groupName));
   });
   return { ...context, mutualGroupDMs: explicitlyRequested, explicitMutualGroupDMIds: explicitlyRequested.map((group) => group.id) };
 }

@@ -24,7 +24,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 - 🧰 **Read-Only Discord Context Tools**: Retrieve message details/reply chains, channel pins, and active or archived threads/forum posts. No sending, reacting, editing, deleting, or pinning tools exist.
 - 🛡️ **Autonomous Scoping with Privacy Boundaries**:
   - **In Server Channels**: Restricted to channels in the active server you have permission to view.
-  - **In DMs**: Defaults to the active 1-on-1 DM. A mutual group DM is queried only when the prompt names it (its name or ID as a whole word).
+  - **In DMs**: Defaults to the active 1-on-1 DM. A mutual group DM is queried only when the prompt names it: its ID, or its name in quotes (`"Project Alpha"`, `“…”`, `‘…’`, `«…»`, `「…」`, `『…』`) or right after `group`, `group dm`, `group chat` or `gc` (`group Project Alpha`). A bare unquoted name does not count, so "summarize this chat" never pulls in a group named "chat".
   - Message IDs supplied by the model are validated, and a fetched message must belong to the requested channel.
 - 🧯 **Untrusted Content Handling**: Every string in every tool result is sanitized before the model sees it, and channel, thread, server and user names are sanitized and quoted in the model's context. Links written by the model may only be `https:` or Discord links; external links show their real URL next to the link text.
 - 🖥️ **Local & Cloud Model Support**:

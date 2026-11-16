@@ -168,7 +168,7 @@ export function runGuardrailsTests(): void {
   assert(isChannelAllowedInScope('gdm_project_alpha', dmScope) === false, 'Mutual group DM must be blocked by default');
 
   // Explicit prompt mention
-  const promptScoped = restrictScopeForUserPrompt(dmScope, 'Find the notes in Project Alpha group DM.');
+  const promptScoped = restrictScopeForUserPrompt(dmScope, 'Find the notes in the "Project Alpha" group DM.');
   assert(
     isChannelAllowedInScope('gdm_project_alpha', promptScoped) === true,
     'Explicitly mentioned mutual group DM must be allowed',

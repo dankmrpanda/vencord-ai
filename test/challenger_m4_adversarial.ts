@@ -201,7 +201,7 @@ export async function runMilestone4AdversarialTests(): Promise<void> {
   );
 
   // Legitimate prompt mentioning Super Secret Project
-  const legitPrompt = 'Find the launch roadmap in Super Secret Project.';
+  const legitPrompt = 'Find the launch roadmap in group Super Secret Project.';
   const legitPromptScope = restrictScopeForUserPrompt(dmAliceScope, legitPrompt);
   assert(
     isChannelAllowedInScope('gdm_project_supersecret', legitPromptScope) === true,

@@ -107,14 +107,96 @@ async function sec02GroupDmSubstringMatch(): Promise<void> {
   assert(!isChannelAllowedInScope('gdm_art', inWord), 'SEC-02 group DM "art" was added to scope by the words "party start" (substring match inside other words)');
   const plural = restrictScopeForUserPrompt(base, 'did alice send her airplanschedule yet');
   assert(!isChannelAllowedInScope('gdm_plans', plural), 'SEC-02 group DM "Plans" was added to scope by the token "airplanschedule"');
-  const named = restrictScopeForUserPrompt(base, 'What did we decide in the Plans group?');
-  assert(isChannelAllowedInScope('gdm_plans', named) && !isChannelAllowedInScope('gdm_art', named), 'SEC-02 a group DM named as a whole word must still be added, and only that one');
+  const named = restrictScopeForUserPrompt(base, 'What did we decide in the group "Plans"?');
+  assert(isChannelAllowedInScope('gdm_plans', named) && !isChannelAllowedInScope('gdm_art', named), 'SEC-02 a quoted group DM name must still be added, and only that one');
   const numeric: CurrentScopeContext = {
     ...base,
     mutualGroupDMs: [{ id: '700000000000000007', name: 'x', recipientNames: ['Alice'] }],
   };
   assert(!isChannelAllowedInScope('700000000000000007', restrictScopeForUserPrompt(numeric, 'see 17000000000000000079')), 'SEC-02 a group DM ID embedded in a longer number widened scope');
   assert(isChannelAllowedInScope('700000000000000007', restrictScopeForUserPrompt(numeric, 'search group 700000000000000007 please')), 'SEC-02 an exact group DM ID must still be accepted');
+}
+
+/** Group IDs admitted by restrictScopeForUserPrompt for `prompt`, sorted. */
+function admittedGroups(groups: Array<[string, string]>, prompt: string): string {
+  const scope = restrictScopeForUserPrompt({
+    ...dmScope(),
+    mutualGroupDMs: groups.map(([id, name]) => ({ id, name, recipientNames: ['Alice'] })),
+  }, prompt);
+  return groups.map(([id]) => id).filter((id) => isChannelAllowedInScope(id, scope)).sort().join(',');
+}
+
+function checkAdmissions(finding: string, groups: Array<[string, string]>, cases: Array<[string, string]>): void {
+  const wrong = cases
+    .map(([prompt, expected]) => [prompt, expected, admittedGroups(groups, prompt)])
+    .filter(([, expected, actual]) => expected !== actual)
+    .map(([prompt, expected, actual]) => `${JSON.stringify(prompt)} admitted [${actual}], expected [${expected}]`);
+  assert(wrong.length === 0, `${finding} ${wrong.join('; ')}`);
+}
+
+/** SEC-02 residual: a bare group name made of common words ("chat", "the", "dms") widened DM scope. */
+async function sec02QuotedOrPrefixedGroupName(): Promise<void> {
+  const groups: Array<[string, string]> = [
+    // IDs must not occur in the prompts, or the (unchanged) exact-ID rule would admit them.
+    ['gdm_chat', 'chat'], ['gdm_the', 'the'], ['gdm_dms', 'dms'], ['gdm_dm', 'dm'], ['gdm_plans', 'Plans'], ['gdm_art', 'art'],
+    ['gdm_alpha', 'Project Alpha'], ['gdm_chatcrew', 'Chat Crew'], ['900000000000000009', 'x'],
+  ];
+  checkAdmissions('SEC-02', groups, [
+    ['summarize this chat', ''],
+    ['what did the others say in the dms', ''],
+    ['What did we decide in the Plans group?', ''],
+    ['summarize this group chat', ''],
+    ['summarize this group dm', ''],
+    ['summarize my group dms', ''],
+    ['summarize all my group chats', ''],
+    ['ask the group. the plan is off', ''],
+    ['ask the group, the one from work', ''],
+    ['ask the group (the plan is off)', ''],
+    ['ask the group - the plan is off', ''],
+    ['tell the group "the plans are off"', ''],
+    ['I\'m in a group - chat with me later', ''],
+    ['she said "the plans are off"', ''],
+    ['I don\'t think alice\'s plans work', ''],
+    ['look in group artists', ''],
+    ['look in subgroup art', ''],
+    ['what is in the group\'s chat', ''],
+    ['they\'re in alice\'s chat, aren\'t they', ''],
+    ['the players\' chat and the boss\' plans', ''],
+    ['search group Chat Crew', ''],
+    ['search group chat Chat Crew', 'gdm_chatcrew'],
+    ['search "Chat Crew"', 'gdm_chatcrew'],
+    ['search "chat" for the link', 'gdm_chat'],
+    ['search \'Plans\' for the link', 'gdm_plans'],
+    ['don\'t skip \'Plans\', it\'s important', 'gdm_plans'],
+    ['search “the” please', 'gdm_the'],
+    ['search ‘Plans’ please', 'gdm_plans'],
+    ['search «Project Alpha» please', 'gdm_alpha'],
+    ['search 「Plans」 please', 'gdm_plans'],
+    ['search 『Plans』 please', 'gdm_plans'],
+    ['what happened in group Plans yesterday', 'gdm_plans'],
+    ['Group DM Project Alpha: summarize', 'gdm_alpha'],
+    ['summarize group chat chat', 'gdm_chat'],
+    ['summarize gc the please', 'gdm_the'],
+    ['search GC art', 'gdm_art'],
+    ['search group 900000000000000009 please', '900000000000000009'],
+  ]);
+}
+
+/** REV-DSC-04: CJK group names written inside a sentence (no spaces) must match when quoted or after "group"/"gc". */
+async function revDsc04CjkGroupNameInSentence(): Promise<void> {
+  const groups: Array<[string, string]> = [['111', '游戏群'], ['222', 'ゲーム仲間'], ['333', 'Raid Crew'], ['444', '游戏群聊']];
+  checkAdmissions('REV-DSC-04', groups, [
+    ['在游戏群里找一下链接', ''],
+    ['在「游戏群」里找一下链接', '111'],
+    ['在“游戏群”里找一下链接', '111'],
+    ['在『ゲーム仲間』で話したこと', '222'],
+    ['在group 游戏群里找一下链接', '111'],
+    ['gc ゲーム仲間で話したこと', '222'],
+    ['group 游戏群聊里的链接', '444'],
+    ['search group Raid Crew chat', '333'],
+    ['search group Raid Crewmates', ''],
+    ['在group Raid Crew里找一下链接', '333'],
+  ]);
 }
 
 /** SEC-04: formatUntrustedEvidence does not escape its own delimiter or attribute quotes. */
@@ -244,6 +326,8 @@ async function sec12PermissionTruthyShapes(): Promise<void> {
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 message_id path traversal', sec01MessageIdPathTraversal],
   ['SEC-02 group DM substring match', sec02GroupDmSubstringMatch],
+  ['SEC-02 group DM name only when quoted or after group/gc', sec02QuotedOrPrefixedGroupName],
+  ['REV-DSC-04 CJK group name inside a sentence', revDsc04CjkGroupNameInSentence],
   ['SEC-04 evidence wrapper breakout', sec04EvidenceWrapperBreakout],
   ['SEC-06 permitted IDs omit active channel', sec06PermittedIdsOmitActiveChannel],
   ['SEC-07 sanitizer token coverage', sec07SanitizerTokenCoverage],
