@@ -774,6 +774,42 @@ async function sec2_01ContextToolsHonourStop(): Promise<void> {
   assert(Date.now() - started < 2000 && gets === 1, `SEC2-01 retry_after 60 was honoured (${Date.now() - started} ms, ${gets} REST calls)`);
 }
 
+/** REV-SEC-03 (SEC2-01 list_threads half): Stop during a 429 wait in list_threads must end the tool without further GETs. */
+async function revSec03ListThreadsHonoursStop(): Promise<void> {
+  const channelId = '500000000000000001';
+  const scope = {
+    ...dmScope(),
+    channelId,
+    channelName: 'general',
+    channelType: ChannelType.GUILD_TEXT,
+    isDM: false,
+    isGuild: true,
+    guildId: '500000000000000009',
+    guildName: 'guild',
+    accessibleGuildChannels: [{ id: channelId, name: 'general' }],
+    selectedChannelIds: [channelId],
+  } as CurrentScopeContext;
+  const threads = ['500000000000000011', '500000000000000012', '500000000000000013'].map((id) => ({ id, parent_id: channelId, type: 11, name: 't' }));
+  const problems: string[] = [];
+  for (const mode of ['active-list', 'starters'] as const) {
+    const controller = new AbortController();
+    let gets = 0;
+    let getsAtStop = -1;
+    let stoppedAt = 0;
+    const context: ToolExecutionContext = { scope, settings: settings(), addCitation: () => ({} as CitationItem), analyzeImage: async () => '', signal: controller.signal };
+    const outcome = await quiet(() => withRestGet((request) => {
+      gets++;
+      if (mode === 'starters' && String(request?.url).endsWith('/threads/active')) return { threads };
+      if (!stoppedAt) setTimeout(() => { if (!stoppedAt) { stoppedAt = Date.now(); getsAtStop = gets; controller.abort(); } }, 30);
+      throw { status: 429, body: { retry_after: 1 } };
+    }, () => TOOL_REGISTRY.get('list_threads')!.execute({}, context).then((result) => `resolved ${result.code}`, (error) => `rejected ${error?.name}`)));
+    const lag = Date.now() - stoppedAt;
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    if (!stoppedAt || lag >= 1_000 || gets !== getsAtStop) problems.push(`${mode}: ${outcome}, ${lag} ms after the stop, ${gets - getsAtStop} GETs after it`);
+  }
+  assert(problems.length === 0, `REV-SEC-03 list_threads ignored Stop during a 429 wait: ${problems.join('; ')}`);
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -1024,6 +1060,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-09 scope resolved before session', sec09ScopeResolvedBeforeSession],
   ['SRCH-10 tools receive the abort signal', srch10ToolsReceiveAbortSignal],
   ['SEC2-01 context tools honour Stop and cap retry_after', sec2_01ContextToolsHonourStop],
+  ['REV-SEC-03 list_threads honours Stop', revSec03ListThreadsHonoursStop],
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['REV-LLM-03 persistent turn-2 provider error surfaces', revLlm03PersistentTurnTwoErrorSurfaces],
