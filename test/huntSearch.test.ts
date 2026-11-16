@@ -279,6 +279,25 @@ async function srch04OffsetPagination(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
+/** REV-DSC-03: a failed remote search on a later page was reported as "no matches", ending pagination silently. */
+async function revDsc03FailedLaterPage(): Promise<string | null> {
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    return await withGet(({ url }) => {
+      if (isSearch(url)) throw { status: 429, body: { retry_after: 30 } };
+      return [];
+    }, async () => {
+      const r = await runMessageSearch({ query: 'pagefailneedle', sortBy: 'relevance', offset: 25, limit: 10, scanLimit: 10 }, dmScope());
+      return r.ok === false && r.code !== 'empty_results' && /retry/i.test(r.summary)
+        ? null
+        : `offset 25 with a failing remote search returned ok=${r.ok} code=${r.code} summary="${r.summary}"`;
+    });
+  } finally {
+    console.warn = warn;
+  }
+}
+
 /** SRCH-05: ordinary keywords are hijacked into a regex filter (e.g. "ip"). */
 async function srch05KeywordHijackedIntoPattern(): Promise<string | null> {
   const target = msg('140000000000000014', DM, 'my ip ban appeal was denied', new Date().toISOString(), { hit: true });
@@ -453,6 +472,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
+  ['REV-DSC-03 failed later page is not empty', revDsc03FailedLaterPage],
   ['SRCH-05 keyword hijacked into pattern', srch05KeywordHijackedIntoPattern],
   ['SRCH-06 query mangling', srch06QueryMangling],
   ['SRCH-08 invalid after_date ignored', srch08InvalidDateIgnored],

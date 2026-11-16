@@ -172,6 +172,16 @@ export async function runMessageSearch(
     }
   }
 
+  // Later pages have no local fallback: report the failure so it is not read as the end of the results.
+  if (remoteSearchFailed && offset > 0) {
+    return {
+      ok: false,
+      code: 'remote_search_failed',
+      summary: 'Discord search failed for this page (rate limited or unavailable); retry later with the same offset.',
+      untrustedData: true,
+    };
+  }
+
   // 4. Seamless Hybrid Search Fallback (Local Inverted Index)
   if (offset === 0 && (remoteSearchFailed || candidates.length < request.limit)) {
     // Compact index records do not retain mention identities or full media metadata.
