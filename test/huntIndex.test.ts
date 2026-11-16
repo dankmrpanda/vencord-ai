@@ -330,6 +330,65 @@ async function idx05WritesSettleOnAbort(): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------------ */
+/* IDX-08: importSnapshot validates before touching live state, checks the   */
+/* version, and survives a JSON round trip (typed arrays -> plain objects).  */
+/* ------------------------------------------------------------------------ */
+function idx08Source(): InvertedIndex {
+  const src = new InvertedIndex(16);
+  src.addBatch([msg('s1', 'chan1', 'alpha beta'), msg('s2', 'chan2', 'gamma delta')]);
+  return src;
+}
+
+async function idx08BadSnapshotLeavesStateIntact(): Promise<void> {
+  const snap = idx08Source().exportSnapshot();
+  const bad: Array<[string, unknown]> = [
+    ['postings missing', { ...snap, postings: undefined }],
+    ['version 99', { ...snap, version: 99 }],
+    ['negative docId', { ...snap, documents: snap.documents.map((d) => ({ ...d, docId: -1 })) }],
+    ['documents not an array', { ...snap, documents: null }],
+  ];
+  for (const [label, candidate] of bad) {
+    const live = new InvertedIndex(16);
+    live.addBatch([msg('keep1', 'chan9', 'keepme')]);
+    let threw = false;
+    try {
+      live.importSnapshot(candidate as any);
+    } catch {
+      threw = true;
+    }
+    const hits = live.search({ query: 'keepme', channelIds: ['chan9'], limit: 10, boostRecency: 0 }).hits.length;
+    const total = live.getStats().totalDocs;
+    assert(threw && hits === 1 && total === 1, `IDX-08 importSnapshot(${label}): threw=${threw}, previous doc hits=${hits}, totalDocs=${total} (expected: rejected, previous state intact)`);
+  }
+  const noMaps = new InvertedIndex(16);
+  noMaps.importSnapshot({ ...snap, channelDocMap: undefined, authorDocMap: undefined } as any);
+  const ch = noMaps.search({ query: 'alpha', channelIds: ['chan1'], limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  assert(ch.join(',') === 's1', `IDX-08 channel filter after importing a snapshot without channelDocMap returned [${ch.join(',')}] (expected [s1]: maps derived from documents)`);
+}
+
+async function idx08JsonRoundTripSnapshot(): Promise<void> {
+  const json = JSON.parse(JSON.stringify(idx08Source().exportSnapshot()));
+  const dst = new InvertedIndex(16);
+  dst.addBatch([msg('keep1', 'chan9', 'keepme')]);
+  let threw = false;
+  try {
+    dst.importSnapshot(json);
+  } catch {
+    threw = true;
+  }
+  if (threw) {
+    const hits = dst.search({ query: 'keepme', limit: 10, boostRecency: 0 }).hits.length;
+    assert(hits === 1, 'IDX-08 importSnapshot rejected a JSON snapshot but cleared the live index');
+    return;
+  }
+  dst.addBatch([msg('newone', 'chan1', 'newone')]);
+  const a = dst.search({ query: 'alpha', limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  const n = dst.search({ query: 'newone', limit: 10, boostRecency: 0 }).records.map((r) => r.id);
+  const total = dst.getStats().totalDocs;
+  assert(a.join(',') === 's1' && n.join(',') === 'newone' && total === 3, `IDX-08 after importing a JSON-round-tripped snapshot: search('alpha') -> [${a.join(',')}], search('newone') -> [${n.join(',')}], totalDocs=${total} (expected [s1], [newone], 3)`);
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-03 saveSession waits for commit; abort reaches localStorage fallback', idx03SaveSessionWaitsForCommit],
   ['IDX-02 channelIds:[] matches nothing; undefined = no filter', idx02EmptyChannelAllowlistMatchesNothing],
@@ -338,6 +397,8 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['IDX-07 ingest exception rejects the request', idx07IngestErrorRejects],
   ['IDX-07 worker error rejects pending requests', idx07WorkerErrorRejectsPending],
   ['IDX-05 MessageDatabase writes settle on abort-only transactions', idx05WritesSettleOnAbort],
+  ['IDX-08 invalid or wrong-version snapshot leaves live state intact', idx08BadSnapshotLeavesStateIntact],
+  ['IDX-08 JSON round-tripped snapshot imports correctly', idx08JsonRoundTripSnapshot],
 ];
 
 export async function runHuntIndexTests(): Promise<void> {

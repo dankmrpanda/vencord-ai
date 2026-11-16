@@ -18,6 +18,23 @@ import {
   StoredMessageRecord,
 } from './types';
 
+/** Bump when tokenization changes: stored postings were built with the old tokenizer. */
+export const SNAPSHOT_VERSION = 1;
+
+/** Accepts a typed array, a plain array, or the object form a typed array takes after JSON. */
+function toTypedArray<T extends Uint32Array | Uint8Array>(
+  value: unknown,
+  Ctor: { from(src: ArrayLike<number>): T },
+): T | null {
+  if (value instanceof Uint32Array || value instanceof Uint8Array) return Ctor.from(value);
+  if (!value || typeof value !== 'object') return null;
+  const nums = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+  for (const n of nums) {
+    if (!Number.isInteger(n) || (n as number) < 0) return null;
+  }
+  return Ctor.from(nums as number[]);
+}
+
 /**
  * Min-Heap implementation for Top-K candidate collection in O(M log K).
  */
@@ -147,6 +164,22 @@ export class InvertedIndex {
     }
   }
 
+  // Channel & author filter mapping.
+  private addToFilterMaps(record: StoredMessageRecord): void {
+    let ch = this.channelDocs.get(record.channelId);
+    if (!ch) {
+      ch = new Set();
+      this.channelDocs.set(record.channelId, ch);
+    }
+    ch.add(record.docId);
+    let au = this.authorDocs.get(record.authorId);
+    if (!au) {
+      au = new Set();
+      this.authorDocs.set(record.authorId, au);
+    }
+    au.add(record.docId);
+  }
+
   /**
    * Adds a batch of Discord messages to the index.
    */
@@ -197,16 +230,7 @@ export class InvertedIndex {
       this.totalTokens += tokenized.totalTokens;
       this.docCount++;
 
-      // Channel & Author Filter mapping
-      if (!this.channelDocs.has(record.channelId)) {
-        this.channelDocs.set(record.channelId, new Set());
-      }
-      this.channelDocs.get(record.channelId)!.add(docId);
-
-      if (!this.authorDocs.has(record.authorId)) {
-        this.authorDocs.set(record.authorId, new Set());
-      }
-      this.authorDocs.get(record.authorId)!.add(docId);
+      this.addToFilterMaps(record);
 
       // Postings accumulation
       for (const [term, tf] of tokenized.frequencies.entries()) {
@@ -485,7 +509,7 @@ export class InvertedIndex {
     }
 
     return {
-      version: 1,
+      version: SNAPSHOT_VERSION,
       stats: this.getStats(),
       nextDocId: this.nextDocId,
       documents: Array.from(this.docRecords.values()),
@@ -497,56 +521,76 @@ export class InvertedIndex {
   }
 
   /**
-   * Imports an index snapshot to restore in-memory state.
+   * Imports an index snapshot to restore in-memory state. The snapshot is validated and the new
+   * state is built aside first, so a rejected snapshot leaves the live index untouched. Counts,
+   * document lengths and the channel/author maps are derived from `documents` rather than trusted.
+   * Typed arrays that went through JSON (plain objects / arrays) are accepted.
    */
   public importSnapshot(snapshot: IndexSnapshot): void {
-    this.clear();
-    this.docCount = snapshot.stats.totalDocs;
-    this.totalTokens = snapshot.stats.totalTokens;
+    if (!snapshot || snapshot.version !== SNAPSHOT_VERSION) {
+      throw new Error(`Unsupported index snapshot version: ${snapshot?.version}`);
+    }
+    if (!Array.isArray(snapshot.documents) || !Array.isArray(snapshot.postings)) {
+      throw new Error('Invalid index snapshot: documents and postings must be arrays');
+    }
 
+    const docRecords = new Map<DocId, StoredMessageRecord>();
+    const messageIdToDocId = new Map<string, DocId>();
     let maxDocId = -1;
+    let totalTokens = 0;
     for (const doc of snapshot.documents) {
+      if (!doc || !Number.isInteger(doc.docId) || doc.docId < 0 || typeof doc.id !== 'string'
+        || typeof doc.channelId !== 'string' || typeof doc.authorId !== 'string'
+        || typeof doc.content !== 'string' || !Number.isFinite(doc.tokenLength)
+        || docRecords.has(doc.docId) || messageIdToDocId.has(doc.id)) {
+        throw new Error('Invalid index snapshot: malformed document record');
+      }
+      docRecords.set(doc.docId, doc);
+      messageIdToDocId.set(doc.id, doc.docId);
       if (doc.docId > maxDocId) maxDocId = doc.docId;
+      totalTokens += doc.tokenLength;
     }
 
-    const snapDocLengthsLen = snapshot.docLengths ? snapshot.docLengths.length : 0;
-    this.nextDocId = Math.max(
-      snapshot.nextDocId ?? 0,
-      snapDocLengthsLen,
-      maxDocId + 1,
-    );
-
-    const requiredCap = Math.max(
-      snapDocLengthsLen,
-      this.nextDocId,
-      this.docCount,
-    );
-    this.ensureCapacity(requiredCap);
-
-    if (snapshot.docLengths) {
-      this.docLengths.set(snapshot.docLengths);
-    }
-
-    for (const doc of snapshot.documents) {
-      this.docRecords.set(doc.docId, doc);
-      this.messageIdToDocId.set(doc.id, doc.docId);
-    }
-
+    const termDict = new Map<string, PostingList>();
     for (const post of snapshot.postings) {
-      this.termDict.set(post.term, {
-        term: post.term,
-        df: post.df,
-        docIds: new Uint32Array(post.docIds),
-        termFreqs: new Uint8Array(post.termFreqs),
-      });
+      const docIds = post ? toTypedArray(post.docIds, Uint32Array) : null;
+      const tfs = post ? toTypedArray(post.termFreqs, Uint8Array) : null;
+      if (!post || typeof post.term !== 'string' || !docIds || !tfs || docIds.length !== tfs.length) {
+        throw new Error('Invalid index snapshot: malformed posting list');
+      }
+      // Keep live entries only; df is recomputed from them.
+      const liveIds: number[] = [];
+      const liveTfs: number[] = [];
+      for (let i = 0; i < docIds.length; i++) {
+        if (docRecords.has(docIds[i])) {
+          liveIds.push(docIds[i]);
+          liveTfs.push(tfs[i]);
+        }
+      }
+      if (liveIds.length > 0) {
+        termDict.set(post.term, {
+          term: post.term,
+          df: liveIds.length,
+          docIds: new Uint32Array(liveIds),
+          termFreqs: new Uint8Array(liveTfs),
+        });
+      }
     }
 
-    for (const [chId, arr] of Object.entries(snapshot.channelDocMap)) {
-      this.channelDocs.set(chId, new Set(arr));
-    }
+    const snapNext = Number.isInteger(snapshot.nextDocId) ? snapshot.nextDocId! : 0;
+    const nextDocId = Math.max(snapNext, maxDocId + 1);
 
-    for (const [authId, arr] of Object.entries(snapshot.authorDocMap)) {
-      this.authorDocs.set(authId, new Set(arr));
+    this.clear();
+    this.ensureCapacity(nextDocId);
+    this.docRecords = docRecords;
+    this.messageIdToDocId = messageIdToDocId;
+    this.termDict = termDict;
+    this.docCount = docRecords.size;
+    this.totalTokens = totalTokens;
+    this.nextDocId = nextDocId;
+    for (const doc of docRecords.values()) {
+      this.docLengths[doc.docId] = Math.min(doc.tokenLength, 65535);
+      this.addToFilterMaps(doc);
     }
   }
 
