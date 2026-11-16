@@ -177,7 +177,7 @@ export async function runMessageSearch(
     return {
       ok: false,
       code: 'remote_search_failed',
-      summary: 'Discord search failed for this page (rate limited or unavailable); retry later with the same offset.',
+      summary: 'Discord search failed for this page (rate limited or unavailable), so later results could not be fetched in this run; tell the user they can retry later.',
       untrustedData: true,
     };
   }
