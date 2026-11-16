@@ -26,6 +26,7 @@ import {
   isEscapeForPanel,
   isNearBottom,
   inputAfterLaunchCleared,
+  isImeComposing,
   isUnhandledEscape,
   keepScopeForChannel,
   LastSend,
@@ -350,6 +351,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isImeComposing(e.nativeEvent)) return;
     if (mentionSuggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();

@@ -85,6 +85,14 @@ export interface EscapeKeyLike {
   keyCode?: number;
 }
 
+/**
+ * UI-06: a key event that belongs to an IME composition, such as the Enter that commits a conversion.
+ * Safari fires that keydown after compositionend, so `isComposing` is false there but `keyCode` is still 229.
+ */
+export function isImeComposing(e: { isComposing?: boolean; keyCode?: number }): boolean {
+  return Boolean(e.isComposing) || e.keyCode === 229;
+}
+
 /** UI-04: an Escape that a popup, Discord, or an IME composition already used must not close anything else. */
 export function isUnhandledEscape(e: EscapeKeyLike): boolean {
   return e.key === 'Escape' && !e.defaultPrevented && !e.isComposing && e.keyCode !== 229;

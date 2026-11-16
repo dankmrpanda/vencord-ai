@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { readFileSync } from 'node:fs';
 import * as RealReact from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
@@ -24,6 +25,7 @@ import {
   inputAfterLaunchCleared,
   isEscapeForPanel,
   isNearBottom,
+  isImeComposing,
   isUnhandledEscape,
   keepScopeForChannel,
   launchRequestForSend,
@@ -329,6 +331,17 @@ async function ui03ScrollFollowsStream(): Promise<void> {
 }
 
 /** UI-04 / UI-Q09: Escape is ignored once handled, during IME composition, or outside the panel; inner layers go first. */
+/** UI-06: the Enter that commits an IME conversion must not send the prompt or pick a mention (MDN: isComposing or keyCode 229). */
+async function ui06ImeEnter(): Promise<void> {
+  assert(typeof isImeComposing === 'function', 'UI-06 composition check exists');
+  assert(isImeComposing({ isComposing: true, keyCode: 13 }), 'UI-06 Enter with isComposing is part of the composition');
+  assert(isImeComposing({ isComposing: false, keyCode: 229 }), 'UI-06 keyCode 229 (Safari order) is part of the composition');
+  assert(!isImeComposing({ isComposing: false, keyCode: 13 }), 'UI-06 a plain Enter is not');
+  const panel = readFileSync(new URL('../components/SidebarPanel.tsx', import.meta.url), 'utf8');
+  const handler = panel.slice(panel.indexOf('const handleKeyDown'), panel.indexOf('mentionSuggestions.length > 0', panel.indexOf('const handleKeyDown')));
+  assert(/isImeComposing\(e\.nativeEvent\)\) return;/.test(handler), 'UI-06 handleKeyDown returns first during composition');
+}
+
 async function ui04EscapeLayering(): Promise<void> {
   const esc = (over: Record<string, unknown> = {}) => ({ key: 'Escape', defaultPrevented: false, isComposing: false, keyCode: 27, ...over });
   assert(isUnhandledEscape(esc()), 'UI-04 plain Escape counts');
@@ -551,6 +564,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-11 base URL redacted in debug drawer', ui11BaseUrlRedacted],
   ['UI-03 scroll follows stream', ui03ScrollFollowsStream],
   ['UI-04 Escape layering', ui04EscapeLayering],
+  ['UI-06 Enter during IME composition', ui06ImeEnter],
   ['UI-14 global toggle lifecycle', ui14GlobalToggleLifecycle],
   ['UI-13 launch request scoped to its prompt', ui13LaunchRequestScoped],
   ['UI-Q02 actionable errors', uiQ02ActionableErrors],
