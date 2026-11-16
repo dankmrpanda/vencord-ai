@@ -20,7 +20,7 @@ import {
 import { filterIndexQueryToScope, filterMessagesToScope, isChannelAllowedInScope } from './scope';
 import { getChannel } from './stores';
 import { retrievalEngine } from '../storage/retrieval';
-import { MESSAGE_FLAGS } from '../storage/index/types';
+import { MESSAGE_FLAGS, StoredMessageRecord } from '../storage/index/types';
 
 export interface MessageSearchRequest {
   query?: string;
@@ -55,8 +55,42 @@ function hitMessages(groups: DiscordMessage[][]): DiscordMessage[] {
   });
 }
 
-function deduplicate(messages: DiscordMessage[]): DiscordMessage[] {
-  return Array.from(new Map(messages.map((message) => [message.id, message])).values());
+/** Messages rebuilt from a local-index record: no embeds, mentions or attachment URLs. */
+const indexStubs = new WeakSet<DiscordMessage>();
+
+export function indexStubMessage(record: StoredMessageRecord): DiscordMessage {
+  const message: DiscordMessage = {
+    id: record.id,
+    channel_id: record.channelId,
+    guild_id: record.guildId,
+    author: { id: record.authorId, username: record.authorName },
+    content: record.content,
+    timestamp: new Date(record.timestamp).toISOString(),
+    pinned: Boolean(record.flags & MESSAGE_FLAGS.IS_PINNED),
+    attachments: (record.attachmentNames || []).map((fn) => ({
+      id: '0',
+      filename: fn,
+      size: 0,
+      url: '',
+      proxy_url: '',
+    })),
+    embeds: [],
+    mentions: [],
+    hit: true,
+  };
+  indexStubs.add(message);
+  return message;
+}
+
+/** SRCH-03: the later copy of a message wins, except that an index stub never replaces a full copy. */
+export function deduplicate(messages: DiscordMessage[]): DiscordMessage[] {
+  const byId = new Map<string, DiscordMessage>();
+  for (const message of messages) {
+    const kept = byId.get(message.id);
+    if (kept && indexStubs.has(message) && !indexStubs.has(kept)) continue;
+    byId.set(message.id, message);
+  }
+  return Array.from(byId.values());
 }
 
 /** Date-only values must name a real calendar day; other values must parse to a finite time. */
@@ -211,25 +245,7 @@ export async function runMessageSearch(
 
         const localIndexResult = await retrievalEngine.search(indexQuery, scope);
         if (localIndexResult.hits.length > 0) {
-          const localMessages: DiscordMessage[] = localIndexResult.hits.map((h) => ({
-            id: h.record.id,
-            channel_id: h.record.channelId,
-            guild_id: h.record.guildId,
-            author: { id: h.record.authorId, username: h.record.authorName },
-            content: h.record.content,
-            timestamp: new Date(h.record.timestamp).toISOString(),
-            pinned: Boolean(h.record.flags & MESSAGE_FLAGS.IS_PINNED),
-            attachments: (h.record.attachmentNames || []).map((fn) => ({
-              id: '0',
-              filename: fn,
-              size: 0,
-              url: '',
-              proxy_url: '',
-            })),
-            embeds: [],
-            mentions: [],
-            hit: true,
-          }));
+          const localMessages = localIndexResult.hits.map((h) => indexStubMessage(h.record));
           candidates.push(...localMessages);
           fallbackUsed = 'local_index';
         }

@@ -7,6 +7,7 @@
 import { RestAPI } from '@webpack/common';
 import { compileRegexSafely, fetchDiscordMessagesApi, fetchRecentMessages, fetchSurroundingMessages, filterMessagesLocally } from '../discord/messages';
 import { detectPatternFromQuery, searchDiscordMessages } from '../discord/search';
+import * as searchPipeline from '../discord/searchPipeline';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { STRUCTURED_PATTERNS } from '../storage/regex';
 import { HybridRetrievalEngine } from '../storage/retrieval';
@@ -266,6 +267,31 @@ async function sec08IndexAllowlistEmptiedFailsOpen(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
+/** SRCH-03: dedupe kept the last copy, so a stripped local-index stub replaced the full remote message. */
+async function srch03DedupKeepsFullCopy(): Promise<string | null> {
+  if (typeof (searchPipeline as any).deduplicate !== 'function') return 'deduplicate is not exported for testing';
+  const pipeline: any = searchPipeline;
+  const full: any = {
+    id: '190000000000000001', channel_id: GUILD_CH, author: { id: '700000000000000007', username: 'fixture', global_name: 'Fixture' },
+    content: 'see attached', timestamp: new Date(Date.UTC(2025, 0, 1)).toISOString(),
+    attachments: [{ id: '777', filename: 'a.png', size: 10, url: 'https://cdn.discordapp.com/a.png', proxy_url: '' }],
+    embeds: [{ title: 'e' }], mentions: [{ id: '700000000000000008', username: 'm' }],
+  };
+  const stub: any = pipeline.indexStubMessage({
+    id: full.id, channelId: GUILD_CH, guildId: GUILD, authorId: full.author.id, authorName: 'fixture',
+    timestamp: Date.UTC(2025, 0, 1), content: 'see attached', flags: 0, attachmentNames: ['a.png'],
+  } as any);
+  const later: any = { ...full, content: 'see attached (edited)' };
+  const problems: string[] = [];
+  const keptAfterStub = pipeline.deduplicate([full, stub]);
+  if (keptAfterStub.length !== 1 || keptAfterStub[0] !== full) problems.push(`remote then stub kept ${keptAfterStub[0]?.attachments?.[0]?.id === '0' ? 'the stub' : 'something else'}`);
+  const keptStubFirst = pipeline.deduplicate([stub, full]);
+  if (keptStubFirst.length !== 1 || keptStubFirst[0] !== full) problems.push('stub then full copy kept the stub');
+  const twoFull = pipeline.deduplicate([full, later]);
+  if (twoFull.length !== 1 || twoFull[0] !== later) problems.push('two full copies no longer keep the later one');
+  return problems.length ? problems.join('; ') : null;
+}
+
 /** SRCH-04: nextOffset pagination skips and repeats results, and stops early when limit > 25. */
 async function srch04OffsetPagination(): Promise<string | null> {
   const corpus: DiscordMessage[] = [];
@@ -492,6 +518,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['REV3-01..03 ReDoS screen gaps', rev3RedosScreenGaps],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
+  ['SRCH-03 dedup keeps the full copy over an index stub', srch03DedupKeepsFullCopy],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
   ['REV-DSC-03 failed later page is not empty', revDsc03FailedLaterPage],
   ['SRCH-05 keyword hijacked into pattern', srch05KeywordHijackedIntoPattern],
