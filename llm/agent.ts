@@ -151,9 +151,12 @@ function untrustedLabel(value?: string): string {
   return JSON.stringify(sanitizeUntrustedContent(value || '').replace(/\s+/g, ' ').slice(0, 100));
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout?: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Tool execution timed out.')), timeoutMs);
+    const timer = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error('Tool execution timed out.'));
+    }, timeoutMs);
     promise.then(
       (value) => { clearTimeout(timer); resolve(value); },
       (error) => { clearTimeout(timer); reject(error); },
@@ -269,8 +272,14 @@ export class AIAssistantAgent {
         // Once this call has settled (including a timeout), a still-running tool can no longer add citations.
         let callOpen = true;
         let executedArgs: Record<string, unknown> | undefined;
+        // Per-call signal: follows Stop, and is aborted when the call times out so its retries end too.
+        const callController = new AbortController();
+        const forwardAbort = () => callController.abort(toolContext.signal?.reason);
+        if (toolContext.signal?.aborted) forwardAbort();
+        else toolContext.signal?.addEventListener('abort', forwardAbort, { once: true });
         const callContext: ToolExecutionContext = {
           ...toolContext,
+          signal: callController.signal,
           addCitation: (message, channelName) => callOpen ? addCitation(message, channelName) : toCitation(message, channelName),
         };
         try {
@@ -287,7 +296,7 @@ export class AIAssistantAgent {
             result = { ok: false, code: 'duplicate_call', summary: 'An identical normalized tool call was already executed.' };
           } else {
             executedArgs = args;
-            result = await withTimeout(tool.execute(args, callContext), tool.timeoutMs);
+            result = await withTimeout(tool.execute(args, callContext), tool.timeoutMs, () => callController.abort());
             // Local tools also return Discord-authored names and topics.
             result.untrustedData = true;
             if (result.truncation?.truncated) budget.truncations++;
@@ -303,6 +312,7 @@ export class AIAssistantAgent {
           };
         } finally {
           callOpen = false;
+          toolContext.signal?.removeEventListener('abort', forwardAbort);
         }
         toolStep.type = result.ok ? 'tool_result' : 'error';
         toolStep.content = result.summary;

@@ -810,6 +810,28 @@ async function revSec03ListThreadsHonoursStop(): Promise<void> {
   assert(problems.length === 0, `REV-SEC-03 list_threads ignored Stop during a 429 wait: ${problems.join('; ')}`);
 }
 
+/** REV-SEC-02: a tool that timed out kept its 429 retry chain issuing GETs after the call (and the run) had ended. */
+async function revSec02TimedOutToolStopsRetrying(): Promise<void> {
+  const tool = TOOL_REGISTRY.get('get_message_details')!;
+  const originalTimeout = tool.timeoutMs;
+  let gets = 0;
+  let getsAtEnd = 0;
+  try {
+    tool.timeoutMs = 200;
+    await quiet(() => withRestGet(() => { gets++; throw { status: 429, body: { retry_after: 1 } }; },
+      () => withScriptedLLM((_body, index) => index === 0
+        ? { toolCalls: [{ name: 'get_message_details', args: { channel_id: ACTIVE_DM, message_id: '400000000000000001' } }] }
+        : { content: 'done' }, async () => {
+        await new AIAssistantAgent(settings({ maxSearchIterations: 1 })).run('details?', [], undefined, undefined, undefined, dmScope());
+        getsAtEnd = gets;
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+      })));
+  } finally {
+    tool.timeoutMs = originalTimeout;
+  }
+  assert(getsAtEnd >= 1 && gets === getsAtEnd, `REV-SEC-02 a timed-out tool kept retrying: ${gets - getsAtEnd} GET(s) after the run ended`);
+}
+
 /** LIFE-07 (transport half): a scheme-less, blank or credential-bearing base URL must never produce a request. */
 async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -1061,6 +1083,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['SRCH-10 tools receive the abort signal', srch10ToolsReceiveAbortSignal],
   ['SEC2-01 context tools honour Stop and cap retry_after', sec2_01ContextToolsHonourStop],
   ['REV-SEC-03 list_threads honours Stop', revSec03ListThreadsHonoursStop],
+  ['REV-SEC-02 timed-out tool stops retrying', revSec02TimedOutToolStopsRetrying],
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['REV-LLM-03 persistent turn-2 provider error surfaces', revLlm03PersistentTurnTwoErrorSurfaces],
