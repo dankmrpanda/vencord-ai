@@ -61,6 +61,8 @@ function errorMessage(error: unknown): string {
  * It runs after toJSON, so Date/moment values serialize exactly as JSON.stringify would and their output is sanitized too.
  */
 function sanitizeStringLeaf(_key: string, value: unknown): unknown {
+  // A boxed String reaches the replacer as an object and would be unboxed after it: sanitize it too.
+  if (value instanceof String) return sanitizeUntrustedContent(value.valueOf());
   return typeof value === 'string' ? sanitizeUntrustedContent(value) : value;
 }
 
