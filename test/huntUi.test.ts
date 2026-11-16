@@ -431,13 +431,19 @@ async function uiQ02ActionableErrors(): Promise<void> {
   const hint = classifyChatError(leaky)?.hint ?? '';
   assert(hint && !/hunter2|sk-secret|gw\.example/.test(hint), `UI-Q02 hint must not echo credentials: ${hint}`);
 
-  const message = { ...assistantMessage(err('LLM completion failed (401).')) };
+  const message = { ...assistantMessage(err('LLM completion failed (401).')), isError: true };
   const withSettings = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message, onOpenSettings: () => undefined }));
   assert(withSettings.includes('data-error-kind="auth"') && withSettings.includes('Open settings'), 'UI-Q02 hint card with Open settings');
   const noSettings = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message }));
   assert(noSettings.includes('data-error-kind="auth"') && !noSettings.includes('Open settings'), 'UI-Q02 no button without onOpenSettings');
   const user = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: { ...message, role: 'user' } }));
   assert(!user.includes('data-error-kind'), 'UI-Q02 user messages never get a hint');
+  // HARD-05: model output can imitate the error prefix; only a reply chatService marked as an error gets a hint.
+  const imitated = renderWithRealReact(() => RealReact.createElement(ChatMessage, {
+    message: assistantMessage(err('LLM completion failed (401).')),
+    onOpenSettings: () => undefined,
+  }));
+  assert(!imitated.includes('data-error-kind') && !imitated.includes('Open settings'), 'HARD-05 imitated error prefix gets no hint card');
 }
 
 /** UI-Q05: an empty finished reply says it stopped; focus returns to the input when a run ends. */

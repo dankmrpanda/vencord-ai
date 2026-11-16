@@ -242,6 +242,7 @@ export class ChatService {
       if (assistantMessage) {
         if (!controller.signal.aborted && !String(err?.message || '').includes('Agent execution cancelled')) {
           assistantMessage.content = `⚠️ **Error**: ${err.message || String(err)}`;
+          assistantMessage.isError = true;
         }
       } else if (!controller.signal.aborted) {
         throw err;

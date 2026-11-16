@@ -84,6 +84,8 @@ export async function runChatServiceTests(): Promise<void> {
     failRun = true;
     await service.sendMessage('Fixture failure');
     assert(events.join(',') === 'load,run,release', 'Failed replies still release their model lease');
+    assert(service.getActiveSession()!.messages.at(-1)!.isError === true, 'Failed replies are marked as errors');
+    assert(!service.getActiveSession()!.messages.at(-3)!.isError, 'Successful replies are not marked as errors');
     failRun = false;
     events.length = 0;
     failLoad = true;

@@ -192,7 +192,8 @@ export function isEmptyFinishedReply(message: Pick<AssistantChatMessage, 'role' 
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSettings, onRetry }) => {
   const isUser = message.role === 'user';
-  const errorHint = isUser ? null : classifyChatError(message.content);
+  // Only a reply chatService marked as an error: model output can imitate the error prefix.
+  const errorHint = isUser || !message.isError ? null : classifyChatError(message.content);
   const [copiedMsg, setCopiedMsg] = React.useState(false);
   const [showCitations, setShowCitations] = React.useState(false);
 

@@ -256,6 +256,8 @@ export interface AssistantChatMessage {
   citations?: CitationItem[];
   timestamp: number;
   isStreaming?: boolean;
+  /** Set by chatService when it writes a failure into the reply; model text can never set it. */
+  isError?: boolean;
 }
 
 export interface ChatSession {
