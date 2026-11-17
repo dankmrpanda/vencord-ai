@@ -53,7 +53,15 @@ function countRecords(result: ToolExecutionResult): number {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
+  // Discord's REST client rejects with the HTTP response object; report its status, never its body.
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status === 'number') return `Discord request failed (HTTP ${status}).`;
   return 'Tool execution failed.';
+}
+
+/** A local model sometimes writes a tool call as text once tools are disabled; that markup is not an answer. */
+function stripTextToolCalls(text: string): string {
+  return text.replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/gi, '').trim();
 }
 
 /**
@@ -455,14 +463,14 @@ export class AIAssistantAgent {
         },
         onChunk: touch,
       }, callSignal), Math.min(FINALIZATION_IDLE_MS, limitMs));
-      finalAnswer = final.content.trim();
+      finalAnswer = stripTextToolCalls(final.content);
     } catch {
       if (signal?.aborted) throw new Error('Agent execution cancelled by user.');
       // The provider failed on the loop turn and again here: surface its (redacted) error, not a generic answer.
       if (loopProviderError && !streamedAnswer.trim()) throw loopProviderError;
       stoppingReason = 'finalization_failed';
-      finalAnswer = streamedAnswer.trim()
-        ? `${streamedAnswer.trim()}\n\n(The answer was cut off because the model stopped responding. Please retry for a complete answer.)`
+      finalAnswer = stripTextToolCalls(streamedAnswer)
+        ? `${stripTextToolCalls(streamedAnswer)}\n\n(The answer was cut off because the model stopped responding. Please retry for a complete answer.)`
         : 'I gathered partial Discord context, but the tools-disabled finalization call failed. Please retry; no Discord data was modified.';
     }
     if (!finalAnswer) finalAnswer = 'I could not produce a final answer from the available scoped Discord context.';

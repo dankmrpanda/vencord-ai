@@ -346,6 +346,30 @@ async function llm15NumericLimitsClamped(): Promise<void> {
   assert(bad.length === 0, `LLM-15 non-positive or fractional limits reached Discord: ${JSON.stringify(limits)}`);
 }
 
+/**
+ * LIVE-02 (found in Discord): Discord rejections are HTTP response objects, not Errors, so a failed read reached the
+ * model and the UI as "Tool execution failed." with no status; and a local model that wrote a `<tool_call>` block as
+ * text in the tools-disabled final answer had that markup shown as the answer.
+ */
+async function live02ToolErrorStatusAndTextToolCall(): Promise<void> {
+  const failed = await quiet(() => withRestGet(() => { throw { status: 403, body: { code: 50001, message: 'Missing Access' } }; },
+    () => withScriptedLLM((_body, index) => index === 0
+      ? { toolCalls: [{ name: 'list_channel_pins', args: { channel_id: ACTIVE_DM } }] }
+      : { content: 'Could not read the pins.' }, async () =>
+      new AIAssistantAgent(settings({ maxSearchIterations: 1 })).run('pins?', [], undefined, undefined, undefined, dmScope()))));
+  const pinResult = failed.steps.find((s) => s.toolResult && !s.toolResult.ok)?.toolResult;
+  assert(Boolean(pinResult && /HTTP 403/.test(pinResult.summary)), `LIVE-02 failed Discord read summary lacks its status: ${JSON.stringify(pinResult?.summary)}`);
+  assert(!/Missing Access/.test(pinResult?.summary || ''), 'LIVE-02 the status summary must not copy the Discord response body');
+
+  const call = '<tool_call>\n{"name": "get_message_details", "arguments": {"channel_id": "1", "message_id": "2"}}\n</tool_call>';
+  for (const [finalText, expected] of [[call, null], [`The image shows a ticket.\n${call}`, 'The image shows a ticket.'], [`Partial ${'<tool_call>'}{"name": "x"`, 'Partial']] as Array<[string, string | null]>) {
+    const result = await quiet(() => withScriptedLLM((_body, index) => ({ content: index === 0 ? 'thinking' : finalText }), async () =>
+      new AIAssistantAgent(settings()).run('explain', [], undefined, undefined, undefined, dmScope())));
+    assert(!/tool_call/.test(result.content), `LIVE-02 text tool call shown as the answer: ${JSON.stringify(result.content)}`);
+    if (expected) assert(result.content === expected, `LIVE-02 answer text around the tool call was lost: ${JSON.stringify(result.content)}`);
+  }
+}
+
 /** LLM-16: OpenAI reasoning models reject max_tokens and a custom temperature (HTTP 400). */
 async function llm16OpenAiReasoningParams(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -1141,6 +1165,7 @@ async function revLlm01FinalizationIdleTimer(): Promise<void> {
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-01 citations crowd out evidence', llm01CitationsCrowdOutEvidence],
   ['LLM-16 OpenAI reasoning model parameters', llm16OpenAiReasoningParams],
+  ['LIVE-02 tool error status and text tool call', live02ToolErrorStatusAndTextToolCall],
   ['REV-LLM-02 ranked search compaction keeps the head', revLlm02RankedSearchCompactionKeepsHead],
   ['SEC-03 tool output sanitized', sec03ToolOutputSanitized],
   ['SEC-03 sanitizer keeps toJSON semantics', sec03SanitizerKeepsToJson],
