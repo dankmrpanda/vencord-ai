@@ -16,10 +16,25 @@ import {
   DiscordUser,
   PluginSettings,
 } from '../types';
-import { ChatMessage } from './ChatMessage';
+import { messageVersion, MemoChatMessage } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
 import { HistoryDrawer } from './HistoryDrawer';
-import { ScopeIndicator } from './ScopeIndicator';
+import {
+  ArrowDownIcon,
+  BugIcon,
+  CloseIcon,
+  HistoryIcon,
+  ImageIcon,
+  LinkIcon,
+  MessagesIcon,
+  NewChatIcon,
+  SearchIcon,
+  SendIcon,
+  SettingsIcon,
+  SparkleIcon,
+  StopIcon,
+} from './icons';
+import { ScopeIndicator, scopeChipLabel } from './ScopeIndicator';
 import {
   deleteHistorySession,
   escapeLayer,
@@ -38,38 +53,7 @@ import {
   streamScrollKey,
   syncSessionToChannel,
 } from './sidebarActions';
-import {
-  activeIconButtonStyle,
-  disabledIconButtonStyle,
-  activeSendButtonStyle,
-  botTagStyle,
-  disabledSendButtonStyle,
-  emptyStateContainerStyle,
-  emptySubtitleStyle,
-  emptyTitleStyle,
-  headerActionsStyle,
-  headerTitleGroupStyle,
-  headerTitleStyle,
-  iconButtonStyle,
-  inputContainerStyle,
-  jumpToLatestButtonStyle,
-  mentionAvatarPlaceholderStyle,
-  mentionGlobalNameStyle,
-  mentionItemActiveStyle,
-  mentionItemStyle,
-  mentionListStyle,
-  mentionPopupContainerStyle,
-  mentionPopupHeaderStyle,
-  mentionUsernameStyle,
-  messagesScrollContainerStyle,
-  panelContainerStyle,
-  panelHeaderStyle,
-  quickPromptButtonStyle,
-  quickPromptsContainerStyle,
-  stopButtonContainerStyle,
-  stopButtonStyle,
-  textareaStyle,
-} from './sidebarStyles';
+import { getSidebarWidth, setSidebarWidth } from './sidebarLayout';
 
 interface SidebarPanelProps {
   settings: PluginSettings;
@@ -294,7 +278,6 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     if (!customPrompt) {
       // Quick prompts and Retry leave a half-typed question in the box alone.
       setInputText('');
-      if (textareaRef.current) textareaRef.current.style.height = 'auto';
     }
 
     // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
@@ -384,69 +367,132 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const val = e.target.value;
     setInputText(val);
     checkMentionTrigger(val, e.target.selectionStart || val.length);
-    e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
   };
 
+  // The send handler reads current state, so rows memoised for streaming always retry through the latest one.
+  const handleSendRef = React.useRef(handleSend);
+  handleSendRef.current = handleSend;
+
+  // The input grows with its text (also when a context-menu launch prefills it), up to the CSS max-height.
+  React.useLayoutEffect?.(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [inputText]);
+
+  // Drag the left edge to resize; the width is clamped so Discord keeps a usable chat column.
+  const [resizing, setResizing] = React.useState(false);
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setResizing(true);
+    const startX = e.clientX;
+    const startWidth = getSidebarWidth();
+    const onMove = (ev: MouseEvent) => setSidebarWidth(startWidth + (startX - ev.clientX));
+    const onUp = (ev: MouseEvent) => {
+      setSidebarWidth(startWidth + (startX - ev.clientX), true);
+      setResizing(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  const resizeByKey = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    setSidebarWidth(getSidebarWidth() + (e.key === 'ArrowLeft' ? 24 : -24), true);
+  };
+  React.useEffect(() => {
+    const onWindowResize = () => setSidebarWidth(getSidebarWidth());
+    window.addEventListener('resize', onWindowResize);
+    return () => window.removeEventListener('resize', onWindowResize);
+  }, []);
+
+  const where = currentScope?.isDM || currentScope?.isGroupDM ? 'in this DM' : 'here';
+  const suggestions: Array<{ icon: React.ReactNode; label: string; prompt: string }> = [
+    { icon: <MessagesIcon size={16} />, label: 'Summarize the recent conversation', prompt: `Summarize the recent conversation ${where}.` },
+    { icon: <SearchIcon size={16} />, label: 'What were the main topics today?', prompt: `What were the main topics discussed ${where} today?` },
+    { icon: <LinkIcon size={16} />, label: 'Find links and files shared', prompt: `Find the links and files shared ${where} recently.` },
+    { icon: <ImageIcon size={16} />, label: 'Find the latest image', prompt: `Find the latest image shared ${where}.` },
+  ];
+  const scopeLabel = scopeChipLabel(currentScope);
+  const hasMessages = Boolean(session?.messages?.length);
+  const canSend = Boolean(inputText.trim()) && !isGenerating;
+  const lastAssistantIndex = session ? session.messages.map((m) => m.role).lastIndexOf('assistant') : -1;
+
   return (
-    <div style={panelContainerStyle} ref={panelRef}>
-      {/* Panel Top Header */}
-      <div style={panelHeaderStyle}>
-        <div style={headerTitleGroupStyle}>
-          <span style={{ fontSize: '16px' }}>✨</span>
-          <span style={headerTitleStyle}>Discord AI Assistant</span>
+    <div className="vai-panel" ref={panelRef}>
+      <div
+        className={`vai-resize${resizing ? ' vai-active' : ''}`}
+        onMouseDown={startResize}
+        onKeyDown={resizeByKey}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize assistant panel"
+        tabIndex={0}
+        title="Drag to resize"
+      />
+
+      <div className="vai-header">
+        <div className="vai-header-title">
+          <SparkleIcon size={20} />
+          <span>AI Assistant</span>
         </div>
-        <div style={headerActionsStyle}>
+        <div className="vai-header-actions">
           <button
-            style={showDebug ? activeIconButtonStyle : iconButtonStyle}
-            onClick={() => {
-              if (!showDebug) setShowHistory(false);
-              setShowDebug(!showDebug);
-            }}
-            title="Debug Diagnostics & Live Logs"
-            aria-label="Debug diagnostics"
-            aria-expanded={showDebug}
+            className="vai-icon-btn"
+            onClick={handleNewChat}
+            disabled={isGenerating}
+            title={isGenerating ? 'New chat (stop the reply first)' : 'New chat'}
+            aria-label="New chat"
           >
-            🐞
+            <NewChatIcon />
           </button>
           <button
-            style={showHistory ? activeIconButtonStyle : isGenerating ? disabledIconButtonStyle : iconButtonStyle}
+            className="vai-icon-btn"
+            aria-pressed={showHistory}
+            disabled={isGenerating && !showHistory}
             onClick={() => {
               if (isGenerating && !showHistory) return;
               refreshSessions(getCurrentChannelId());
               if (!showHistory) setShowDebug(false);
               setShowHistory(!showHistory);
             }}
-            title={isGenerating && !showHistory ? 'Chat History (stop generating first)' : 'Chat History'}
+            title={isGenerating && !showHistory ? 'Chat history (stop the reply first)' : 'Chat history'}
             aria-label="Chat history"
             aria-expanded={showHistory}
           >
-            🕒
+            <HistoryIcon />
           </button>
           <button
-            style={isGenerating ? disabledIconButtonStyle : iconButtonStyle}
-            onClick={handleNewChat}
-            disabled={isGenerating}
-            title={isGenerating ? 'New Chat (stop generating first)' : 'New Chat'}
-            aria-label="New chat"
+            className="vai-icon-btn"
+            aria-pressed={showDebug}
+            onClick={() => {
+              if (!showDebug) setShowHistory(false);
+              setShowDebug(!showDebug);
+            }}
+            title="Diagnostics"
+            aria-label="Debug diagnostics"
+            aria-expanded={showDebug}
           >
-            ➕
+            <BugIcon />
           </button>
           {onOpenSettings && (
-            <button style={iconButtonStyle} onClick={onOpenSettings} title="Settings" aria-label="Settings">
-              ⚙️
+            <button className="vai-icon-btn" onClick={onOpenSettings} title="Settings" aria-label="Settings">
+              <SettingsIcon />
             </button>
           )}
-          <button style={iconButtonStyle} onClick={onClose} title="Close Assistant (Esc)" aria-label="Close assistant">
-            ✕
+          <button className="vai-icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close assistant">
+            <CloseIcon />
           </button>
         </div>
       </div>
 
-      {/* Scope Indicator */}
-      <ScopeIndicator context={currentScope} onScopeChange={setCurrentScope} />
-
-      {/* Debug Diagnostics Drawer */}
       <DebugDrawer
         isOpen={showDebug}
         logs={logs}
@@ -454,8 +500,6 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         settings={settings}
         onClose={() => setShowDebug(false)}
       />
-
-      {/* History Drawer */}
       <HistoryDrawer
         isOpen={showHistory}
         sessionsList={sessionsList}
@@ -466,138 +510,140 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
         onClose={() => setShowHistory(false)}
       />
 
-      {/* Message Stream */}
-      <div style={messagesScrollContainerStyle} ref={scrollContainerRef} onScroll={handleScroll}>
-        {!session || !session.messages || session.messages.length === 0 ? (
-          <div style={emptyStateContainerStyle}>
-            <div style={{ fontSize: '32px', marginBottom: '8px' }}>🤖</div>
-            <div style={emptyTitleStyle}>Ask anything about your messages!</div>
-            <div style={emptySubtitleStyle}>
-              I can search 100k+ past messages, find image attachments, and fetch context across your channels.
-            </div>
-
-            <div style={quickPromptsContainerStyle}>
-              <button
-                style={quickPromptButtonStyle}
-                onClick={() => handleSend('What were the most important topics discussed recently?')}
-              >
-                💡 Summarize recent topics
-              </button>
-              <button
-                style={quickPromptButtonStyle}
-                onClick={() => handleSend('Find the last image or screenshot shared here')}
-              >
-                🖼️ Find last shared image
-              </button>
-              <button
-                style={quickPromptButtonStyle}
-                onClick={() => handleSend('Search for any links or files sent in this channel')}
-              >
-                🔗 Find shared links & files
-              </button>
+      <div className="vai-scroll" ref={scrollContainerRef} onScroll={handleScroll}>
+        {!hasMessages ? (
+          <div className="vai-empty">
+            <div className="vai-empty-mark"><SparkleIcon size={24} /></div>
+            <h2>How can I help?</h2>
+            <p>
+              I can read and search {currentScope ? <strong>{scopeLabel}</strong> : 'the conversation you have open'} to
+              answer questions. I only read: I never post, react or change anything.
+            </p>
+            <div className="vai-suggestions">
+              {suggestions.map((s) => (
+                <button key={s.label} className="vai-suggestion" onClick={() => handleSend(s.prompt)}>
+                  {s.icon}
+                  <span>{s.label}</span>
+                </button>
+              ))}
             </div>
           </div>
         ) : (
-          session.messages.map((m, i) => {
+          session!.messages.map((m, i) => {
             // UI-Q04: Retry re-sends the previous prompt as a new exchange (history keeps the old reply).
-            const retryPrompt = isGenerating ? null : retryPromptAt(session.messages, i);
+            const retryPrompt = isGenerating || i !== lastAssistantIndex ? null : retryPromptAt(session!.messages, i);
             return (
-              <ChatMessage
+              <MemoChatMessage
                 key={m.id}
                 message={m}
+                version={messageVersion(m)}
                 onOpenSettings={onOpenSettings}
                 onRetry={retryPrompt
-                  ? () => handleSend(retryPrompt, retryLaunchRequest(lastSendRef.current, session.id, retryPrompt))
+                  ? () => handleSendRef.current(retryPrompt, retryLaunchRequest(lastSendRef.current, session!.id, retryPrompt))
                   : undefined}
               />
             );
           })
         )}
-        <div ref={messagesEndRef} />
+        <div className="vai-scroll-anchor" ref={messagesEndRef} />
       </div>
 
-      {/* UI-Q01: shown while scrolled away from the latest content */}
-      {showJumpToLatest && Boolean(session?.messages.length) && (
-        <div style={stopButtonContainerStyle}>
-          <button style={jumpToLatestButtonStyle} onClick={jumpToLatest} title="Scroll to the latest message">
-            ↓ Jump to latest
+      <div className="vai-composer-wrap">
+        {/* UI-Q01: shown while scrolled away from the latest content */}
+        {showJumpToLatest && hasMessages && (
+          <button className="vai-jump-latest" onClick={jumpToLatest} title="Scroll to the latest message">
+            <ArrowDownIcon size={14} />
+            Jump to latest
           </button>
-        </div>
-      )}
+        )}
 
-      {/* Stop Generating Button */}
-      {isGenerating && (
-        <div style={stopButtonContainerStyle}>
-          <button style={stopButtonStyle} onClick={() => chatService.stopGenerating()}>
-            ⏹ Stop Generating
-          </button>
-        </div>
-      )}
-
-      {/* Input Box */}
-      <div style={inputContainerStyle}>
         {mentionSuggestions.length > 0 && (
-          <div style={mentionPopupContainerStyle}>
-            <div style={mentionPopupHeaderStyle}>Members matching mention</div>
-            <div style={mentionListStyle}>
+          <div className="vai-mentions">
+            <div className="vai-mentions-title">Members</div>
+            <div className="vai-mentions-list" role="listbox" aria-label="Mention suggestions">
               {mentionSuggestions.map((u, idx) => (
                 <div
                   key={u.id}
-                  style={idx === mentionSelectedIndex ? mentionItemActiveStyle : mentionItemStyle}
+                  className="vai-mention"
+                  role="option"
+                  aria-selected={idx === mentionSelectedIndex}
                   onMouseDown={(e) => {
                     e.preventDefault();
                     insertMention(u);
                   }}
-                  onClick={() => insertMention(u)}
                   onMouseEnter={() => setMentionSelectedIndex(idx)}
                 >
-                  <div style={mentionAvatarPlaceholderStyle}>
-                    {u.avatar ? (
-                      <img
-                        src={`https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=32`}
-                        alt={u.username}
-                        style={{ width: '100%', height: '100%', borderRadius: '50%' }}
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                        }}
-                      />
-                    ) : (
-                      u.username.slice(0, 1).toUpperCase()
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={mentionGlobalNameStyle}>{u.globalName || u.username}</span>
-                      {u.bot && <span style={botTagStyle}>BOT</span>}
-                    </div>
-                    <span style={mentionUsernameStyle}>@{u.username}</span>
-                  </div>
+                  {u.avatar ? (
+                    <img
+                      src={`https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=32`}
+                      alt=""
+                      onError={(e) => { (e.target as HTMLElement).style.visibility = 'hidden'; }}
+                    />
+                  ) : (
+                    <span className="vai-face">{u.username.slice(0, 1).toUpperCase()}</span>
+                  )}
+                  <span className="vai-mention-name">{u.globalName || u.username}</span>
+                  {u.bot && <span className="vai-bot-tag">BOT</span>}
+                  <span className="vai-mention-user">{u.username}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <textarea
-          ref={textareaRef}
-          style={textareaStyle}
-          placeholder="Ask a question about messages, files, or @mention someone..."
-          aria-label="Message the AI assistant"
-          value={inputText}
-          onChange={handleTextareaInput}
-          onKeyDown={handleKeyDown}
-          rows={1}
-          disabled={isGenerating}
-        />
-        <button
-          style={inputText.trim() && !isGenerating ? activeSendButtonStyle : disabledSendButtonStyle}
-          onClick={() => handleSend()}
-          disabled={!inputText.trim() || isGenerating}
-          title="Send message (Enter)"
-          aria-label="Send message"
-        >
-          ➔
-        </button>
+        <div className="vai-composer">
+          {launchRequest && (
+            <div className="vai-attached">
+              <span>
+                Asking about <strong>{launchRequest.mode === 'thread' ? 'the selected thread' : 'the selected message'}</strong>
+              </span>
+              <button
+                className="vai-icon-btn vai-small"
+                onClick={() => onLaunchConsumed?.()}
+                title="Remove the attached message"
+                aria-label="Remove the attached message"
+              >
+                <CloseIcon size={14} />
+              </button>
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            className="vai-textarea"
+            placeholder={currentScope ? `Ask about ${scopeLabel}` : 'Open a channel or DM to ask about it'}
+            aria-label="Message the AI assistant"
+            value={inputText}
+            onChange={handleTextareaInput}
+            onKeyDown={handleKeyDown}
+            rows={1}
+          />
+          <div className="vai-composer-foot">
+            <ScopeIndicator context={currentScope} onScopeChange={setCurrentScope} />
+            {isGenerating ? (
+              <button
+                className="vai-send vai-stop"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => chatService.stopGenerating()}
+                title="Stop generating"
+                aria-label="Stop generating"
+              >
+                <StopIcon size={14} />
+              </button>
+            ) : (
+              <button
+                className="vai-send"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => handleSend()}
+                disabled={!canSend}
+                title="Send (Enter) · New line (Shift+Enter)"
+                aria-label="Send message"
+              >
+                <SendIcon size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="vai-disclaimer">Read-only. Answers can be wrong; check the sources.</div>
       </div>
     </div>
   );

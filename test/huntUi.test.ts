@@ -490,7 +490,7 @@ async function uiQ04Retry(): Promise<void> {
   assert(retryLaunchRequest(last, 's1', 'other') === null && retryLaunchRequest(null, 's1', 'x') === null, 'UI-Q04 other prompt or none');
   const withRetry = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: reply, onRetry: () => undefined }));
   const without = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: reply }));
-  assert(withRetry.includes('↻ Retry') && !without.includes('↻ Retry'), 'UI-Q04 Retry button follows onRetry');
+  assert(withRetry.includes('aria-label="Retry"') && !without.includes('aria-label="Retry"'), 'UI-Q04 Retry button follows onRetry');
 }
 
 /** UI-Q08: deleting a chat needs a second click on the same chat within a few seconds. */
@@ -506,7 +506,7 @@ async function uiQ08DeleteConfirm(): Promise<void> {
     onDeleteSession: () => undefined,
     onClose: () => undefined,
   }));
-  assert(html.includes('🗑️') && !html.includes('Delete?'), 'UI-Q08 unarmed drawer renders the trash button');
+  assert(html.includes('aria-label="Delete t"') && !html.includes('Delete?'), 'UI-Q08 unarmed drawer renders the trash button');
 }
 
 /** UI-Q07: keyboard-operable clickable divs, aria state on toggles, platform-aware shortcut label. */
@@ -522,9 +522,9 @@ async function uiQ07Accessibility(): Promise<void> {
     'UI-Q07 other platforms use Ctrl');
   const message = { ...assistantMessage('see refs'), citations: [{ messageId: 'm1', channelId: 'c1' } as any] };
   const html = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message }));
-  assert(/role="button" tabindex="0" aria-expanded="false"/.test(html), 'UI-Q07 citations header is a keyboard-operable toggle');
+  assert(/<button class="vai-sources-toggle" aria-expanded="false"/.test(html), 'UI-Q07 sources toggle is a native button with aria-expanded');
   const badge = renderWithRealReact(() => RealReact.createElement(ToolCallBadge, { step: { id: 'st1', type: 'tool_call', toolName: 'search_messages', timestamp: 0 } as any }));
-  assert(/role="button" tabindex="0" aria-expanded="false"/.test(badge), 'UI-Q07 tool badge header is a keyboard-operable toggle');
+  assert(/<button class="vai-step-head" aria-expanded="false"/.test(badge), 'UI-Q07 tool step is a native button with aria-expanded');
 }
 
 /** UI-Q11: non-image attachments render as a named file chip, not a broken image; names never include the query. */
@@ -546,7 +546,7 @@ async function uiQ11AttachmentChips(): Promise<void> {
   const html = renderWithRealReact(() => RealReact.createElement(MessagePreview, {
     citation: { messageId: 'm1', channelId: 'c1', timestamp: 0, content: 'x', attachmentUrls: [`${cdn}/photo.png`, `${cdn}/notes.pdf?hm=secret`] } as any,
   }));
-  assert(html.includes('<img') && html.includes('📄 notes.pdf') && !html.includes('src="https://cdn.discordapp.com/attachments/1/2/notes.pdf'),
+  assert(html.includes('<img') && /class="vai-file-chip"[^>]*title="notes.pdf"/.test(html) && !html.includes('src="https://cdn.discordapp.com/attachments/1/2/notes.pdf'),
     'UI-Q11 image thumbnail plus file chip');
 }
 

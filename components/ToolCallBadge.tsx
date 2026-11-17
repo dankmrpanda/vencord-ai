@@ -6,167 +6,128 @@
 
 import { React } from '@webpack/common';
 import { AgentStep } from '../types';
-import { clickableProps } from './a11y';
+import { CheckIcon, ChevronRightIcon, CloseIcon, toolIcon } from './icons';
+
+/** Raw tool data can hold dozens of full Discord messages; the debug view shows at most this many characters. */
+const RAW_LIMIT = 6000;
+
+function quoted(value: unknown, max = 48): string {
+  const text = String(value ?? '').trim();
+  return text.length > max ? `"${text.slice(0, max - 1)}…"` : `"${text}"`;
+}
+
+/** A readable, human description of one tool step, in the past tense once it has finished. */
+export function describeStep(step: Pick<AgentStep, 'toolName' | 'toolArgs' | 'content'>, done: boolean): string {
+  const args = step.toolArgs || {};
+  const verb = (running: string, finished: string) => (done ? finished : running);
+  switch (step.toolName) {
+    case 'search_messages': {
+      const terms = [args.query && quoted(args.query), args.pattern && `pattern ${quoted(args.pattern, 32)}`, args.has && `with ${args.has}`]
+        .filter(Boolean).join(' ');
+      return `${verb('Searching', 'Searched')} ${terms || 'messages'}`;
+    }
+    case 'fetch_recent_messages': return `${verb('Reading', 'Read')} recent messages`;
+    case 'fetch_surrounding_messages': return `${verb('Reading', 'Read')} the surrounding conversation`;
+    case 'get_message_details': return `${verb('Opening', 'Opened')} the selected message`;
+    case 'list_channel_pins': return `${verb('Checking', 'Checked')} pinned messages`;
+    case 'list_threads': return `${verb('Listing', 'Listed')} threads`;
+    case 'inspect_image': return `${verb('Looking at', 'Looked at')} an image`;
+    case 'list_available_channels': return `${verb('Listing', 'Listed')} channels in scope`;
+    case 'get_current_context': return `${verb('Checking', 'Checked')} the current conversation`;
+    default: return step.content || `${verb('Running', 'Ran')} ${step.toolName || 'a tool'}`;
+  }
+}
+
+function rawJson(value: unknown): string {
+  let text: string;
+  try { text = typeof value === 'string' ? value : JSON.stringify(value, null, 2); } catch { text = String(value); }
+  return text.length > RAW_LIMIT ? `${text.slice(0, RAW_LIMIT)}\n… (${text.length - RAW_LIMIT} more characters)` : text;
+}
 
 interface ToolCallBadgeProps {
   step: AgentStep;
 }
 
+/** One tool step: a readable line that expands to the tool's own summary and, on request, its raw data. */
 export const ToolCallBadge: React.FC<ToolCallBadgeProps> = ({ step }) => {
   const [expanded, setExpanded] = React.useState(false);
-
-  const getToolIcon = () => {
-    switch (step.toolName) {
-      case 'search_messages':
-        return '🔍';
-      case 'fetch_surrounding_messages':
-      case 'fetch_recent_messages':
-        return '📜';
-      case 'inspect_image':
-        return '🖼️';
-      case 'list_available_channels':
-      case 'get_current_context':
-        return '🧭';
-      default:
-        return '⚡';
-    }
-  };
-
-  const getStatusIcon = () => {
-    if (step.type === 'error') return '❌';
-    if (step.toolResult !== undefined) return '✅';
-    return '⏳';
-  };
-
-  const getSummary = () => {
-    if (step.toolName === 'search_messages') {
-      const q = step.toolArgs?.query ? `"${step.toolArgs.query}"` : '';
-      const p = step.toolArgs?.pattern ? `[pattern: ${step.toolArgs.pattern}]` : '';
-      const h = step.toolArgs?.has ? `[has:${step.toolArgs.has}]` : '';
-      const terms = [q, p, h].filter(Boolean).join(' ');
-      return `Search Discord ${terms || 'messages'}`.trim();
-    }
-    if (step.toolName === 'fetch_surrounding_messages') {
-      return `Fetch context around message ${step.toolArgs?.message_id || ''}`.trim();
-    }
-    if (step.toolName === 'fetch_recent_messages') {
-      const p = step.toolArgs?.pattern ? ` [pattern: ${step.toolArgs.pattern}]` : '';
-      return `Fetch recent channel messages${p}`.trim();
-    }
-    if (step.toolName === 'inspect_image') {
-      return `Inspect image attachment`;
-    }
-    if (step.toolName === 'list_available_channels') {
-      return `Discover available channel scopes`;
-    }
-    return step.content || `Executing ${step.toolName || 'tool'}`;
-  };
+  const [showRaw, setShowRaw] = React.useState(false);
+  const done = step.toolResult !== undefined || step.type === 'error';
+  const failed = step.type === 'error' || step.toolResult?.ok === false;
+  const summary: string = typeof step.toolResult?.summary === 'string' ? step.toolResult.summary : step.content || '';
 
   return (
-    <div style={containerStyle}>
-      <div style={headerStyle} {...clickableProps(() => setExpanded(!expanded), expanded)}>
-        <span style={toolIconStyle}>{getToolIcon()}</span>
-        <span style={summaryStyle}>{getSummary()}</span>
-        <span style={statusIconStyle}>{getStatusIcon()}</span>
-        <span style={toggleStyle}>{expanded ? '▲' : '▼'}</span>
-      </div>
-
+    <div>
+      <button className="vai-step-head" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
+        {toolIcon(step.toolName)}
+        <span className="vai-step-label">{describeStep(step, done)}</span>
+        {!done ? <span className="vai-spinner" aria-label="Running" />
+          : failed ? <span className="vai-step-status vai-fail" aria-label="Failed"><CloseIcon size={14} /></span>
+            : <span className="vai-step-status vai-ok" aria-label="Done"><CheckIcon size={14} /></span>}
+      </button>
       {expanded && (
-        <div style={detailsStyle}>
-          {step.toolArgs && (
-            <div style={sectionStyle}>
-              <div style={sectionTitleStyle}>Arguments:</div>
-              <pre style={codeBlockStyle}>{JSON.stringify(step.toolArgs, null, 2)}</pre>
-            </div>
+        <div className="vai-step-detail">
+          <div>{summary || (done ? 'No details.' : 'Running…')}</div>
+          {(step.toolArgs || step.toolResult !== undefined) && (
+            <button className="vai-action" onClick={() => setShowRaw(!showRaw)} aria-expanded={showRaw}>
+              {showRaw ? 'Hide raw data' : 'Show raw data'}
+            </button>
           )}
-          {step.toolResult !== undefined && (
-            <div style={sectionStyle}>
-              <div style={sectionTitleStyle}>Result:</div>
-              <pre style={codeBlockStyle}>
-                {typeof step.toolResult === 'string'
-                  ? step.toolResult
-                  : JSON.stringify(step.toolResult, null, 2)}
-              </pre>
-            </div>
-          )}
+          {showRaw && step.toolArgs && <pre>{rawJson(step.toolArgs)}</pre>}
+          {showRaw && step.toolResult !== undefined && <pre>{rawJson(step.toolResult)}</pre>}
         </div>
       )}
     </div>
   );
 };
 
-const containerStyle: React.CSSProperties = {
-  backgroundColor: 'var(--background-secondary-alt, #232428)',
-  border: '1px solid var(--background-modifier-accent, #3f4147)',
-  borderRadius: '6px',
-  margin: '4px 0',
-  fontSize: '11px',
-  overflow: 'hidden',
-  transition: 'border-color 0.15s ease',
-};
+/** Steps that represent tool use (the final 'answer' step is the reply itself). */
+export function toolStepsOf(steps: AgentStep[] | undefined): AgentStep[] {
+  return (steps || []).filter((s) => s.type === 'tool_call' || s.type === 'tool_result' || s.type === 'error');
+}
 
-const headerStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  padding: '6px 10px',
-  cursor: 'pointer',
-  userSelect: 'none',
-  gap: '6px',
-};
+/** The collapsed one-line summary of a finished run's tool use, e.g. "Used 3 tools (1 failed)". */
+export function activitySummary(steps: AgentStep[]): string {
+  const failed = steps.filter((s) => s.type === 'error' || s.toolResult?.ok === false).length;
+  const base = `Used ${steps.length} tool${steps.length === 1 ? '' : 's'}`;
+  return failed ? `${base} (${failed} failed)` : base;
+}
 
-const toolIconStyle: React.CSSProperties = {
-  fontSize: '12px',
-};
+interface AgentActivityProps {
+  steps?: AgentStep[];
+  streaming: boolean;
+  hasText: boolean;
+}
 
-const statusIconStyle: React.CSSProperties = {
-  fontSize: '10px',
-  marginLeft: 'auto',
-  marginRight: '4px',
-};
+/**
+ * The reply's working state, shown above the answer like other assistants do: "Thinking…", the step that is
+ * running now, or a collapsed "Used N tools" line that expands to each step.
+ */
+export const AgentActivity: React.FC<AgentActivityProps> = ({ steps, streaming, hasText }) => {
+  const [open, setOpen] = React.useState(false);
+  const toolSteps = toolStepsOf(steps);
 
-const summaryStyle: React.CSSProperties = {
-  flex: 1,
-  fontWeight: 500,
-  color: 'var(--text-muted, #949ba4)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-};
+  if (!toolSteps.length) {
+    if (!streaming || hasText) return null;
+    return <div className="vai-activity"><span className="vai-thinking"><span className="vai-spinner" />Thinking…</span></div>;
+  }
 
-const toggleStyle: React.CSSProperties = {
-  fontSize: '8px',
-  color: 'var(--text-muted, #949ba4)',
-};
+  const running = streaming ? toolSteps.find((s) => s.toolResult === undefined && s.type !== 'error') : undefined;
+  const label = running
+    ? `${describeStep(running, false)}…`
+    : streaming && !hasText ? 'Writing the answer…' : activitySummary(toolSteps);
 
-const detailsStyle: React.CSSProperties = {
-  padding: '8px 10px',
-  borderTop: '1px solid var(--background-modifier-accent, #3f4147)',
-  backgroundColor: 'var(--background-tertiary, #1e1f22)',
-  maxHeight: '200px',
-  overflowY: 'auto',
-};
-
-const sectionStyle: React.CSSProperties = {
-  marginBottom: '6px',
-};
-
-const sectionTitleStyle: React.CSSProperties = {
-  fontWeight: 600,
-  fontSize: '10px',
-  color: 'var(--header-secondary, #b5bac1)',
-  marginBottom: '3px',
-  textTransform: 'uppercase',
-};
-
-const codeBlockStyle: React.CSSProperties = {
-  margin: 0,
-  padding: '6px 8px',
-  backgroundColor: 'var(--background-floating, #111214)',
-  borderRadius: '4px',
-  fontFamily: 'monospace',
-  fontSize: '10px',
-  color: 'var(--text-normal, #dbdee1)',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-all',
-  border: '1px solid var(--background-modifier-accent, #3f4147)',
+  return (
+    <div className="vai-activity">
+      <button className="vai-activity-toggle" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'Hide steps' : 'Show steps'}>
+        {streaming && (running || !hasText) ? <span className="vai-spinner" /> : <ChevronRightIcon size={14} className="vai-chevron" />}
+        <span>{label}</span>
+      </button>
+      {open && (
+        <div className="vai-steps">
+          {toolSteps.map((step) => <ToolCallBadge key={step.id} step={step} />)}
+        </div>
+      )}
+    </div>
+  );
 };

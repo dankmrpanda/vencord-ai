@@ -7,6 +7,8 @@
 import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { CitationItem } from '../types';
+import { clickableProps } from './a11y';
+import { FileIcon, ImageIcon, JumpIcon } from './icons';
 
 interface MessagePreviewProps {
   citation: CitationItem;
@@ -25,7 +27,7 @@ export function attachmentDisplay(url: string): { kind: 'image' | 'file'; name: 
   let name = segment;
   try { name = decodeURIComponent(segment); } catch {}
   // Bidi and tag characters could make `invoice<U+202E>fdp.exe` display as `invoiceexe.pdf`.
-  name = name.replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]|[\u{E0000}-\u{E007F}]/gu, '') || 'attachment';
+  name = name.replace(/[؜‎‏‪-‮⁦-⁩]|[\u{E0000}-\u{E007F}]/gu, '') || 'attachment';
   return { kind: IMAGE_EXTENSIONS.test(name) ? 'image' : 'file', name };
 }
 
@@ -34,198 +36,69 @@ const AttachmentItem: React.FC<{ url: string; onOpen: (e: React.MouseEvent) => v
   const { kind, name } = attachmentDisplay(url);
   if (kind === 'file' || failed) {
     return (
-      <button style={fileChipStyle} onClick={onOpen} title={name}>
-        {failed ? '🖼️ image unavailable' : `📄 ${name}`}
+      <button className="vai-file-chip" onClick={onOpen} onKeyDown={(e) => e.stopPropagation()} title={name}>
+        {failed ? <><ImageIcon size={12} /> image unavailable</> : <><FileIcon size={12} /> {name}</>}
       </button>
     );
   }
+  return <img className="vai-thumb" src={url} alt={name} title="Open image" onClick={onOpen} onError={() => setFailed(true)} />;
+};
+
+const initial = (name: string | undefined) => (name ? name.charAt(0).toUpperCase() : '?');
+
+/** Up to three stacked author avatars for a reply's sources. */
+export const SourceFaces: React.FC<{ citations: CitationItem[] }> = ({ citations }) => {
+  const seen = new Set<string>();
+  const faces = citations.filter((c) => {
+    const key = c.authorAvatar || c.authorName;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 3);
   return (
-    <img
-      src={url}
-      alt={name}
-      style={attachmentThumbStyle}
-      title="Click to view full image"
-      onClick={onOpen}
-      onError={() => setFailed(true)}
-    />
+    <span className="vai-faces" aria-hidden="true">
+      {faces.map((c) => (c.authorAvatar
+        ? <img key={c.messageId} src={c.authorAvatar} alt="" />
+        : <span key={c.messageId} className="vai-face">{initial(c.authorName)}</span>))}
+    </span>
   );
 };
 
+/** A cited Discord message, drawn like a compact Discord message; activating it jumps to the original. */
 export const MessagePreview: React.FC<MessagePreviewProps> = ({ citation }) => {
-  const handleJump = () => {
-    jumpToMessage(citation.channelId, citation.messageId, citation.guildId);
-  };
-
-  const formattedDate = new Date(citation.timestamp).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
-  const handleImageClick = (e: React.MouseEvent, url: string) => {
+  const [avatarFailed, setAvatarFailed] = React.useState(false);
+  const handleJump = () => jumpToMessage(citation.channelId, citation.messageId, citation.guildId);
+  const when = new Date(citation.timestamp);
+  const formattedDate = Number.isNaN(when.getTime())
+    ? ''
+    : when.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const handleOpenAttachment = (e: React.MouseEvent, url: string) => {
     e.stopPropagation();
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   return (
-    <div style={cardStyle} onClick={handleJump} title="Click to jump to message in Discord">
-      <div style={topRowStyle}>
-        <div style={authorInfoStyle}>
-          {citation.authorAvatar ? (
-            <img
-              src={citation.authorAvatar}
-              alt=""
-              style={avatarStyle}
-              onError={(e) => {
-                (e.target as HTMLElement).style.display = 'none';
-              }}
-            />
-          ) : (
-            <div style={defaultAvatarStyle}>
-              {citation.authorName ? citation.authorName.charAt(0).toUpperCase() : 'U'}
-            </div>
-          )}
-          <span style={authorNameStyle}>{citation.authorName}</span>
-          <span style={timestampStyle}>{formattedDate}</span>
+    <div className="vai-source" {...clickableProps(handleJump)} title="Jump to this message">
+      {citation.authorAvatar && !avatarFailed
+        ? <img className="vai-source-avatar" src={citation.authorAvatar} alt="" onError={() => setAvatarFailed(true)} />
+        : <div className="vai-source-avatar" aria-hidden="true">{initial(citation.authorName)}</div>}
+      <div className="vai-source-main">
+        <div className="vai-source-meta">
+          <span className="vai-source-author">{citation.authorName || 'Unknown'}</span>
+          <span className="vai-source-where">{[citation.channelName, formattedDate].filter(Boolean).join(' · ')}</span>
+          <span className="vai-source-jump"><JumpIcon size={14} /></span>
         </div>
-        <button
-          style={jumpButtonStyle}
-          onClick={(e) => {
-            e.stopPropagation();
-            handleJump();
-          }}
-          title="Jump to message"
-        >
-          Jump ↗
-        </button>
-      </div>
-
-      <div style={contentStyle}>
-        {citation.content || <span style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>[Attachment/Media]</span>}
-      </div>
-
-      {citation.attachmentUrls && citation.attachmentUrls.length > 0 && (
-        <div style={attachmentContainerStyle}>
-          {citation.attachmentUrls.map((url, i) => (
-            <AttachmentItem key={i} url={url} onOpen={(e) => handleImageClick(e, url)} />
-          ))}
+        <div className="vai-source-text">
+          {citation.content || <span className="vai-note">Attachment</span>}
         </div>
-      )}
+        {citation.attachmentUrls && citation.attachmentUrls.length > 0 && (
+          <div className="vai-attachments">
+            {citation.attachmentUrls.map((url, i) => (
+              <AttachmentItem key={i} url={url} onOpen={(e) => handleOpenAttachment(e, url)} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
-};
-
-const cardStyle: React.CSSProperties = {
-  backgroundColor: 'var(--background-secondary, #2b2d31)',
-  borderRadius: '6px',
-  border: '1px solid var(--background-modifier-accent, #3f4147)',
-  padding: '8px 10px',
-  margin: '6px 0',
-  fontSize: '12px',
-  cursor: 'pointer',
-  transition: 'background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease',
-};
-
-const topRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: '4px',
-};
-
-const authorInfoStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-  overflow: 'hidden',
-};
-
-const avatarStyle: React.CSSProperties = {
-  width: '18px',
-  height: '18px',
-  borderRadius: '50%',
-  objectFit: 'cover',
-  flexShrink: 0,
-};
-
-const defaultAvatarStyle: React.CSSProperties = {
-  width: '18px',
-  height: '18px',
-  borderRadius: '50%',
-  backgroundColor: 'var(--brand-experiment, #5865f2)',
-  color: '#fff',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: '10px',
-  fontWeight: 'bold',
-  flexShrink: 0,
-};
-
-const authorNameStyle: React.CSSProperties = {
-  fontWeight: 600,
-  color: 'var(--header-primary, #f2f3f5)',
-  fontSize: '11px',
-  maxWidth: '120px',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-};
-
-const timestampStyle: React.CSSProperties = {
-  fontSize: '10px',
-  color: 'var(--text-muted, #949ba4)',
-};
-
-const jumpButtonStyle: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: 'var(--text-link, #00a8fc)',
-  fontSize: '11px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  padding: '2px 6px',
-  borderRadius: '3px',
-};
-
-const contentStyle: React.CSSProperties = {
-  color: 'var(--text-normal, #dbdee1)',
-  fontSize: '12px',
-  lineHeight: '1.4',
-  wordBreak: 'break-word',
-  display: '-webkit-box',
-  WebkitLineClamp: 3,
-  WebkitBoxOrient: 'vertical',
-  overflow: 'hidden',
-};
-
-const attachmentContainerStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: '6px',
-  marginTop: '6px',
-  flexWrap: 'wrap',
-};
-
-const fileChipStyle: React.CSSProperties = {
-  maxWidth: '160px',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  padding: '3px 8px',
-  borderRadius: '4px',
-  fontSize: '11px',
-  cursor: 'pointer',
-  color: 'var(--text-normal, #dbdee1)',
-  backgroundColor: 'var(--background-tertiary, #1e1f22)',
-  border: '1px solid var(--background-modifier-accent, #3f4147)',
-};
-
-const attachmentThumbStyle: React.CSSProperties = {
-  maxWidth: '80px',
-  maxHeight: '60px',
-  borderRadius: '4px',
-  objectFit: 'cover',
-  cursor: 'zoom-in',
-  border: '1px solid var(--background-modifier-accent, #3f4147)',
 };

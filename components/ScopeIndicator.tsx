@@ -6,288 +6,198 @@
 
 import { React } from '@webpack/common';
 import { CurrentScopeContext } from '../types';
-import {
-  scopeChannelItemStyle,
-  scopeChannelListStyle,
-  scopeDropdownContainerStyle,
-  scopeEditButtonStyle,
-  scopeModeActivePillStyle,
-  scopeModePillStyle,
-  scopeModeRowStyle,
-  scopeSearchInputStyle,
-} from './sidebarStyles';
+import { AtIcon, ChevronDownIcon, HashIcon, ServerIcon, UsersIcon } from './icons';
 
 interface ScopeIndicatorProps {
   context: CurrentScopeContext | null;
   onScopeChange?: (newScope: CurrentScopeContext) => void;
 }
 
-export const ScopeIndicator: React.FC<ScopeIndicatorProps> = ({ context, onScopeChange }) => {
-  const [isEditing, setIsEditing] = React.useState(false);
-  const [channelFilter, setChannelFilter] = React.useState('');
+/** The short label on the scope chip, e.g. "#general", "All of My Server", "3 channels", "@ord + 2 groups". */
+export function scopeChipLabel(context: CurrentScopeContext | null): string {
+  if (!context) return 'No conversation open';
+  const raw = context.channelName || 'channel';
+  if (context.isGuild) {
+    if (context.scopeMode === 'server') return `All of ${context.guildName || 'this server'}`;
+    if (context.scopeMode === 'custom') {
+      const count = context.selectedChannelIds?.length ?? 1;
+      return `${count} channel${count === 1 ? '' : 's'}`;
+    }
+    return raw.startsWith('#') ? raw : `#${raw}`;
+  }
+  if (context.isDM) {
+    const name = raw.startsWith('@') ? raw : `@${raw}`;
+    const groups = context.includeMutualGroupDMs ? context.mutualGroupDMs?.length ?? 0 : 0;
+    return groups ? `${name} + ${groups} group${groups === 1 ? '' : 's'}` : name;
+  }
+  return raw;
+}
 
-  if (!context) {
+function chipIcon(context: CurrentScopeContext | null): React.ReactNode {
+  if (!context) return <HashIcon size={14} />;
+  if (context.isGuild) return context.scopeMode === 'server' ? <ServerIcon size={14} /> : <HashIcon size={14} />;
+  if (context.isDM) return context.includeMutualGroupDMs ? <UsersIcon size={14} /> : <AtIcon size={14} />;
+  return <UsersIcon size={14} />;
+}
+
+const Option: React.FC<{ checked: boolean; icon: React.ReactNode; title: string; detail?: string; onSelect: () => void }> = ({
+  checked, icon, title, detail, onSelect,
+}) => (
+  <button className="vai-option" role="menuitemradio" aria-checked={checked} onClick={onSelect}>
+    {icon}
+    <span>{title}{detail && <small>{detail}</small>}</span>
+  </button>
+);
+
+/**
+ * The search scope as a chip in the composer, like the context chips in other assistants. Opening it lists the
+ * scopes the current conversation allows; every choice is still enforced in discord/scope.ts.
+ */
+export const ScopeIndicator: React.FC<ScopeIndicatorProps> = ({ context, onScopeChange }) => {
+  const [open, setOpen] = React.useState(false);
+  const [channelFilter, setChannelFilter] = React.useState('');
+  const rootRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Close on a click outside the chip or its popover, and on Escape (marked handled so the panel stays open).
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const panel = rootRef.current?.closest('#vencord-ai-sidebar-root');
+      if (e.target !== document.body && !panel?.contains(e.target as Node)) return;
+      e.preventDefault();
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onPointer, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  const canEdit = Boolean(context && onScopeChange && !context.isGroupDM);
+  const label = scopeChipLabel(context);
+
+  if (!context || !canEdit) {
     return (
-      <div style={containerStyle}>
-        <span style={channelNameStyle}>No active channel selected</span>
+      <div className="vai-scope">
+        <span className="vai-chip" title={context ? 'Searches only this group DM' : 'Open a channel or DM to ask about it'} style={{ cursor: 'default' }}>
+          {chipIcon(context)}<span>{label}</span>
+        </span>
       </div>
     );
   }
 
-  const rawName = context.channelName || 'channel';
-  const displayName = context.isDM
-    ? rawName.startsWith('@') ? rawName : `@${rawName}`
-    : rawName.startsWith('#') ? rawName : `#${rawName}`;
+  const change = (next: CurrentScopeContext) => onScopeChange?.(next);
+  const mode = context.scopeMode || 'channel';
+  const channels = (context.accessibleGuildChannels || []).filter((ch) =>
+    ch.name.toLowerCase().includes(channelFilter.toLowerCase().trim()));
 
-  let scopeDescription = 'Current channel only';
-  if (context.isGuild) {
-    if (context.scopeMode === 'server') {
-      const count = context.accessibleGuildChannels?.length ?? 1;
-      scopeDescription = `Server-wide (${count} accessible channels in ${context.guildName || 'Server'})`;
-    } else if (context.scopeMode === 'custom') {
-      const count = context.selectedChannelIds?.length ?? 1;
-      scopeDescription = `Custom (${count} selected channel${count > 1 ? 's' : ''} in ${context.guildName || 'Server'})`;
+  const toggleChannel = (channelId: string) => {
+    const selected = new Set(context.selectedChannelIds || [context.channelId]);
+    if (selected.has(channelId)) {
+      if (selected.size > 1) selected.delete(channelId);
     } else {
-      scopeDescription = `Current channel only (${displayName})`;
+      selected.add(channelId);
     }
-  } else if (context.isDM) {
-    if (context.includeMutualGroupDMs) {
-      const gdmCount = context.mutualGroupDMs?.length ?? 0;
-      scopeDescription = gdmCount > 0
-        ? `DM + ${gdmCount} mutual group chat${gdmCount > 1 ? 's' : ''}`
-        : 'Current DM';
-    } else {
-      scopeDescription = `Current DM only (${displayName})`;
-    }
-  } else if (context.isGroupDM) {
-    scopeDescription = `Current Group DM (${displayName})`;
-  }
-
-  const handleGuildModeSelect = (mode: 'channel' | 'server' | 'custom') => {
-    if (!onScopeChange) return;
-    if (mode === 'channel') {
-      onScopeChange({
-        ...context,
-        scopeMode: 'channel',
-        selectedChannelIds: [context.channelId],
-      });
-    } else if (mode === 'server') {
-      onScopeChange({
-        ...context,
-        scopeMode: 'server',
-        selectedChannelIds: (context.accessibleGuildChannels || []).map((c) => c.id),
-      });
-    } else if (mode === 'custom') {
-      const initialIds = context.selectedChannelIds?.length ? context.selectedChannelIds : [context.channelId];
-      onScopeChange({
-        ...context,
-        scopeMode: 'custom',
-        selectedChannelIds: initialIds,
-      });
-    }
+    change({ ...context, scopeMode: 'custom', selectedChannelIds: Array.from(selected) });
   };
-
-  const handleToggleChannel = (channelId: string) => {
-    if (!onScopeChange) return;
-    const currentSelected = new Set(context.selectedChannelIds || [context.channelId]);
-    if (currentSelected.has(channelId)) {
-      if (currentSelected.size > 1) {
-        currentSelected.delete(channelId);
-      }
-    } else {
-      currentSelected.add(channelId);
-    }
-    onScopeChange({
-      ...context,
-      scopeMode: 'custom',
-      selectedChannelIds: Array.from(currentSelected),
-    });
-  };
-
-  const handleToggleDMGroupScope = (include: boolean) => {
-    if (!onScopeChange) return;
-    onScopeChange({
-      ...context,
-      includeMutualGroupDMs: include,
-    });
-  };
-
-  const filteredChannels = (context.accessibleGuildChannels || []).filter((ch) =>
-    ch.name.toLowerCase().includes(channelFilter.toLowerCase().trim()),
-  );
-
-  const activeGuildMode = context.scopeMode || 'channel';
 
   return (
-    <div style={containerStyle} title={`Active Context: ${displayName} (${scopeDescription})`}>
-      <div style={headerRowStyle}>
-        <span style={iconStyle}>{context.isGuild ? '🌐' : context.isDM ? '👤' : '👥'}</span>
-        <span style={channelNameStyle}>{displayName}</span>
-        {onScopeChange && (
-          <button
-            style={scopeEditButtonStyle}
-            onClick={() => setIsEditing(!isEditing)}
-            title="Modify active search scope"
-          >
-            <span>{isEditing ? '▲ Close' : '⚙️ Scope'}</span>
-          </button>
-        )}
-      </div>
-
-      <div style={scopeTextStyle}>
-        <span style={badgeStyle}>Scope</span>
-        <span style={scopeDescStyle}>{scopeDescription}</span>
-      </div>
-
-      {isEditing && (
-        <div style={scopeDropdownContainerStyle}>
+    <div className="vai-scope" ref={rootRef}>
+      <button
+        className="vai-chip"
+        onClick={() => setOpen(!open)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Choose where the assistant may search"
+      >
+        {chipIcon(context)}<span>{label}</span><ChevronDownIcon size={14} />
+      </button>
+      {open && (
+        <div className="vai-popover" role="menu" aria-label="Search scope">
+          <div className="vai-popover-title">Search in</div>
           {context.isGuild && (
             <>
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)' }}>
-                Select Search Scope:
-              </div>
-              <div style={scopeModeRowStyle}>
-                <button
-                  style={activeGuildMode === 'channel' ? scopeModeActivePillStyle : scopeModePillStyle}
-                  onClick={() => handleGuildModeSelect('channel')}
-                >
-                  # Current Channel
-                </button>
-                <button
-                  style={activeGuildMode === 'server' ? scopeModeActivePillStyle : scopeModePillStyle}
-                  onClick={() => handleGuildModeSelect('server')}
-                >
-                  🌐 Entire Server
-                </button>
-                <button
-                  style={activeGuildMode === 'custom' ? scopeModeActivePillStyle : scopeModePillStyle}
-                  onClick={() => handleGuildModeSelect('custom')}
-                >
-                  📋 Custom Channels
-                </button>
-              </div>
-
-              {activeGuildMode === 'custom' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+              <Option
+                checked={mode === 'channel'}
+                icon={<HashIcon size={16} />}
+                title="This channel"
+                detail={scopeChipLabel({ ...context, scopeMode: 'channel' })}
+                onSelect={() => { change({ ...context, scopeMode: 'channel', selectedChannelIds: [context.channelId] }); setOpen(false); }}
+              />
+              <Option
+                checked={mode === 'server'}
+                icon={<ServerIcon size={16} />}
+                title="Entire server"
+                detail={`${context.accessibleGuildChannels?.length ?? 0} channels you can read`}
+                onSelect={() => {
+                  change({ ...context, scopeMode: 'server', selectedChannelIds: (context.accessibleGuildChannels || []).map((c) => c.id) });
+                  setOpen(false);
+                }}
+              />
+              <Option
+                checked={mode === 'custom'}
+                icon={<HashIcon size={16} />}
+                title="Choose channels"
+                detail={mode === 'custom' ? scopeChipLabel(context) : undefined}
+                onSelect={() => change({
+                  ...context,
+                  scopeMode: 'custom',
+                  selectedChannelIds: context.selectedChannelIds?.length ? context.selectedChannelIds : [context.channelId],
+                })}
+              />
+              {mode === 'custom' && (
+                <>
                   <input
-                    style={scopeSearchInputStyle}
-                    placeholder="Filter channels..."
+                    className="vai-channel-filter"
+                    placeholder="Filter channels"
+                    aria-label="Filter channels"
                     value={channelFilter}
                     onChange={(e) => setChannelFilter(e.target.value)}
                   />
-                  <div style={scopeChannelListStyle}>
-                    {filteredChannels.length === 0 ? (
-                      <div style={{ padding: '6px', fontSize: '11px', color: 'var(--text-muted, #949ba4)' }}>
-                        No channels found
-                      </div>
-                    ) : (
-                      filteredChannels.map((c) => {
-                        const isChecked = Boolean(context.selectedChannelIds?.includes(c.id));
-                        return (
-                          <label key={c.id} style={scopeChannelItemStyle}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => handleToggleChannel(c.id)}
-                              style={{ cursor: 'pointer', margin: 0 }}
-                            />
-                            <span>#{c.name}</span>
-                          </label>
-                        );
-                      })
-                    )}
+                  <div className="vai-channel-list">
+                    {channels.length === 0 ? <div className="vai-muted">No channels match.</div> : channels.map((c) => (
+                      <label key={c.id} className="vai-channel">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(context.selectedChannelIds?.includes(c.id))}
+                          onChange={() => toggleChannel(c.id)}
+                        />
+                        <span>#{c.name}</span>
+                      </label>
+                    ))}
                   </div>
-                </div>
+                </>
               )}
             </>
           )}
-
           {context.isDM && (
             <>
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--header-secondary, #b5bac1)' }}>
-                Select DM Scope:
-              </div>
-              <div style={scopeModeRowStyle}>
-                <button
-                  style={!context.includeMutualGroupDMs ? scopeModeActivePillStyle : scopeModePillStyle}
-                  onClick={() => handleToggleDMGroupScope(false)}
-                >
-                  👤 This DM Only
-                </button>
-                {(context.mutualGroupDMs?.length ?? 0) > 0 && (
-                  <button
-                    style={context.includeMutualGroupDMs ? scopeModeActivePillStyle : scopeModePillStyle}
-                    onClick={() => handleToggleDMGroupScope(true)}
-                  >
-                    👥 Include Mutual Groups ({context.mutualGroupDMs?.length})
-                  </button>
-                )}
-              </div>
+              <Option
+                checked={!context.includeMutualGroupDMs}
+                icon={<AtIcon size={16} />}
+                title="This DM only"
+                onSelect={() => { change({ ...context, includeMutualGroupDMs: false }); setOpen(false); }}
+              />
+              {(context.mutualGroupDMs?.length ?? 0) > 0 && (
+                <Option
+                  checked={Boolean(context.includeMutualGroupDMs)}
+                  icon={<UsersIcon size={16} />}
+                  title="Also our group DMs"
+                  detail={`${context.mutualGroupDMs?.length} shared group${context.mutualGroupDMs?.length === 1 ? '' : 's'}`}
+                  onSelect={() => { change({ ...context, includeMutualGroupDMs: true }); setOpen(false); }}
+                />
+              )}
+              <div className="vai-muted">Or name a group in your question: <em>group Raid Crew</em> or <em>"Raid Crew"</em>.</div>
             </>
-          )}
-
-          {context.isGroupDM && (
-            <div style={{ fontSize: '11px', color: 'var(--text-muted, #949ba4)' }}>
-              Group DM scope is restricted to this group chat.
-            </div>
           )}
         </div>
       )}
     </div>
   );
-};
-
-const containerStyle: React.CSSProperties = {
-  padding: '8px 12px',
-  backgroundColor: 'var(--background-secondary-alt, #232428)',
-  borderBottom: '1px solid var(--background-modifier-accent, #3f4147)',
-  fontSize: '12px',
-  color: 'var(--text-muted, #949ba4)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  flexShrink: 0,
-};
-
-const headerRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-};
-
-const iconStyle: React.CSSProperties = {
-  fontSize: '13px',
-};
-
-const channelNameStyle: React.CSSProperties = {
-  fontWeight: 600,
-  color: 'var(--header-primary, #f2f3f5)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  fontSize: '13px',
-};
-
-const scopeTextStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-  fontSize: '11px',
-};
-
-const scopeDescStyle: React.CSSProperties = {
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-};
-
-const badgeStyle: React.CSSProperties = {
-  backgroundColor: 'var(--brand-experiment, #5865f2)',
-  color: '#ffffff',
-  padding: '1px 5px',
-  borderRadius: '4px',
-  fontWeight: 600,
-  fontSize: '9px',
-  textTransform: 'uppercase',
-  flexShrink: 0,
 };

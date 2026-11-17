@@ -5,18 +5,7 @@
 
 import { React } from '@webpack/common';
 import { ChatSession } from '../types';
-import {
-  activeHistoryItemStyle,
-  deleteButtonStyle,
-  emptyHistoryTextStyle,
-  historyDrawerStyle,
-  historyHeaderStyle,
-  historyItemStyle,
-  historyListStyle,
-  historyMetaStyle,
-  historyTitleStyle,
-  textButtonStyle,
-} from './sidebarStyles';
+import { CloseIcon, TrashIcon } from './icons';
 
 interface HistoryDrawerProps {
   isOpen: boolean;
@@ -74,51 +63,64 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div style={historyDrawerStyle}>
-      <div style={historyHeaderStyle}>
-        <span>Chat Sessions ({sessionsList.length}){disabled ? ' · stop generating to switch' : ''}</span>
-        <button style={textButtonStyle} onClick={onClose}>
-          Close
+    <div className="vai-drawer" role="dialog" aria-label="Chat history">
+      <div className="vai-drawer-head">
+        <span className="vai-drawer-title">
+          Chats in this conversation{disabled ? ' · stop the reply to switch' : ''}
+        </span>
+        <button className="vai-icon-btn vai-small" onClick={onClose} title="Close history" aria-label="Close history">
+          <CloseIcon size={16} />
         </button>
       </div>
-      <div style={historyListStyle}>
+      <div className="vai-drawer-body">
         {sessionsList.length === 0 ? (
-          <div style={emptyHistoryTextStyle}>No saved chats for this channel.</div>
+          <div className="vai-drawer-empty">No saved chats here yet.</div>
         ) : (
-          sessionsList.map((s) => (
-            <div
-              key={s.id}
-              style={{
-                ...(s.id === activeSessionId ? activeHistoryItemStyle : historyItemStyle),
-                ...(disabled ? { cursor: 'not-allowed', opacity: 0.6 } : {}),
-              }}
-              onClick={() => { if (!disabled) onSelectSession(s); }}
-              title={s.title}
-            >
-              <div style={historyTitleStyle}>{s.title || 'Untitled Chat'}</div>
-              <div style={historyMetaStyle}>
-                {formatRelativeTime(s.updatedAt)} · {s.messages.length} msgs
-              </div>
-              <button
-                style={deleteButtonStyle}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (disabled) return;
-                  if (deleteClickAction(armed, s.id, Date.now()) === 'arm') {
-                    setArmed({ id: s.id, at: Date.now() });
-                    return;
-                  }
-                  setArmed(null);
-                  onDeleteSession(e, s.id);
+          sessionsList.map((s) => {
+            const isArmed = armed?.id === s.id;
+            return (
+              <div
+                key={s.id}
+                className="vai-history-item"
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                aria-current={s.id === activeSessionId}
+                aria-disabled={disabled}
+                onClick={() => { if (!disabled) onSelectSession(s); }}
+                onKeyDown={(e) => {
+                  if (disabled || e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                  e.preventDefault();
+                  onSelectSession(s);
                 }}
-                disabled={disabled}
-                title={disabled ? 'Stop generating to delete' : armed?.id === s.id ? 'Click again to delete' : 'Delete Chat'}
-                aria-label={armed?.id === s.id ? `Confirm delete ${s.title || 'chat'}` : `Delete ${s.title || 'chat'}`}
+                title={s.title}
               >
-                {armed?.id === s.id ? 'Delete?' : '🗑️'}
-              </button>
-            </div>
-          ))
+                <div className="vai-history-text">
+                  <div className="vai-history-title">{s.title || 'Untitled chat'}</div>
+                  <div className="vai-history-meta">
+                    {formatRelativeTime(s.updatedAt)} · {s.messages.length} message{s.messages.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <button
+                  className={`vai-icon-btn vai-small vai-history-delete${isArmed ? ' vai-armed' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (disabled) return;
+                    if (deleteClickAction(armed, s.id, Date.now()) === 'arm') {
+                      setArmed({ id: s.id, at: Date.now() });
+                      return;
+                    }
+                    setArmed(null);
+                    onDeleteSession(e, s.id);
+                  }}
+                  disabled={disabled}
+                  title={disabled ? 'Stop the reply to delete' : isArmed ? 'Click again to delete' : 'Delete chat'}
+                  aria-label={isArmed ? `Confirm delete ${s.title || 'chat'}` : `Delete ${s.title || 'chat'}`}
+                >
+                  {isArmed ? 'Delete?' : <TrashIcon size={14} />}
+                </button>
+              </div>
+            );
+          })
         )}
       </div>
     </div>

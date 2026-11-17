@@ -5,13 +5,7 @@
 
 import { React } from '@webpack/common';
 import { CurrentScopeContext, PluginSettings } from '../types';
-import {
-  emptyHistoryTextStyle,
-  historyDrawerStyle,
-  historyHeaderStyle,
-  historyListStyle,
-  textButtonStyle,
-} from './sidebarStyles';
+import { CloseIcon } from './icons';
 
 /** UI-11: shows only origin + path, so userinfo or a query-string token never appears on screen. */
 export function displayBaseUrl(raw: string | undefined): string {
@@ -31,67 +25,30 @@ interface DebugDrawerProps {
   onClose: () => void;
 }
 
-export const DebugDrawer: React.FC<DebugDrawerProps> = ({
-  isOpen,
-  logs,
-  currentScope,
-  settings,
-  onClose,
-}) => {
+export const DebugDrawer: React.FC<DebugDrawerProps> = ({ isOpen, logs, currentScope, settings, onClose }) => {
   if (!isOpen) return null;
+  const where = currentScope?.isGuild ? 'Server channel' : currentScope?.isDM ? 'Direct message' : currentScope?.isGroupDM ? 'Group DM' : 'None';
 
   return (
-    <div style={historyDrawerStyle}>
-      <div style={historyHeaderStyle}>
-        <span>🐞 Debug Diagnostics ({logs.length} events)</span>
-        <button style={textButtonStyle} onClick={onClose}>
-          Close
+    <div className="vai-drawer" role="dialog" aria-label="Diagnostics">
+      <div className="vai-drawer-head">
+        <span className="vai-drawer-title">Diagnostics · {logs.length} events</span>
+        <button className="vai-icon-btn vai-small" onClick={onClose} title="Close diagnostics" aria-label="Close diagnostics">
+          <CloseIcon size={16} />
         </button>
       </div>
-      <div
-        style={{
-          padding: '10px 14px',
-          backgroundColor: 'var(--background-secondary-alt, #232428)',
-          borderBottom: '1px solid var(--background-modifier-accent, #3f4147)',
-          fontSize: '11px',
-          color: 'var(--text-muted, #949ba4)',
-        }}
-      >
-        <div>
-          <strong>Active Channel:</strong> {currentScope?.channelName || 'None'} ({currentScope?.channelId || 'None'})
-        </div>
-        <div>
-          <strong>Scope:</strong> {currentScope?.isGuild ? 'Guild/Server' : currentScope?.isDM ? 'Direct Message' : 'Global'}
-        </div>
-        <div>
-          <strong>Model:</strong> {settings.model} @ {displayBaseUrl(settings.baseUrl)}
-        </div>
+      <div className="vai-debug-facts">
+        <div><strong>Conversation:</strong> {currentScope?.channelName || 'None'} ({where})</div>
+        <div><strong>Model:</strong> {settings.model || '(not set)'} · {settings.providerPreset}</div>
+        <div><strong>Server:</strong> {displayBaseUrl(settings.baseUrl)}</div>
       </div>
-      <div style={historyListStyle}>
+      <div className="vai-drawer-body">
         {logs.length === 0 ? (
-          <div style={emptyHistoryTextStyle}>No diagnostic logs captured yet.</div>
+          <div className="vai-drawer-empty">No diagnostic events yet.</div>
         ) : (
           logs.map((l, idx) => (
-            <div
-              key={idx}
-              style={{
-                padding: '6px 8px',
-                borderRadius: '4px',
-                backgroundColor: 'var(--background-secondary-alt, #232428)',
-                marginBottom: '4px',
-                fontSize: '11px',
-                fontFamily: 'monospace',
-                color:
-                  l.level === 'error'
-                    ? '#f23f43'
-                    : l.level === 'warn'
-                      ? '#f0b232'
-                      : 'var(--text-normal, #dbdee1)',
-                wordBreak: 'break-word',
-              }}
-            >
-              <span style={{ color: 'var(--text-muted, #949ba4)', marginRight: '6px' }}>[{l.time}]</span>
-              <span>{l.message}</span>
+            <div key={idx} className={`vai-log${l.level === 'error' ? ' vai-error' : l.level === 'warn' ? ' vai-warn' : ''}`}>
+              <time>{l.time}</time>{l.message}
             </div>
           ))
         )}

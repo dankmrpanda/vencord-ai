@@ -12,6 +12,8 @@ import { shortcutLabel } from './components/a11y';
 import { getPluginErrorBoundary } from './components/PluginErrorBoundary';
 import { SidebarPanel } from './components/SidebarPanel';
 import { isEscapeForPanel, isUnhandledEscape } from './components/sidebarActions';
+import { SIDEBAR_CSS } from './components/sidebarCss';
+import { setSidebarDocked } from './components/sidebarLayout';
 import { DiagnosticLogEntry, renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
 import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
 import { find, findByCode, findByProps } from './discord/stores';
@@ -39,23 +41,9 @@ function injectPluginStyles() {
   const style = document.createElement('style');
   style.id = 'vencord-ai-styles';
   style.textContent = `
-    @keyframes vencord-ai-blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
-    }
-    @keyframes vencord-ai-slide-in {
-      from { transform: translateX(100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
-    }
     @keyframes vencord-ai-tooltip-appear {
-      from {
-        opacity: 0;
-        transform: translate(-50%, -4px);
-      }
-      to {
-        opacity: 1;
-        transform: translate(-50%, 0);
-      }
+      from { opacity: 0; transform: translate(-50%, -4px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
     }
 
     #vencord-ai-header-btn {
@@ -65,31 +53,22 @@ function injectPluginStyles() {
       justify-content: center;
       width: 24px;
       height: 24px;
-      margin: 0 4px;
+      margin: 0 8px;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 16px;
       user-select: none;
       color: var(--interactive-normal, #b5bac1);
-      transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+      transition: color 0.15s ease;
       flex-shrink: 0;
     }
-    /* UI-Q07: keyboard focus is visible (text fields keep their own styling). */
-    #vencord-ai-sidebar-root :focus-visible:not(textarea):not(input),
     #vencord-ai-header-btn:focus-visible {
-      outline: 2px solid var(--brand-experiment, #5865f2) !important;
+      outline: 2px solid var(--focus-primary, var(--brand-experiment, #5865f2)) !important;
       outline-offset: 1px;
     }
-    #vencord-ai-header-btn:hover {
-      color: var(--interactive-hover, #dbdee1);
-      background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
-    }
-    #vencord-ai-header-btn:active {
-      color: var(--interactive-active, #ffffff);
-      background-color: var(--background-modifier-active, rgba(255, 255, 255, 0.16));
-    }
+    #vencord-ai-header-btn:hover { color: var(--interactive-hover, #dbdee1); }
+    #vencord-ai-header-btn[aria-pressed="true"] { color: var(--interactive-active, #ffffff); }
 
-    /* Native Discord-style Tooltip matching Image 3 */
+    /* Discord-style tooltip under the header button */
     #vencord-ai-header-btn[data-tooltip]:hover::before {
       content: attr(data-tooltip);
       position: absolute;
@@ -123,37 +102,7 @@ function injectPluginStyles() {
       pointer-events: none;
       animation: vencord-ai-tooltip-appear 0.12s ease-out;
     }
-
-    #vencord-ai-sidebar-root {
-      position: fixed;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: 400px;
-      max-width: 95vw;
-      height: 100vh;
-      box-sizing: border-box;
-      z-index: 100000;
-      box-shadow: -6px 0 24px rgba(0, 0, 0, 0.55);
-      display: flex;
-      flex-direction: column;
-      pointer-events: auto;
-      animation: vencord-ai-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-      background-color: var(--background-primary, #313338);
-      font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
-    }
-
-    #vencord-ai-sidebar-root ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    #vencord-ai-sidebar-root ::-webkit-scrollbar-thumb {
-      background-color: var(--background-tertiary, #1e1f22);
-      border-radius: 3px;
-    }
-    #vencord-ai-sidebar-root ::-webkit-scrollbar-thumb:hover {
-      background-color: var(--background-modifier-hover, #3f4147);
-    }
+    ${SIDEBAR_CSS}
   `;
   document.head.appendChild(style);
   stylesheetInjected = true;
@@ -226,6 +175,8 @@ function renderSidebar() {
       logPlugin('info', 'Created and appended #vencord-ai-sidebar-root to document.body');
     }
 
+    setSidebarDocked(isSidebarOpen);
+    document.getElementById('vencord-ai-header-btn')?.setAttribute('aria-pressed', String(isSidebarOpen));
     if (!isSidebarOpen) {
       rootContainer.style.display = 'none';
       return;
@@ -426,7 +377,9 @@ function injectHeaderButton() {
     btn.setAttribute('aria-label', 'AI Message Assistant');
     btn.setAttribute('role', 'button');
     btn.setAttribute('tabindex', '0');
-    btn.innerText = '✨';
+    btn.setAttribute('aria-pressed', String(isSidebarOpen));
+    // Discord's toolbar icons are 24px SVGs drawn in currentColor; the sparkle matches the panel's mark.
+    btn.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5c.4 3.9 1.7 6.6 3.4 8.1 1.6 1.4 3.8 2.1 6.1 2.4-2.3.3-4.5 1-6.1 2.4-1.7 1.5-3 4.2-3.4 8.1-.4-3.9-1.7-6.6-3.4-8.1C7 14 4.8 13.3 2.5 13c2.3-.3 4.5-1 6.1-2.4C10.3 9.1 11.6 6.4 12 2.5Z"/><path d="M19 2l.6 1.9L21.5 4.5l-1.9.6L19 7l-.6-1.9-1.9-.6 1.9-.6Z"/></svg>';
 
     const handleClick = (e: Event) => {
       e.preventDefault();
@@ -496,6 +449,7 @@ export function stopPlugin() {
     const btn = document.getElementById('vencord-ai-header-btn');
     btn?.remove();
 
+    setSidebarDocked(false);
     const styles = document.getElementById('vencord-ai-styles');
     styles?.remove();
     stylesheetInjected = false;
