@@ -305,9 +305,20 @@ export function messageVersion(m: AssistantChatMessage): string {
   ].join('|');
 }
 
-/** Re-renders a row only when its version or its retry availability changes (UI-12). */
-export const MemoChatMessage: React.FC<ChatMessageProps> = typeof React.memo === 'function'
-  ? React.memo(ChatMessage, (a: ChatMessageProps, b: ChatMessageProps) =>
-    a.message === b.message && a.version === b.version && Boolean(a.onRetry) === Boolean(b.onRetry)
-    && a.onOpenSettings === b.onOpenSettings)
-  : ChatMessage;
+let memoChatMessage: React.FC<ChatMessageProps> | null = null;
+
+/**
+ * Re-renders a row only when its version or its retry availability changes (UI-12). Built on first use, never at
+ * import: inside Vencord, `React` from @webpack/common is undefined until Discord's webpack has loaded, and a
+ * module-level `React.memo` throws during Vencord's start-up and takes the whole client mod down with it.
+ */
+export function getMemoChatMessage(): React.FC<ChatMessageProps> {
+  if (!memoChatMessage) {
+    memoChatMessage = typeof React?.memo === 'function'
+      ? React.memo(ChatMessage, (a: ChatMessageProps, b: ChatMessageProps) =>
+        a.message === b.message && a.version === b.version && Boolean(a.onRetry) === Boolean(b.onRetry)
+        && a.onOpenSettings === b.onOpenSettings)
+      : ChatMessage;
+  }
+  return memoChatMessage;
+}

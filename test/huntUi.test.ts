@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import * as RealReact from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
@@ -342,6 +342,26 @@ async function ui06ImeEnter(): Promise<void> {
   assert(/isImeComposing\(e\.nativeEvent\)\) return;/.test(handler), 'UI-06 handleKeyDown returns first during composition');
 }
 
+/**
+ * LIVE-03 (found in Discord): inside Vencord, `React` from @webpack/common is undefined while plugin modules load, so a
+ * module-level `React.memo(...)` threw during Vencord's start-up and no plugin (nor Vencord itself) loaded. The test
+ * mock defines React at import time and cannot show this, so check the source: React may only be called inside
+ * functions, never at the top level of a module.
+ */
+async function live03NoReactCallsAtImport(): Promise<void> {
+  const files = ['index.tsx', 'settings.tsx', ...readdirSync(new URL('../components/', import.meta.url)).filter((f) => /\.tsx?$/.test(f)).map((f) => `components/${f}`)];
+  const offenders: string[] = [];
+  for (const file of files) {
+    readFileSync(new URL(`../${file}`, import.meta.url), 'utf8').split('\n').forEach((line, i) => {
+      // Top-level statements start at column 0; a React call there (or in its initializer) runs at import.
+      if (/^(export\s+)?(const|let|var)\s+[^=]+=\s*(typeof\s+)?React\??\.(?!FC\b|CSSProperties\b)\w+/.test(line) || /^React\.\w+\(/.test(line)) {
+        offenders.push(`${file}:${i + 1}: ${line.trim().slice(0, 80)}`);
+      }
+    });
+  }
+  assert(offenders.length === 0, `LIVE-03 React used at module load: ${offenders.join(' | ')}`);
+}
+
 async function ui04EscapeLayering(): Promise<void> {
   const esc = (over: Record<string, unknown> = {}) => ({ key: 'Escape', defaultPrevented: false, isComposing: false, keyCode: 27, ...over });
   assert(isUnhandledEscape(esc()), 'UI-04 plain Escape counts');
@@ -564,6 +584,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-11 base URL redacted in debug drawer', ui11BaseUrlRedacted],
   ['UI-03 scroll follows stream', ui03ScrollFollowsStream],
   ['UI-04 Escape layering', ui04EscapeLayering],
+  ['LIVE-03 no React calls at module load', live03NoReactCallsAtImport],
   ['UI-06 Enter during IME composition', ui06ImeEnter],
   ['UI-14 global toggle lifecycle', ui14GlobalToggleLifecycle],
   ['UI-13 launch request scoped to its prompt', ui13LaunchRequestScoped],

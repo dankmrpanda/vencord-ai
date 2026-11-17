@@ -16,7 +16,7 @@ import {
   DiscordUser,
   PluginSettings,
 } from '../types';
-import { messageVersion, MemoChatMessage } from './ChatMessage';
+import { getMemoChatMessage, messageVersion } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
 import { HistoryDrawer } from './HistoryDrawer';
 import {
@@ -423,6 +423,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const scopeLabel = scopeChipLabel(currentScope);
   const hasMessages = Boolean(session?.messages?.length);
   const canSend = Boolean(inputText.trim()) && !isGenerating;
+  const MemoChatMessage = getMemoChatMessage();
   const lastAssistantIndex = session ? session.messages.map((m) => m.role).lastIndexOf('assistant') : -1;
 
   return (
