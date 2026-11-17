@@ -24,7 +24,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
 - **[`index.tsx`](file:///Users/raymond/Documents/projects/vencord-ai/index.tsx)**:
   - Registers the `AIAssistant` plugin using `definePlugin()`.
   - Dynamically injects stylesheet styles.
-  - Polls and injects the `✨` button into Discord's header bar (`#vencord-ai-header-btn`).
+  - Polls and injects the sparkle button into Discord's header bar (`#vencord-ai-header-btn`). While the panel is open, `body.vai-docked` narrows `#app-mount` by `--vai-sidebar-width` (components/sidebarLayout.ts), so Discord's own modals and menus are never covered. Styles live in components/sidebarCss.ts.
   - Implements the React mounting and error boundary fallback. It resolves React 18's `createRoot` using Discord webpack stores or standard DOM fallback.
   - Handles the keyboard shortcut (`Cmd+Shift+A` or `Ctrl+Shift+A`) and the Escape key.
 
@@ -85,7 +85,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
 ### 4. Components (`/components`)
 - **[`components/SidebarPanel.tsx`](file:///Users/raymond/Documents/projects/vencord-ai/components/SidebarPanel.tsx)**:
   - The right-hand overlay. Hosts chats, session management, and settings references.
-  - Shows and sends into the viewed channel's latest session (or a new one saved on first send); a switch during a run waits until the run ends. Auto-scroll follows a streaming reply while the user is within 80 px of the bottom, otherwise a "↓ Jump to latest" control appears. History, New Chat and delete are disabled while generating.
+  - Shows and sends into the viewed channel's latest session (or a new one saved on first send); a switch during a run waits until the run ends. Auto-scroll follows a streaming reply while the user is within 80 px of the bottom, otherwise a "Jump to latest" pill appears above the input. History, New Chat and delete are disabled while generating.
 - **[`components/ChatMessage.tsx`](file:///Users/raymond/Documents/projects/vencord-ai/components/ChatMessage.tsx)**:
   - Renders user/assistant dialogue, thought steps, expandable tool logs, and attachments.
   - Model-emitted links go through `components/chatLinks.ts`: only `https:` and Discord jump links are allowed, other schemes render as plain text, and external links show their real URL next to the link text.

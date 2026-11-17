@@ -33,7 +33,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 - 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots. It is offered only when vision is enabled in settings and the provider preset declares vision support (currently OpenAI and OpenRouter).
 - 📌 **Clickable Discord Jump Citations**: Referenced messages appear as rich preview cards with one-click jump buttons directly into your Discord chat stream.
 - 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. Sending while no channel or DM is open shows the error "Open a channel or DM first." and sends no completion request (a local model preset may still load the model first). A chat deleted while it is generating stays deleted.
-- 🎨 **Native Discord UI**: Sleek right-hand dockable sidebar toggled via the `✨` button in Discord's header bar or `Ctrl+Shift+A` (`Cmd+Shift+A` on macOS).
+- 🎨 **Native Discord UI**: A right-hand panel that docks beside Discord like the member list (drag its left edge to resize), toggled via the sparkle button in Discord's header bar or `Ctrl+Shift+A` (`Cmd+Shift+A` on macOS). It uses Discord's theme colours and font.
 
 ---
 
@@ -90,13 +90,13 @@ The API Base URL must be an absolute `http://` or `https://` URL and must not co
 
 ## 💡 Usage
 
-1. Click the **`✨` icon** in the top-right Discord toolbar, or press **`Ctrl+Shift+A`** (**`Cmd+Shift+A`** on Mac).
+1. Click the **sparkle icon** in the top-right Discord toolbar, or press **`Ctrl+Shift+A`** (**`Cmd+Shift+A`** on Mac).
 2. The AI Assistant sidebar will open on the right side of your Discord window.
 3. Ask questions in natural language:
    - *"What was the solution Alice mentioned for the database bug last week?"*
    - *"Find the screenshot of the error message Bob posted."*
    - *"Summarize what we discussed in this channel today."*
-4. Click any **Jump ↗** citation card to navigate straight to the original message in Discord!
+4. Open **N sources** under an answer and click a source card to jump straight to the original message in Discord.
 
 You can also right-click a message and choose **Ask AI about this message**, or right-click a thread/forum channel and choose **Summarize this thread**. These actions only prefill and focus the sidebar; they never auto-submit.
 
