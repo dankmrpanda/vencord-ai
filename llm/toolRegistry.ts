@@ -5,6 +5,7 @@
 
 import { getMessageDetails, listChannelPins, listThreads } from '../discord/contextTools';
 import { fetchRecentMessages, fetchSurroundingMessages } from '../discord/messages';
+import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES, slimMessage } from '../discord/searchContext';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { isChannelAllowedInScope } from '../discord/scope';
 import { getVoiceTranscriber, transcribeVoiceMessage } from '../discord/voiceMessages';
@@ -109,6 +110,21 @@ const searchMessages = registered('search_messages', 'discord', async (args, con
     beforeMessageId: args.before_message_id as string | undefined,
   }, context.scope, context.signal);
   result.citations = (result.data?.messages || []).map((message) => context.addCitation(message));
+  // The conversation around the top hits, so a hit like "same" or "trust" can be read as a reply to something.
+  const perSide = args.context_messages === undefined
+    ? DEFAULT_CONTEXT_MESSAGES
+    : Math.min(Math.max(Math.floor(Number(args.context_messages) || 0), 0), MAX_CONTEXT_MESSAGES);
+  if (result.ok && result.data?.messages.length && perSide > 0) {
+    const { context: windows, skipped } = await fetchSearchContext(result.data.messages, context.scope, { perSide, signal: context.signal });
+    if (windows.length) {
+      (result.data as any).context = windows;
+      result.summary = `${result.summary} Included the surrounding conversation for ${windows.length} hit${windows.length === 1 ? '' : 's'} in data.context.`;
+    }
+    if (skipped) result.summary = `${result.summary} Context for ${skipped} hit${skipped === 1 ? '' : 's'} could not be fetched.`;
+  }
+  // The model sees compact hits (citations above were built from the full messages): raw Discord objects are mostly
+  // profile metadata, and at ~1.5 KB each they crowded the hits themselves out of the input budget.
+  if (result.data) (result.data as any).messages = result.data.messages.map((message) => slimMessage(message, 'hit'));
   return result;
 }, () => true, 30_000);
 

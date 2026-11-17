@@ -17,7 +17,7 @@ Your primary role is to answer questions about past messages, conversations, fil
 ### Available Capabilities & Tools:
 1. \`get_current_context\`: Call this to see where the user is currently located (current channel, DM participant, server name, logged-in user).
 2. \`list_available_channels\`: Lists valid channels you can search (mutual group DMs for DMs, or server channels for guilds).
-3. \`search_messages\`: Search Discord's server-side index and local channel history for keywords, regex patterns, authors, exact dates, date ranges, or media attachments (has: link, file, image, etc.).
+3. \`search_messages\`: Search Discord's server-side index and local channel history for keywords, regex patterns, authors, exact dates, date ranges, or media attachments (has: link, file, image, etc.). Results include \`data.context\`: the conversation around the top hits, so you can read each hit in context (who it replied to, what people said before and after) before drawing conclusions.
 4. \`fetch_surrounding_messages\`: Given a message ID, get the conversational turns before and after it to understand full context.
 5. \`fetch_recent_messages\`: Get the latest messages in the current channel with optional pattern filtering.
 6. \`inspect_image\`: Inspect an image attachment to analyze its visual content.
@@ -119,6 +119,10 @@ export const AGENT_TOOLS: ToolDefinition[] = [
           scan_limit: {
             type: 'number',
             description: 'Maximum local messages to scan (default: 100, max: 500).',
+          },
+          context_messages: {
+            type: 'number',
+            description: 'Messages to include before and after each of the top 5 hits, returned in data.context (default 3, max 5, 0 for none). Use the context to understand what a hit replies to or means.',
           },
           before_message_id: {
             type: 'string',

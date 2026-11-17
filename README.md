@@ -20,7 +20,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 ## 🌟 Key Features
 
 - 🔍 **Server-Side Message Search (100k+ Messages)**: Uses Discord's native search API through agentic tool calling to locate past messages, filter by authors, date ranges, and attachment types without crashing your client. The repository also contains a local message index (`storage/index`, `storage/retrieval.ts`), but production code never populates it, so its search step never returns a hit in the shipped plugin.
-- 📜 **Context Reconstruction**: Automatically retrieves surrounding conversational turns around target messages to understand full conversational context.
+- 📜 **Context Reconstruction**: Search results include the conversation around the top 5 hits (3 messages either side by default, set with `context_messages`, 0 to turn it off), so a hit such as "same" is read as the reply it is. Hits and context reach the model in compact form; if a result is too large, context is trimmed before any hit.
 - 🧰 **Read-Only Discord Context Tools**: Retrieve message details/reply chains, channel pins, and active or archived threads/forum posts. No sending, reacting, editing, deleting, or pinning tools exist.
 - 🛡️ **Autonomous Scoping with Privacy Boundaries**:
   - **In Server Channels**: Restricted to channels in the active server you have permission to view.

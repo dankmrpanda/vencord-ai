@@ -43,6 +43,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
 - **[`discord/search.ts`](file:///Users/raymond/Documents/projects/vencord-ai/discord/search.ts)**:
   - Handles queries sent to Discord's server-side Search API.
   - Serializes request starts, respects rate limits, and owns cache keys/cursors.
+  - `search_messages` adds `data.context`: for the top 5 hits, the scoped messages around each one (`context_messages` per side, default 3, max 5), fetched one window at a time with a 12 s cap and no message repeated across windows (discord/searchContext.ts). Hits and context are sent to the model as compact records (author, text, time, attachments, embeds, reply target); citations are still built from the full messages. Compaction drops context windows before any hit.
   - A 429 `retry_after` is honoured up to 5 seconds; a longer one fails the remote search so the pipeline falls back instead of stalling. Rate-limit waits end when the run is cancelled; the agent passes its abort signal to `search_messages`, `fetch_recent_messages` and `fetch_surrounding_messages`, so stopping a run also ends their in-flight Discord fetches.
 - **`discord/searchPipeline.ts`** normalizes requests, runs at most three variants, scope-filters, deduplicates, reranks, and returns structured pagination.
   - The offset cursor follows the primary (first) Discord search variant only, so pages neither skip nor repeat its hits.

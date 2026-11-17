@@ -295,6 +295,74 @@ async function srch03DedupKeepsFullCopy(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
+/**
+ * CTX-01 (user request): a search hit alone is often meaningless ("same", "trust"), so search_messages also returns
+ * the conversation around its top hits in data.context. Windows stay in scope, do not repeat messages, and are dropped
+ * before any hit when the result is too large; hits reach the model in compact form so more of them fit.
+ */
+async function ctx01SearchHitsComeWithContext(): Promise<string | null> {
+  const { TOOL_REGISTRY } = await import('../llm/toolRegistry');
+  const { compactToolResult } = await import('../llm/compression');
+  const t = (minute: number) => new Date(Date.UTC(2026, 10, 17, 1, minute)).toISOString();
+  const big = { id: '9', username: 'fixture', avatar_decoration_data: { asset: 'x'.repeat(40) }, collectibles: { nameplate: { sku_id: '1'.repeat(19) } } } as any;
+  const convo = Array.from({ length: 12 }, (_, i) => msg(String(140000000000000000n + BigInt(i)), DM, `line ${i}`, t(i), { author: big }));
+  convo[5] = { ...convo[5], content: 'nvidia earnings tomorrow, thoughts?' };
+  convo[6] = { ...convo[6], content: 'nvidia beat estimates again', message_reference: { message_id: convo[5].id } } as any;
+  convo[11] = { ...convo[11], content: 'nvidia guidance was weak' };
+  const hits = [convo[6], convo[5], convo[11]].map((m) => ({ ...m, hit: true }));
+  const leaked = msg('149999999999999999', '100000000000000099', 'other DM secret', t(6));
+  const arounds: string[] = [];
+  const problems: string[] = [];
+  const tool = TOOL_REGISTRY.get('search_messages')!;
+  const context = { scope: dmScope(), settings: { searchLimitPerQuery: 10 } as any, addCitation: (m: any) => ({ messageId: m.id }) as any, analyzeImage: async () => '' };
+  await withGet(({ url, query }) => {
+    if (isSearch(url)) return { total_results: hits.length, messages: hits.map((m) => [m]) };
+    if (query.around) {
+      arounds.push(`${query.around}/${query.limit}`);
+      const i = convo.findIndex((m) => m.id === query.around);
+      return [...convo.slice(Math.max(0, i - 3), i + 4), leaked];
+    }
+    return [];
+  }, async () => {
+    const result: any = await tool.execute(tool.parseArgs({ query: 'nvidia', sort_by: 'relevance' }), context as any);
+    const windows = result.data?.context || [];
+    if (!windows.length) { problems.push(`no data.context: ${result.summary}`); return; }
+    const first = windows.find((w: any) => w.hit_id === convo[6].id);
+    if (!first || !first.messages.some((m: any) => m.id === convo[5].id) || !first.messages.some((m: any) => m.id === convo[3].id)) {
+      problems.push(`the hit's window misses its neighbours: ${JSON.stringify(windows.map((w: any) => [w.hit_id, w.messages.map((m: any) => m.content)]))}`);
+    }
+    if (first && !first.messages.find((m: any) => m.id === convo[6].id)?.is_hit) problems.push('hit not marked inside its window');
+    const all = windows.flatMap((w: any) => w.messages.map((m: any) => m.id));
+    if (all.includes(leaked.id)) problems.push('an out-of-scope message entered the context');
+    if (all.length !== new Set(all).size) problems.push('a message is repeated across windows');
+    if (windows.some((w: any) => w.hit_id === convo[5].id)) problems.push('a hit already inside an earlier window got its own window');
+    if (!arounds.every((a) => a.endsWith('/7'))) problems.push(`default window should be 3 per side (limit 7): ${arounds.join(',')}`);
+    const hit = result.data.messages.find((m: any) => m.id === convo[6].id);
+    if (!hit || hit.author !== 'fixture' || JSON.stringify(hit).includes('collectibles') || hit.reply_to !== convo[5].id) problems.push(`hits are not compact: ${JSON.stringify(hit)}`);
+    if (!/surrounding conversation for \d+ hit/.test(result.summary)) problems.push(`summary does not mention context: ${result.summary}`);
+
+    arounds.length = 0;
+    const none: any = await tool.execute(tool.parseArgs({ query: 'nvidia', context_messages: 0 }), context as any);
+    if (arounds.length || none.data?.context) problems.push('context_messages: 0 still fetched context');
+
+    // Too large for the budget: context windows go first, hits stay.
+    const oversized = { ...result, data: { ...result.data, messages: result.data.messages.map((m: any) => ({ ...m, content: 'n'.repeat(1500) })) } };
+    let sawPartialContext = false;
+    for (let budget = 2000; budget <= 14000; budget += 200) {
+      const compacted = JSON.parse(compactToolResult(JSON.stringify(oversized), budget));
+      const keptHits = (compacted.data?.messages || []).length;
+      const keptWindows = (compacted.data?.context || []).length;
+      if (keptHits < result.data.messages.length && keptWindows > 0) {
+        problems.push(`at ${budget} chars compaction kept ${keptWindows} context window(s) but dropped a hit`);
+        break;
+      }
+      if (keptHits === result.data.messages.length && keptWindows > 0 && keptWindows < windows.length) sawPartialContext = true;
+    }
+    if (!sawPartialContext && windows.length > 1) problems.push('compaction never kept all hits while trimming only some context');
+  });
+  return problems.length ? problems.join('; ') : null;
+}
+
 /** SRCH-04: nextOffset pagination skips and repeats results, and stops early when limit > 25. */
 async function srch04OffsetPagination(): Promise<string | null> {
   const corpus: DiscordMessage[] = [];
@@ -522,6 +590,7 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
   ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
   ['SRCH-03 dedup keeps the full copy over an index stub', srch03DedupKeepsFullCopy],
+  ['CTX-01 search hits come with their surrounding conversation', ctx01SearchHitsComeWithContext],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
   ['REV-DSC-03 failed later page is not empty', revDsc03FailedLaterPage],
   ['SRCH-05 keyword hijacked into pattern', srch05KeywordHijackedIntoPattern],

@@ -91,6 +91,13 @@ export function compactToolResult(content: string, maxChars = 12_000): string {
     if (Array.isArray(messagesArray)) safe.truncation.returned = messagesArray.length;
     let serialized = JSON.stringify(safe);
 
+    // Surrounding-context windows are a supplement: drop them (last first) before any actual result.
+    const contextWindows = safe?.data?.context;
+    while (serialized.length > maxChars && Array.isArray(contextWindows) && contextWindows.length > 0) {
+      contextWindows.pop();
+      serialized = JSON.stringify(safe);
+    }
+
     // Progressively drop message records if still exceeding the character limit
     while (serialized.length > maxChars && Array.isArray(messagesArray) && messagesArray.length > 1) {
       dropOne(messagesArray);
