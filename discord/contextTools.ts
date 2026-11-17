@@ -64,6 +64,15 @@ async function discordGet(path: string, query: Record<string, string> = {}, sign
   return response.json();
 }
 
+/**
+ * Reads one message the way a user account can. `GET /channels/{c}/messages/{id}` is bot-only (user accounts get
+ * 403), so this asks for the single message around the ID and keeps it only when the ID matches.
+ */
+async function fetchOneMessage(channelId: string, messageId: string, signal?: AbortSignal): Promise<DiscordMessage | undefined> {
+  const page = await discordGet(`/channels/${channelId}/messages`, { around: messageId, limit: '1' }, signal);
+  return Array.isArray(page) ? page.find((message: DiscordMessage | undefined) => message?.id === messageId) : undefined;
+}
+
 export async function getMessageDetails(
   scope: CurrentScopeContext,
   channelId: string,
@@ -77,8 +86,11 @@ export async function getMessageDetails(
   if (!isSnowflake(messageId)) {
     return { ok: false, code: 'invalid_arguments', summary: 'message_id must be a numeric Discord message ID.' };
   }
-  const message = await discordGet(`/channels/${channelId}/messages/${messageId}`, {}, signal) as DiscordMessage;
-  if (message?.channel_id !== channelId) {
+  const message = await fetchOneMessage(channelId, messageId, signal);
+  if (!message) {
+    return { ok: false, code: 'not_found', summary: 'The message was not found, or this account cannot read it.' };
+  }
+  if (message.channel_id !== channelId) {
     return { ok: false, code: 'scope_denied', summary: 'The returned message does not belong to the requested channel.' };
   }
   const replyChain: DiscordMessage[] = [];
@@ -88,8 +100,8 @@ export async function getMessageDetails(
     const referenceId = reference?.id || current.message_reference?.message_id;
     const referenceChannel = reference?.channel_id || current.message_reference?.channel_id || channelId;
     if (!isSnowflake(referenceId) || !isChannelAllowedInScope(referenceChannel, scope)) break;
-    const next = reference || await discordGet(`/channels/${referenceChannel}/messages/${referenceId}`, {}, signal) as DiscordMessage;
-    if (next?.channel_id && next.channel_id !== referenceChannel) break;
+    const next = reference || await fetchOneMessage(referenceChannel, referenceId, signal);
+    if (!next || (next.channel_id && next.channel_id !== referenceChannel)) break;
     current = next;
     replyChain.push(current);
   }
@@ -172,7 +184,7 @@ export async function listThreads(
     let starterMessage: DiscordMessage | undefined;
     if (isSnowflake(thread.id)) {
       try {
-        const starter: DiscordMessage | undefined = await discordGet(`/channels/${thread.id}/messages/${thread.id}`, {}, signal);
+        const starter = await fetchOneMessage(thread.id, thread.id, signal);
         if (starter?.channel_id === thread.id || (thread.parent_id && starter?.channel_id === thread.parent_id)) starterMessage = starter;
       } catch {}
     }

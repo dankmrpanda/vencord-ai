@@ -47,8 +47,10 @@ export async function runMessageLaunchTests(): Promise<void> {
   const neighbor = message('99', 'We are waiting for the database migration.');
   RestAPI.get = (async (request: any) => {
     requests.push(request.url);
-    if (request.url.endsWith('/messages/100')) return { body: target };
+    // The selected message is read as `?around=100&limit=1`: the by-ID endpoint is bot-only (LIVE-01).
+    assert(!request.url.endsWith('/messages/100'), 'Launch must not use the bot-only message endpoint');
     assert(request.query?.around === '100', 'Launch context must be centered on the selected message');
+    if (request.query?.limit === '1') return { body: [target] };
     return { body: [neighbor, target] };
   }) as typeof RestAPI.get;
   try {
@@ -103,7 +105,7 @@ export async function runMessageLaunchTests(): Promise<void> {
 
     const failedAgent = new AIAssistantAgent(settings);
     RestAPI.get = (async (request: any) => {
-      if (request.url.endsWith('/messages/100')) throw new Error('Message is unavailable.');
+      if (request.query?.around === '100' && request.query?.limit === '1') throw new Error('Message is unavailable.');
       return { body: [] };
     }) as typeof RestAPI.get;
     (failedAgent as any).client.complete = async (request: any) => {

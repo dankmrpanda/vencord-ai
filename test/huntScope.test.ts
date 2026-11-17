@@ -82,8 +82,9 @@ async function sec01MessageIdPathTraversal(): Promise<void> {
   );
   // Reply-chain IDs come from the response and must be validated before they are interpolated.
   await withRecordedGets(
-    (url) => resolvedApiPath(url) === `/api/v9/channels/${ACTIVE_DM}/messages/500000000000000005`
-      ? { id: '500000000000000005', channel_id: ACTIVE_DM, content: 'reply', timestamp: new Date().toISOString(), message_reference: { message_id: `../../${OTHER_DM}/messages/${secret.id}` } }
+    // Single messages are read as `?around=<id>&limit=1` (LIVE-01), so the scoped message comes back in an array.
+    (url) => resolvedApiPath(url) === `/api/v9/channels/${ACTIVE_DM}/messages`
+      ? [{ id: '500000000000000005', channel_id: ACTIVE_DM, content: 'reply', timestamp: new Date().toISOString(), message_reference: { message_id: `../../${OTHER_DM}/messages/${secret.id}` } }]
       : secret,
     async (urls) => {
       const result = await getMessageDetails(dmScope(), ACTIVE_DM, '500000000000000005', 3);
@@ -92,6 +93,38 @@ async function sec01MessageIdPathTraversal(): Promise<void> {
       assert(result.ok && result.data?.replyChain.length === 0, 'SEC-01 get_message_details must return the scoped message without the invalid reference');
     },
   );
+}
+
+/**
+ * LIVE-01: GET /channels/{c}/messages/{id} is bot-only, so a user account gets 403 and get_message_details always
+ * failed in Discord. A single message must be read as `?around=<id>&limit=1` and matched by ID.
+ */
+async function live01SingleMessageFetchWorksForUserAccounts(): Promise<void> {
+  const MESSAGE_ID = '600000000000000006';
+  const target = { id: MESSAGE_ID, channel_id: ACTIVE_DM, content: 'target', timestamp: new Date().toISOString(), author: { id: '9', username: 'x' } };
+  const originalGet = RestAPI.get;
+  const requests: Array<{ url: string; query?: Record<string, string> }> = [];
+  let found: Awaited<ReturnType<typeof getMessageDetails>> | undefined;
+  let missing: Awaited<ReturnType<typeof getMessageDetails>> | undefined;
+  try {
+    (RestAPI as any).get = async (request: any) => {
+      requests.push({ url: request.url, query: request.query });
+      // Discord's user-account behaviour: the by-ID endpoint is refused.
+      if (/\/messages\/\d+$/.test(request.url)) throw { status: 403, body: { code: 20002, message: 'Only bots can use this endpoint' } };
+      if (request.query?.around === MESSAGE_ID) return { body: [target] };
+      return { body: [] };
+    };
+    found = await getMessageDetails(dmScope(), ACTIVE_DM, MESSAGE_ID, 0);
+    missing = await getMessageDetails(dmScope(), ACTIVE_DM, '600000000000000007', 0);
+  } catch (error: any) {
+    assert(false, `LIVE-01 get_message_details threw for a user account: ${JSON.stringify(error?.message ?? error)}`);
+  } finally {
+    RestAPI.get = originalGet;
+  }
+  assert(Boolean(found?.ok && found.data?.message.id === MESSAGE_ID), `LIVE-01 get_message_details did not return the message: ${JSON.stringify(found)}`);
+  assert(requests.every((r) => !/\/messages\/\d+$/.test(r.url)), `LIVE-01 used the bot-only by-ID endpoint: ${requests.map((r) => r.url).join(', ')}`);
+  assert(requests.some((r) => r.query?.around === MESSAGE_ID && r.query?.limit === '1'), 'LIVE-01 single message must be read with around=<id>&limit=1');
+  assert(Boolean(missing && !missing.ok && missing.code === 'not_found'), `LIVE-01 a missing message must be not_found: ${JSON.stringify(missing)}`);
 }
 
 /** SEC-02: group DM names are matched as raw substrings of the prompt, so ordinary words widen DM scope. */
@@ -348,6 +381,7 @@ async function sec12PermissionTruthyShapes(): Promise<void> {
 
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-01 message_id path traversal', sec01MessageIdPathTraversal],
+  ['LIVE-01 single message fetch works for user accounts', live01SingleMessageFetchWorksForUserAccounts],
   ['SEC-02 group DM substring match', sec02GroupDmSubstringMatch],
   ['SEC-02 group DM name only when quoted or after group/gc', sec02QuotedOrPrefixedGroupName],
   ['REV-DSC-04 CJK group name inside a sentence', revDsc04CjkGroupNameInSentence],
