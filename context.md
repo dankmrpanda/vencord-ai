@@ -71,6 +71,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - Provider error messages, from a non-OK response or from an `error` event inside a streamed response, are redacted to one line of at most 200 characters (the configured key, `Bearer` values, key-shaped and long opaque tokens become `***`). A provider 429 `Retry-After` is honoured up to 30 seconds.
 - **`llm/toolRegistry.ts`**:
   - One typed registry. Every entry contains a schema, local parser, availability predicate, timeout, execution kind, executor, and literal `readOnly: true` classification.
+  - `transcribe_voice_message` is offered only while the VoiceTranscribe plugin's native helper (`VencordNative.pluginHelpers.VoiceTranscribe`) exists and that plugin is enabled. It reads the scoped message itself, accepts only a Discord CDN audio attachment on a message flagged as a voice message (flag 1 << 13), and passes that URL to the helper, which transcribes locally (discord/voiceMessages.ts). A message launch on a voice message runs it before the first model turn.
   - `inspect_image` is offered whenever the Image inspection setting is on, for every preset (whether a model can read images depends on the model, not the preset); the setting is off by default. `fetch_recent_messages` applies its `pattern` filter.
 - **[`llm/prompts.ts`](file:///Users/raymond/Documents/projects/vencord-ai/llm/prompts.ts)**:
   - Defines the `DEFAULT_SYSTEM_PROMPT` containing guidelines for historical dates, scope checks, citations, and LLM tools.

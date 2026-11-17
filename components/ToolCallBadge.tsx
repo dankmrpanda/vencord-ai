@@ -32,6 +32,8 @@ export function describeStep(step: Pick<AgentStep, 'toolName' | 'toolArgs' | 'co
     case 'list_channel_pins': return `${verb('Checking', 'Checked')} pinned messages`;
     case 'list_threads': return `${verb('Listing', 'Listed')} threads`;
     case 'inspect_image': return `${verb('Looking at', 'Looked at')} an image`;
+    case 'transcribe_voice_message':
+      return args.translate ? `${verb('Translating', 'Translated')} a voice message` : `${verb('Transcribing', 'Transcribed')} a voice message`;
     case 'list_available_channels': return `${verb('Listing', 'Listed')} channels in scope`;
     case 'get_current_context': return `${verb('Checking', 'Checked')} the current conversation`;
     default: return step.content || `${verb('Running', 'Ran')} ${step.toolName || 'a tool'}`;

@@ -371,6 +371,88 @@ async function live02ToolErrorStatusAndTextToolCall(): Promise<void> {
   }
 }
 
+/**
+ * VOICE-01: voice messages are transcribed with the user's local VoiceTranscribe plugin. The audio URL must come from
+ * Discord's copy of the message (never from the model), scope still applies, and a right-click launch on a voice
+ * message transcribes it before the model's first turn.
+ */
+async function voice01TranscribeVoiceMessages(): Promise<void> {
+  const OTHER_DM = '100000000000000099';
+  const cdn = 'https://cdn.discordapp.com/attachments/100000000000000001/7/voice-message.ogg?ex=1&hm=x';
+  const voice: DiscordMessage = {
+    ...message('400000000000000077', ''), flags: 1 << 13,
+    attachments: [{ id: '7', filename: 'voice-message.ogg', size: 30000, url: cdn, proxy_url: '', content_type: 'audio/ogg' }],
+  };
+  const plain = message('400000000000000078', 'just text');
+  const spoofed: DiscordMessage = { ...voice, id: '400000000000000079', attachments: [{ ...voice.attachments![0], url: 'https://evil.example/voice-message.ogg' }] };
+  const byId: Record<string, DiscordMessage> = { [voice.id]: voice, [plain.id]: plain, [spoofed.id]: spoofed };
+  const calls: string[] = [];
+  const transcriber = {
+    prepare: async (id: string, url: string) => { calls.push(`prepare ${url}`); assert(/^[a-f0-9-]{36}$/.test(id), 'VOICE-01 request id must be a UUID'); },
+    transcribe: async (_id: string, language: string, _token?: string, task?: string) => {
+      calls.push(`transcribe ${task} ${language || '-'}`);
+      return { text: task === 'translate' ? 'see you at eight' : 'nos vemos a las ocho', language: 'es', model: 'qwen3-asr', timings: { audioSeconds: 3 } };
+    },
+    release: async (id: string) => { calls.push(`release ${id.length}`); },
+  };
+  const savedWindow = (globalThis as any).window;
+  const problems: string[] = [];
+  const gets: string[] = [];
+  try {
+    const offered = () => availableToolDefinitions({ scope: dmScope(), settings: settings(), addCitation: () => ({} as CitationItem), analyzeImage: async () => '' })
+      .some((tool) => tool.function.name === 'transcribe_voice_message');
+    (globalThis as any).window = {};
+    if (offered()) problems.push('offered without VoiceTranscribe');
+    (globalThis as any).window = { VencordNative: { pluginHelpers: { VoiceTranscribe: transcriber } }, Vencord: { Plugins: { isPluginEnabled: () => false } } };
+    if (offered()) problems.push('offered while VoiceTranscribe is disabled');
+    (globalThis as any).window = { VencordNative: { pluginHelpers: { VoiceTranscribe: transcriber } }, Vencord: { Plugins: { isPluginEnabled: (n: string) => n === 'VoiceTranscribe' } } };
+    if (!offered()) problems.push('not offered with VoiceTranscribe enabled');
+
+    await quiet(() => withRestGet((request) => {
+      gets.push(request.url);
+      const target = byId[request.query?.around];
+      return target ? [target] : [];
+    }, async () => {
+      const { transcribeVoiceMessage } = await import('../discord/voiceMessages');
+      const done = await transcribeVoiceMessage(dmScope(), ACTIVE_DM, voice.id);
+      if (!done.ok || done.data?.text !== 'nos vemos a las ocho') problems.push(`transcribe: ${JSON.stringify(done)}`);
+      if (calls[0] !== `prepare ${cdn}` || calls[1] !== 'transcribe transcribe -' || !calls[2]?.startsWith('release')) problems.push(`native calls: ${calls.join(' | ')}`);
+      calls.length = 0;
+      const translated = await transcribeVoiceMessage(dmScope(), ACTIVE_DM, voice.id, { translate: true, language: 'es' });
+      if (translated.data?.text !== 'see you at eight' || calls[1] !== 'transcribe translate es') problems.push(`translate: ${calls.join(' | ')}`);
+      calls.length = 0;
+      const notVoice = await transcribeVoiceMessage(dmScope(), ACTIVE_DM, plain.id);
+      const fakeUrl = await transcribeVoiceMessage(dmScope(), ACTIVE_DM, spoofed.id);
+      if (notVoice.code !== 'not_a_voice_message' || fakeUrl.code !== 'not_a_voice_message' || calls.length) {
+        problems.push(`non-voice or non-CDN audio reached the transcriber: ${notVoice.code} ${fakeUrl.code} ${calls.join(' | ')}`);
+      }
+      const getsBefore = gets.length;
+      const denied = await transcribeVoiceMessage(dmScope(), OTHER_DM, voice.id);
+      if (denied.code !== 'scope_denied' || gets.length !== getsBefore) problems.push('an out-of-scope channel was read');
+
+      // Right-click launch on a voice message: the transcript is evidence before the first model turn.
+      calls.length = 0;
+      let firstTurnTools: string[] = [];
+      await withScriptedLLM((body, index) => {
+        if (index === 0) firstTurnTools = toolMessages(body).map((m: any) => String(m.name));
+        return { content: 'They said see you at eight.' };
+      }, () => new AIAssistantAgent(settings()).run('Explain this message.', [], undefined, undefined, {
+        targetChannelId: ACTIVE_DM, targetMessageId: voice.id, mode: 'message', initialPrompt: 'Explain this message.',
+      }, dmScope()));
+      if (!firstTurnTools.includes('transcribe_voice_message')) problems.push(`launch did not transcribe the voice message: ${firstTurnTools.join(',')}`);
+      calls.length = 0;
+      await withScriptedLLM(() => ({ content: 'ok' }), () => new AIAssistantAgent(settings()).run('Explain this message.', [], undefined, undefined, {
+        targetChannelId: ACTIVE_DM, targetMessageId: plain.id, mode: 'message', initialPrompt: 'Explain this message.',
+      }, dmScope()));
+      if (calls.length) problems.push('launch on a text message called the transcriber');
+    }));
+  } finally {
+    (globalThis as any).window = savedWindow;
+    if (savedWindow === undefined) delete (globalThis as any).window;
+  }
+  assert(problems.length === 0, `VOICE-01 ${problems.join('; ')}`);
+}
+
 /** LLM-16: OpenAI reasoning models reject max_tokens and a custom temperature (HTTP 400). */
 async function llm16OpenAiReasoningParams(): Promise<void> {
   const originalFetch = globalThis.fetch;
@@ -1184,6 +1266,7 @@ async function revLlm01FinalizationIdleTimer(): Promise<void> {
 const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-01 citations crowd out evidence', llm01CitationsCrowdOutEvidence],
   ['LLM-16 OpenAI reasoning model parameters', llm16OpenAiReasoningParams],
+  ['VOICE-01 voice messages transcribed locally', voice01TranscribeVoiceMessages],
   ['LIVE-02 tool error status and text tool call', live02ToolErrorStatusAndTextToolCall],
   ['REV-LLM-02 ranked search compaction keeps the head', revLlm02RankedSearchCompactionKeepsHead],
   ['SEC-03 tool output sanitized', sec03ToolOutputSanitized],

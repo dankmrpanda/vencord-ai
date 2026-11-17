@@ -24,6 +24,7 @@ import { buildSystemPrompt } from './prompts';
 import { OpenAICompatibleClient } from './provider';
 import { AgentBudgetTracker, DEFAULT_AGENT_RUN_BUDGET } from './runBudget';
 import { availableToolDefinitions, TOOL_REGISTRY } from './toolRegistry';
+import { isVoiceMessage } from '../discord/voiceMessages';
 import { parseToolArguments, ToolArgumentError } from './validation';
 
 export interface AgentRunCallbacks {
@@ -384,6 +385,18 @@ export class AIAssistantAgent {
       ];
       messages.push({ role: 'assistant', content: null, tool_calls: launchCalls });
       await executeToolCalls(launchCalls);
+
+      // A voice message's content is its audio: transcribe it up front, as the text of any other message is prefetched.
+      const details = steps.find((s) => s.id.startsWith('tool_launch_message_details_'))?.toolResult;
+      if (isVoiceMessage(details?.ok ? details.data?.message : undefined) && tools.some((tool) => tool.function.name === 'transcribe_voice_message')) {
+        const voiceCalls: LLMToolCall[] = [{
+          id: 'launch_voice_transcript',
+          type: 'function',
+          function: { name: 'transcribe_voice_message', arguments: JSON.stringify(targetArgs) },
+        }];
+        messages.push({ role: 'assistant', content: null, tool_calls: voiceCalls });
+        await executeToolCalls(voiceCalls);
+      }
     }
 
     while (true) {

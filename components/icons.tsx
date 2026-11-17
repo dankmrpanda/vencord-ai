@@ -66,6 +66,7 @@ export const ThreadIcon = (p: IconProps) => svg(<><path d="M4 6h16M4 12h10M4 18h
 export const CompassIcon = (p: IconProps) => svg(<><circle cx="12" cy="12" r="10" /><path d="m16 8-2 6-6 2 2-6Z" /></>, p);
 export const WarningIcon = (p: IconProps) => svg(<><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></>, p);
 export const JumpIcon = (p: IconProps) => svg(<><path d="M7 17 17 7" /><path d="M7 7h10v10" /></>, p);
+export const MicIcon = (p: IconProps) => svg(<><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v4" /></>, p);
 export const ToolIcon = (p: IconProps) => svg(<path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8Z" />, p);
 
 /** The icon a tool step is drawn with. */
@@ -76,6 +77,7 @@ export function toolIcon(toolName: string | undefined): React.ReactNode {
     case 'fetch_surrounding_messages':
     case 'get_message_details': return <MessagesIcon size={14} />;
     case 'inspect_image': return <ImageIcon size={14} />;
+    case 'transcribe_voice_message': return <MicIcon size={14} />;
     case 'list_channel_pins': return <PinIcon size={14} />;
     case 'list_threads': return <ThreadIcon size={14} />;
     case 'list_available_channels':

@@ -7,6 +7,7 @@ import { getMessageDetails, listChannelPins, listThreads } from '../discord/cont
 import { fetchRecentMessages, fetchSurroundingMessages } from '../discord/messages';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { isChannelAllowedInScope } from '../discord/scope';
+import { getVoiceTranscriber, transcribeVoiceMessage } from '../discord/voiceMessages';
 import { getCurrentUser } from '../discord/stores';
 import { compileSafeRegex } from '../storage/regex';
 import {
@@ -195,6 +196,17 @@ const threads = registered('list_threads', 'discord', async (args, context) => {
   return result;
 }, (scope) => scope.isGuild);
 
+// Offered only when the user's VoiceTranscribe plugin is enabled; the first note can take a while as its models load.
+const voiceTranscript = registered('transcribe_voice_message', 'discord', async (args, context) => {
+  const result = await transcribeVoiceMessage(context.scope, String(args.channel_id), String(args.message_id), {
+    translate: Boolean(args.translate),
+    language: typeof args.language === 'string' ? args.language : '',
+    signal: context.signal,
+  });
+  if (result.data) result.citations = [context.addCitation(result.data.message)];
+  return result;
+}, () => getVoiceTranscriber() !== null, 150_000);
+
 export const TOOL_REGISTRY = new Map<string, AnyTool>([
   getCurrentContext,
   listAvailableChannels,
@@ -205,6 +217,7 @@ export const TOOL_REGISTRY = new Map<string, AnyTool>([
   messageDetails,
   channelPins,
   threads,
+  voiceTranscript,
 ].map((tool) => [tool.definition.function.name, tool]));
 
 export function availableToolDefinitions(context: ToolExecutionContext): ToolDefinition[] {

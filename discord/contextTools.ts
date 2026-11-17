@@ -68,7 +68,7 @@ async function discordGet(path: string, query: Record<string, string> = {}, sign
  * Reads one message the way a user account can. `GET /channels/{c}/messages/{id}` is bot-only (user accounts get
  * 403), so this asks for the single message around the ID and keeps it only when the ID matches.
  */
-async function fetchOneMessage(channelId: string, messageId: string, signal?: AbortSignal): Promise<DiscordMessage | undefined> {
+export async function fetchOneMessage(channelId: string, messageId: string, signal?: AbortSignal): Promise<DiscordMessage | undefined> {
   const page = await discordGet(`/channels/${channelId}/messages`, { around: messageId, limit: '1' }, signal);
   return Array.isArray(page) ? page.find((message: DiscordMessage | undefined) => message?.id === messageId) : undefined;
 }

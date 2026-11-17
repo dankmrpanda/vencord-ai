@@ -59,6 +59,8 @@ export interface DiscordMessage {
   author: DiscordUser;
   content: string;
   timestamp: string;
+  /** Discord message flags; bit 13 marks a voice message. */
+  flags?: number;
   edited_timestamp?: string | null;
   attachments: DiscordAttachment[];
   embeds: DiscordEmbed[];
