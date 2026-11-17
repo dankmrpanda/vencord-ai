@@ -30,7 +30,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 - 🖥️ **Local & Cloud Model Support**:
   - **Local**: `omlx` (Apple Silicon MLX), `Ollama`, `LM Studio`, `vLLM` via OpenAI-compatible endpoints (`/v1/chat/completions`).
   - **Cloud**: OpenAI (`gpt-4o-mini`, `gpt-4o`), OpenRouter, Groq (`llama-3.1-70b`), etc.
-- 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots. It is offered only when vision is enabled in settings and the provider preset declares vision support (currently OpenAI and OpenRouter).
+- 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots. It is offered whenever **Image inspection** is on in settings, for any preset, local ones included. It is off by default; turn it on only if your model can read images (for example Qwen3-VL, Gemma 3 or GPT-4o).
 - 📌 **Clickable Discord Jump Citations**: Referenced messages appear as rich preview cards with one-click jump buttons directly into your Discord chat stream.
 - 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. Sending while no channel or DM is open shows the error "Open a channel or DM first." and sends no completion request (a local model preset may still load the model first). A chat deleted while it is generating stays deleted.
 - 🎨 **Native Discord UI**: A right-hand panel that docks beside Discord like the member list (drag its left edge to resize), toggled via the sparkle button in Discord's header bar or `Ctrl+Shift+A` (`Cmd+Shift+A` on macOS). It uses Discord's theme colours and font.
@@ -68,7 +68,8 @@ Open the plugin settings under **Discord Settings → Plugins → AIAssistant (G
 ### 1. Local with `omlx` (Apple Silicon / Mac)
 - **Preset**: `omlx (Local Apple Silicon / MLX)`
 - **API Base URL**: `http://localhost:8000/v1`
-- **Model**: `Qwen2.5-32B-Instruct-4bit` (use the exact ID returned by your server's `/v1/models` list)
+- **Model**: `mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit` by default (a vision model, so image inspection works; use the exact ID returned by your server's `/v1/models` list)
+- **Temperature**: `0.2` by default; low values keep tool calls reliable
 - **API Key**: *(leave blank)*
 
 ### 2. Local with `Ollama`

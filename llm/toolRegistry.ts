@@ -15,7 +15,6 @@ import {
   ToolExecutionContext,
   ToolExecutionResult,
 } from '../types';
-import { getProviderCapabilities } from './capabilities';
 import { AGENT_TOOLS } from './prompts';
 import { validateToolArguments } from './validation';
 
@@ -167,7 +166,8 @@ const inspectImage = registered('inspect_image', 'discord', async (args, context
   result.scope = { channelIds: [context.scope.channelId], guildId: context.scope.guildId };
   result.truncation = { truncated: false, returned: 1 };
   return result;
-}, (_, settings) => Boolean(settings.enableVision) && getProviderCapabilities(settings.providerPreset).vision, 30_000);
+  // LLM-13 (b): image support depends on the model, not the preset, so the Vision setting decides for every preset.
+}, (_, settings) => Boolean(settings.enableVision), 30_000);
 
 const messageDetails = registered('get_message_details', 'discord', async (args, context) => {
   const result = await getMessageDetails(context.scope, String(args.channel_id), String(args.message_id), intArg(args.reply_depth ?? 3, 0, 0, 5), context.signal);

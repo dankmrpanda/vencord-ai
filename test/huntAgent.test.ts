@@ -16,6 +16,7 @@ import { DEFAULT_AGENT_RUN_BUDGET } from '../llm/runBudget';
 import { availableToolDefinitions, TOOL_REGISTRY } from '../llm/toolRegistry';
 import { consumeChatCompletionStream, OpenAICompatibleTransport } from '../llm/transport';
 import { getProviderCapabilities } from '../llm/capabilities';
+import { DEFAULT_SETTINGS } from '../settings';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
 import { assert } from './assert';
@@ -1012,23 +1013,41 @@ async function revLlm03PersistentTurnTwoErrorSurfaces(): Promise<void> {
     `REV-LLM-03 a persistent turn-2 provider error was masked: ${outcome}`);
 }
 
-/** LLM-13: inspect_image is offered whenever enableVision is on (default) but always fails for presets without declared vision (default omlx). */
-async function llm13VisionToolOfferedButAlwaysFails(): Promise<void> {
-  const broken: string[] = [];
-  for (const preset of ['omlx', 'ollama', 'lmstudio', 'custom', 'groq'] as const) {
-    const runSettings = settings({ providerPreset: preset, enableVision: true });
-    const context: ToolExecutionContext = { scope: dmScope(), settings: runSettings, addCitation: () => ({} as CitationItem), analyzeImage: async () => '' };
-    const offered = availableToolDefinitions(context).some((tool) => tool.function.name === 'inspect_image');
-    const failure = await quiet(() => new OpenAICompatibleClient(runSettings).analyzeImage('data:image/png;base64,AA==', 'what is this?'))
-      .then(() => '', (error) => String(error?.message));
-    if (offered && failure.includes('does not declare vision support')) broken.push(preset);
-  }
-  assert(broken.length === 0, `LLM-13 inspect_image is offered but can never succeed for presets: ${broken.join(', ')}`);
+/**
+ * LLM-13 option (b), user decision 2026-11-16: whether a model can read images depends on the model, not the preset
+ * (a local Qwen3-VL can, a local Qwen3 cannot), so the Vision setting is the switch for every preset. It is off by
+ * default so the default text-only setup is never offered a tool that always fails.
+ */
+async function llm13VisionFollowsTheSetting(): Promise<void> {
   const offeredFor = (overrides: Partial<PluginSettings>) => availableToolDefinitions({
     scope: dmScope(), settings: settings(overrides), addCitation: () => ({} as CitationItem), analyzeImage: async () => '',
   }).some((tool) => tool.function.name === 'inspect_image');
-  assert(offeredFor({ providerPreset: 'openai', enableVision: true }), 'LLM-13 inspect_image should be offered for a vision preset with vision enabled');
-  assert(!offeredFor({ providerPreset: 'openai', enableVision: false }), 'LLM-13 inspect_image should not be offered with vision disabled');
+  const problems: string[] = [];
+  for (const preset of ['omlx', 'ollama', 'lmstudio', 'custom', 'groq', 'openai', 'openrouter'] as const) {
+    if (!offeredFor({ providerPreset: preset, enableVision: true })) problems.push(`${preset}: not offered with vision on`);
+    if (offeredFor({ providerPreset: preset, enableVision: false })) problems.push(`${preset}: offered with vision off`);
+  }
+  // A local preset with vision on must actually send the image to the model, not refuse before any request.
+  const originalFetch = globalThis.fetch;
+  let sentImage = false;
+  try {
+    (globalThis as any).fetch = async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      sentImage = JSON.stringify(body.messages).includes('"image_url"');
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'a screenshot of settings' } }] }), { status: 200 });
+    };
+    const answer = await new OpenAICompatibleClient(settings({ providerPreset: 'omlx', enableVision: true }))
+      .analyzeImage('data:image/png;base64,AA==', 'what is this?').then((text) => text, (error) => `threw ${String(error?.message)}`);
+    if (!sentImage || answer !== 'a screenshot of settings') problems.push(`omlx analyzeImage: sent image=${sentImage}, got ${answer}`);
+    const refused = await new OpenAICompatibleClient(settings({ providerPreset: 'omlx', enableVision: false }))
+      .analyzeImage('data:image/png;base64,AA==', 'what is this?').then(() => 'answered', () => 'refused');
+    if (refused !== 'refused') problems.push('analyzeImage ran with vision off');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  if (DEFAULT_SETTINGS.enableVision !== false) problems.push('vision should be off by default');
+  if (DEFAULT_SETTINGS.temperature !== 0.2) problems.push(`default temperature ${DEFAULT_SETTINGS.temperature}, expected 0.2 for reliable tool calls`);
+  assert(problems.length === 0, `LLM-13 vision setting: ${problems.join('; ')}`);
 }
 
 /** SEC-03: every tool result is deep-sanitized before it reaches the model. */
@@ -1200,7 +1219,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LIFE-07 transport rejects unsafe base URL', life07TransportRejectsUnsafeBaseUrl],
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['REV-LLM-03 persistent turn-2 provider error surfaces', revLlm03PersistentTurnTwoErrorSurfaces],
-  ['LLM-13 vision tool offered but always fails', llm13VisionToolOfferedButAlwaysFails],
+  ['LLM-13 vision follows the Vision setting', llm13VisionFollowsTheSetting],
 ];
 
 export async function runHuntAgentTests(): Promise<void> {

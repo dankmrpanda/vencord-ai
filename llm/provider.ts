@@ -50,8 +50,7 @@ export class OpenAICompatibleClient {
   }
 
   async analyzeImage(imageUrl: string, question: string, signal?: AbortSignal): Promise<string> {
-    const capabilities = getProviderCapabilities(this.settings.providerPreset);
-    if (!capabilities.vision) throw new Error('The selected provider preset does not declare vision support.');
+    if (!this.settings.enableVision) throw new Error('Image inspection is turned off in the plugin settings.');
     let resolvedImageUrl = imageUrl;
     if (/^https:\/\//.test(imageUrl)) resolvedImageUrl = await fetchImageAsBase64(imageUrl);
     const result = await this.complete({

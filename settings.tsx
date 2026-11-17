@@ -29,11 +29,13 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
   baseUrl: 'http://localhost:8000/v1',
   apiKey: '',
-  model: 'Qwen2.5-32B-Instruct-4bit',
-  temperature: 0.7,
+  model: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
+  // Low temperature keeps tool calls and argument JSON reliable.
+  temperature: 0.2,
   maxTokens: 2048,
   systemPrompt: '',
-  enableVision: true,
+  // Off by default: only a vision model (e.g. Qwen3-VL) can use the image tool.
+  enableVision: false,
   maxContextMessages: 10,
   searchLimitPerQuery: 10,
   maxSearchIterations: 10,
@@ -67,18 +69,18 @@ export const settings = definePluginSettings({
   model: {
     type: OptionType.STRING,
     description: 'Model Identifier',
-    default: 'Qwen2.5-32B-Instruct-4bit',
+    default: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
   },
   temperature: {
     type: OptionType.SLIDER,
-    description: 'Temperature',
-    default: 0.7,
-    markers: [0.0, 0.5, 0.7, 1.0, 1.5],
+    description: 'Temperature (0.2 recommended for tool use)',
+    default: 0.2,
+    markers: [0.0, 0.2, 0.5, 0.7, 1.0, 1.5],
   },
   enableVision: {
     type: OptionType.BOOLEAN,
-    description: 'Enable Multimodal / Image Inspection',
-    default: true,
+    description: 'Image inspection (turn on only if your model can read images, e.g. Qwen3-VL)',
+    default: false,
   },
   maxSearchIterations: {
     type: OptionType.SLIDER,
@@ -150,7 +152,7 @@ const PRESET_CONFIGS: Record<
   omlx: {
     name: 'omlx (Local Apple Silicon / MLX)',
     defaultBaseUrl: 'http://localhost:8000/v1',
-    defaultModel: 'Qwen2.5-32B-Instruct-4bit',
+    defaultModel: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
     needsKey: false,
   },
   ollama: {
@@ -411,7 +413,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
           />
           <span>Enable Multimodal / Image Inspection</span>
         </label>
-        <span style={hintStyle}>Allows the model to inspect attached Discord images via vision tools.</span>
+        <span style={hintStyle}>
+          Lets the assistant look at image attachments. Turn this on only if your model can read images (for example
+          Qwen3-VL, Gemma 3 or GPT-4o); a text-only model will fail the image step.
+        </span>
       </div>
 
       {/* Custom System Prompt */}
