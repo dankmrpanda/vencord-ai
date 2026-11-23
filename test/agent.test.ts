@@ -1,8 +1,7 @@
 import { filterMessagesToScope } from '../discord/scope';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from '../assistantLaunch';
-import { buildConversationContext } from '../llm/contextBuilder';
+import { AgentBudgetTracker, buildConversationContext } from '../llm/compression';
 import { buildSystemPrompt } from '../llm/prompts';
-import { AgentBudgetTracker } from '../llm/runBudget';
 import { TOOL_REGISTRY } from '../llm/toolRegistry';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
 import { ChannelType, CurrentScopeContext, DiscordMessage, PluginSettings } from '../types';

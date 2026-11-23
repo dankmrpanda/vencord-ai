@@ -25,10 +25,17 @@ import {
   ToolExecutionResult,
   UserImageAttachment,
 } from '../types';
-import { buildConversationContext, compactToolResult, estimateMessageTokens, estimateTokens } from './compression';
+import {
+  AgentBudgetTracker,
+  appendTextToLastUserMessage,
+  buildConversationContext,
+  DEFAULT_AGENT_RUN_BUDGET,
+  estimateMessageTokens,
+  fitToolResultsToBudget,
+  toolMessageContent,
+} from './compression';
 import { buildSystemPrompt } from './prompts';
 import { isLocalPreset, OpenAICompatibleClient } from './provider';
-import { AgentBudgetTracker, DEFAULT_AGENT_RUN_BUDGET } from './runBudget';
 import {
   availableToolDefinitions,
   executeRegisteredTool,
@@ -172,54 +179,6 @@ export function createStreamTagFilter(onEmit: (chunk: string) => void): {
   };
 }
 
-/**
- * JSON.stringify replacer that neutralizes chat-template tokens and control/bidi characters in every string leaf.
- * It runs after toJSON, so Date/moment values serialize exactly as JSON.stringify would and their output is sanitized too.
- */
-function sanitizeStringLeaf(_key: string, value: unknown): unknown {
-  // A boxed String reaches the replacer as an object and would be unboxed after it: sanitize it too.
-  if (value instanceof String) return sanitizeUntrustedContent(value.valueOf());
-  return typeof value === 'string' ? sanitizeUntrustedContent(value) : value;
-}
-
-/** Serializes the model-facing view of a tool result; UI-only fields such as citations are left out. */
-function toolMessageContent(
-  result: ToolExecutionResult,
-  maxChars = 12_000,
-  compactionPolicy?: ToolCompactionPolicy,
-): string {
-  const { citations: _citations, ...modelView } = result;
-  return compactToolResult(JSON.stringify(modelView, sanitizeStringLeaf), maxChars, compactionPolicy);
-}
-
-/**
- * Shrinks the oldest tool results to their summary until the request fits the input budget.
- * Tool messages are kept (only their content changes), so every tool_call keeps its result.
- */
-function fitToolResultsToBudget(messages: LLMMessage[], maxTokens: number): void {
-  let total = messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
-  for (const message of messages) {
-    if (total <= maxTokens) return;
-    if (message.role !== 'tool') continue;
-    const previous = String(message.content || '');
-    let compact = JSON.stringify({ ok: false, summary: 'Output omitted to fit the input budget.', untrustedData: true });
-    try {
-      const { ok, code, summary, truncation } = JSON.parse(previous);
-      compact = JSON.stringify({
-        ok,
-        code,
-        summary: typeof summary === 'string' ? summary.slice(0, 500) : undefined,
-        truncation,
-        untrustedData: true,
-        omitted: 'Full output omitted to fit the input budget.',
-      });
-    } catch {}
-    if (compact.length >= previous.length) continue;
-    message.content = compact;
-    total += estimateTokens(compact) - estimateTokens(previous);
-  }
-}
-
 /** Longest a tools-disabled finalization call may wait for its first streamed chunk (prompt prefill). */
 const FINALIZATION_FIRST_CHUNK_MS = 120_000;
 /** Longest a streaming finalization call may go without sending a chunk once it has started. */
@@ -305,18 +264,6 @@ function formatUserContextLabel(user: { id: string; username: string; globalName
     : `${untrustedLabel(display)} (${user.id})`;
 }
 
-function appendTextToLastUserMessage(messages: LLMMessage[], extraText: string): void {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== 'user') return;
-  if (typeof last.content === 'string') {
-    last.content = `${last.content}\n\n${extraText}`;
-  } else if (Array.isArray(last.content)) {
-    const textPart = last.content.find((p: any) => p?.type === 'text');
-    if (textPart) textPart.text = `${textPart.text}\n\n${extraText}`;
-    else last.content.unshift({ type: 'text', text: extraText });
-  }
-}
-
 function extractCitedMessageIds(text: string): string[] {
   if (!text) return [];
   const ids: string[] = [];
@@ -345,11 +292,20 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout?: () =
   });
 }
 
-export class AIAssistantAgent {
-  private client: OpenAICompatibleClient;
+export interface AgentClientLike {
+  complete: OpenAICompatibleClient['complete'];
+  analyzeImage?: OpenAICompatibleClient['analyzeImage'];
+}
 
-  constructor(private settings: PluginSettings) {
-    this.client = new OpenAICompatibleClient(settings);
+export interface AIAssistantAgentDeps {
+  client?: AgentClientLike;
+}
+
+export class AIAssistantAgent {
+  private client: AgentClientLike;
+
+  constructor(private settings: PluginSettings, deps: AIAssistantAgentDeps = {}) {
+    this.client = deps.client ?? new OpenAICompatibleClient(settings);
   }
 
   async run(
@@ -496,7 +452,9 @@ export class AIAssistantAgent {
       settings: this.settings,
       signal,
       addCitation,
-      analyzeImage: (url, question, runSignal) => this.client.analyzeImage(url, question, runSignal),
+      analyzeImage: (url, question, runSignal) => this.client.analyzeImage
+        ? this.client.analyzeImage(url, question, runSignal)
+        : Promise.reject(new Error('Image analysis is unavailable on this client.')),
     };
     const tools = availableToolDefinitions(toolContext);
     let stoppingReason = 'completed';

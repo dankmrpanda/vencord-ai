@@ -16,8 +16,6 @@ import { displayBaseUrl } from '../components/DebugDrawer';
 import { deleteClickAction, DELETE_CONFIRM_MS, HistoryDrawer } from '../components/HistoryDrawer';
 import { attachmentDisplay, MessagePreview } from '../components/MessagePreview';
 import { ToolCallBadge } from '../components/ToolCallBadge';
-import { AIAssistantAgent } from '../llm/agent';
-import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
 import {
   deleteHistorySession,
@@ -46,7 +44,7 @@ import {
 } from '../components/sidebarLayout';
 import { DEFAULT_SETTINGS, validateBaseUrlInput } from '../settings';
 import { getSessionById, getSessionsForChannel } from '../storage/chatHistory';
-import { AssistantChatMessage, CurrentScopeContext } from '../types';
+import { AssistantChatMessage, ChannelType, CurrentScopeContext } from '../types';
 import { assert } from './assert';
 
 function withMemoryLocalStorage<T>(fn: () => Promise<T>): Promise<T> {
@@ -193,105 +191,100 @@ async function ui07BaseUrlValidation(): Promise<void> {
  * chatService.switchSession(storedCopy)) swaps in a stale copy; the next send overwrites the finished answer.
  */
 async function ui02StaleCopyOverwritesAnswer(): Promise<void> {
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   await withMemoryLocalStorage(async () => {
-    try {
-      let releaseRun: () => void = () => undefined;
-      let runCount = 0;
-      modelLifecycle.acquire = async () => () => undefined;
-      AIAssistantAgent.prototype.run = function () {
-        runCount++;
-        if (runCount === 1) {
-          return new Promise((resolve) => {
-            releaseRun = () => resolve({ content: 'FINISHED ANSWER', steps: [], citations: [] });
-          });
-        }
-        return Promise.resolve({ content: 'follow-up answer', steps: [], citations: [] });
-      } as any;
-      const channelId = `hunt_ui02_${Date.now()}`;
-      const service = new ChatService({ ...DEFAULT_SETTINGS });
-      const session = await service.initSession(channelId);
-      const sending = service.sendMessage('first question');
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      // User opens the history drawer (getSessionsForChannel) and clicks the highlighted active entry.
-      const list = await getSessionsForChannel(channelId);
-      const storedCopy = list.find((s) => s.id === session.id)!;
-      assert(Boolean(storedCopy), 'fixture: active session listed');
-      const switched = selectHistorySession(service, storedCopy);
-      // LLM-11 UI half: deleting from the drawer mid-run is refused.
-      const deleted = await deleteHistorySession(service, session.id);
-      assert(!switched && !deleted, `UI-02 history actions ran during generation (switched=${switched}, deleted=${deleted})`);
-      releaseRun();
-      await sending;
-      const afterRun = await getSessionById(session.id);
-      const shown = service.getActiveSession()!.messages[1];
-      // Follow-up send uses the stale copy.
-      await service.sendMessage('follow-up');
-      const afterFollowUp = await getSessionById(session.id);
-      const firstReply = afterFollowUp?.messages[1];
-      assert(firstReply?.content === 'FINISHED ANSWER',
-        `UI-02 stored answer after run: "${afterRun?.messages[1]?.content}"; UI showed "${shown?.content}" (isStreaming=${shown?.isStreaming}); after follow-up the stored first reply is "${firstReply?.content}" (isStreaming=${firstReply?.isStreaming})`);
-    } finally {
-      modelLifecycle.acquire = originalAcquire;
-      AIAssistantAgent.prototype.run = originalRun;
-    }
+    let releaseRun: () => void = () => undefined;
+    let runCount = 0;
+    const channelId = `hunt_ui02_${Date.now()}`;
+    const scope = { channelId, channelName: 'ui02', channelType: ChannelType.DM, isDM: true, isGroupDM: false, isGuild: false } as CurrentScopeContext;
+    const service = new ChatService({ ...DEFAULT_SETTINGS }, {
+      lifecycle: { acquire: async () => () => undefined },
+      createAgent: () => ({
+        run: () => {
+          runCount++;
+          if (runCount === 1) {
+            return new Promise((resolve) => {
+              releaseRun = () => resolve({ content: 'FINISHED ANSWER', steps: [], citations: [] });
+            });
+          }
+          return Promise.resolve({ content: 'follow-up answer', steps: [], citations: [] });
+        },
+      }),
+    });
+    const session = await service.initSession(channelId);
+    const sending = service.sendMessage('first question', null, scope);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // User opens the history drawer (getSessionsForChannel) and clicks the highlighted active entry.
+    const list = await getSessionsForChannel(channelId);
+    const storedCopy = list.find((s) => s.id === session.id)!;
+    assert(Boolean(storedCopy), 'fixture: active session listed');
+    const switched = selectHistorySession(service, storedCopy);
+    // LLM-11 UI half: deleting from the drawer mid-run is refused.
+    const deleted = await deleteHistorySession(service, session.id);
+    assert(!switched && !deleted, `UI-02 history actions ran during generation (switched=${switched}, deleted=${deleted})`);
+    releaseRun();
+    await sending;
+    const afterRun = await getSessionById(session.id);
+    const shown = service.getActiveSession()!.messages[1];
+    // Follow-up send uses the stale copy.
+    await service.sendMessage('follow-up', null, scope);
+    const afterFollowUp = await getSessionById(session.id);
+    const firstReply = afterFollowUp?.messages[1];
+    assert(firstReply?.content === 'FINISHED ANSWER',
+      `UI-02 stored answer after run: "${afterRun?.messages[1]?.content}"; UI showed "${shown?.content}" (isStreaming=${shown?.isStreaming}); after follow-up the stored first reply is "${firstReply?.content}" (isStreaming=${firstReply?.isStreaming})`);
   });
 }
 
 /** SEC-09: sessions are per channel; the panel follows the viewed channel once no run is in progress. */
 async function sec09SessionFollowsChannel(): Promise<void> {
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   await withMemoryLocalStorage(async () => {
-    try {
-      let releaseRun: (() => void) | null = null;
-      modelLifecycle.acquire = async () => () => undefined;
-      AIAssistantAgent.prototype.run = function () {
-        if (!releaseRun) return Promise.resolve({ content: 'answer', steps: [], citations: [] });
-        return new Promise((resolve) => {
-          const release = releaseRun!;
-          releaseRun = () => { release(); resolve({ content: 'late answer', steps: [], citations: [] }); };
-        });
-      } as any;
-      const stamp = Date.now();
-      const [chA, chB, chC] = [`hunt_sec09_a_${stamp}`, `hunt_sec09_b_${stamp}`, `hunt_sec09_c_${stamp}`];
-      const service = new ChatService({ ...DEFAULT_SETTINGS });
-      const sessionA = await service.initSession(chA);
-      await service.sendMessage('secret question in A');
-      let viewed: string | null = chB;
-      const viewing = () => viewed;
+    let releaseRun: (() => void) | null = null;
+    const service = new ChatService({ ...DEFAULT_SETTINGS }, {
+      lifecycle: { acquire: async () => () => undefined },
+      createAgent: () => ({
+        run: () => {
+          if (!releaseRun) return Promise.resolve({ content: 'answer', steps: [], citations: [] });
+          return new Promise((resolve) => {
+            const release = releaseRun!;
+            releaseRun = () => { release(); resolve({ content: 'late answer', steps: [], citations: [] }); };
+          });
+        },
+      }),
+    });
+    const stamp = Date.now();
+    const [chA, chB, chC] = [`hunt_sec09_a_${stamp}`, `hunt_sec09_b_${stamp}`, `hunt_sec09_c_${stamp}`];
+    const scopeA = { channelId: chA, channelName: 'chA', channelType: ChannelType.DM, isDM: true, isGroupDM: false, isGuild: false } as CurrentScopeContext;
+    const scopeB = { channelId: chB, channelName: 'chB', channelType: ChannelType.DM, isDM: true, isGroupDM: false, isGuild: false } as CurrentScopeContext;
+    const sessionA = await service.initSession(chA);
+    await service.sendMessage('secret question in A', null, scopeA);
+    let viewed: string | null = chB;
+    const viewing = () => viewed;
 
-      assert(await syncSessionToChannel(service, viewing), 'SEC-09 no switch on channel change A -> B');
-      const inB = service.getActiveSession()!;
-      assert(inB.channelId === chB && !inB.messages.some((m) => m.content.includes('secret question in A')),
-        `SEC-09 panel still shows/sends into A's session after moving to B (channelId=${inB.channelId}, messages=${inB.messages.length})`);
+    assert(await syncSessionToChannel(service, viewing), 'SEC-09 no switch on channel change A -> B');
+    const inB = service.getActiveSession()!;
+    assert(inB.channelId === chB && !inB.messages.some((m) => m.content.includes('secret question in A')),
+      `SEC-09 panel still shows/sends into A's session after moving to B (channelId=${inB.channelId}, messages=${inB.messages.length})`);
 
-      viewed = null;
-      assert(!(await syncSessionToChannel(service, viewing)) && service.getActiveSession() === inB, 'SEC-09 null channel must keep the active session');
-      assert(sessionChannelTarget(null, inB, false) === null && sessionChannelTarget(chB, inB, false) === null
-        && sessionChannelTarget(chA, inB, true) === null && sessionChannelTarget(chA, inB, false) === chA
-        && sessionChannelTarget(chA, null, false) === null, 'SEC-09 sessionChannelTarget decision table');
+    viewed = null;
+    assert(!(await syncSessionToChannel(service, viewing)) && service.getActiveSession() === inB, 'SEC-09 null channel must keep the active session');
+    assert(sessionChannelTarget(null, inB, false) === null && sessionChannelTarget(chB, inB, false) === null
+      && sessionChannelTarget(chA, inB, true) === null && sessionChannelTarget(chA, inB, false) === chA
+      && sessionChannelTarget(chA, null, false) === null, 'SEC-09 sessionChannelTarget decision table');
 
-      viewed = chB;
-      releaseRun = () => undefined;
-      const sending = service.sendMessage('question in B');
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      viewed = chA;
-      assert(!(await syncSessionToChannel(service, viewing)) && service.getActiveSession()!.channelId === chB, 'SEC-09 switched sessions during a run');
-      releaseRun!();
-      await sending;
-      releaseRun = null;
-      assert(await syncSessionToChannel(service, viewing), 'SEC-09 no switch after the run ended');
-      assert(service.getActiveSession()!.id === sessionA.id, `SEC-09 returning to A did not resume A's saved session (${service.getActiveSession()!.id})`);
+    viewed = chB;
+    releaseRun = () => undefined;
+    const sending = service.sendMessage('question in B', null, scopeB);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    viewed = chA;
+    assert(!(await syncSessionToChannel(service, viewing)) && service.getActiveSession()!.channelId === chB, 'SEC-09 switched sessions during a run');
+    releaseRun!();
+    await sending;
+    releaseRun = null;
+    assert(await syncSessionToChannel(service, viewing), 'SEC-09 no switch after the run ended');
+    assert(service.getActiveSession()!.id === sessionA.id, `SEC-09 returning to A did not resume A's saved session (${service.getActiveSession()!.id})`);
 
-      viewed = chC;
-      assert(await syncSessionToChannel(service, viewing) && service.getActiveSession()!.channelId === chC, 'SEC-09 no switch to an empty channel');
-      assert((await getSessionsForChannel(chC)).length === 0, 'SEC-09 browsing a channel persisted an empty session');
-    } finally {
-      modelLifecycle.acquire = originalAcquire;
-      AIAssistantAgent.prototype.run = originalRun;
-    }
+    viewed = chC;
+    assert(await syncSessionToChannel(service, viewing) && service.getActiveSession()!.channelId === chC, 'SEC-09 no switch to an empty channel');
+    assert((await getSessionsForChannel(chC)).length === 0, 'SEC-09 browsing a channel persisted an empty session');
   });
 }
 
@@ -594,21 +587,16 @@ async function uiLayoutAndStructuredErrors(): Promise<void> {
   assert(rendered.includes('data-error-kind="auth"') && rendered.includes('Open settings'),
     'ChatMessage uses structured errorKind directly');
 
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   await withMemoryLocalStorage(async () => {
-    try {
-      modelLifecycle.acquire = async () => () => undefined;
-      AIAssistantAgent.prototype.run = async () => { throw new Error('LLM completion failed (401).'); };
-      const service = new ChatService({ ...DEFAULT_SETTINGS });
-      await service.initSession('ui_err_chan');
-      await service.sendMessage('hi');
-      const reply = service.getActiveSession()!.messages.at(-1)!;
-      assert(reply.isError && reply.errorKind === 'auth', `ChatService did not set structured errorKind: ${JSON.stringify(reply)}`);
-    } finally {
-      modelLifecycle.acquire = originalAcquire;
-      AIAssistantAgent.prototype.run = originalRun;
-    }
+    const scope = { channelId: 'ui_err_chan', channelName: 'err', channelType: ChannelType.DM, isDM: true, isGroupDM: false, isGuild: false } as CurrentScopeContext;
+    const service = new ChatService({ ...DEFAULT_SETTINGS }, {
+      lifecycle: { acquire: async () => () => undefined },
+      createAgent: () => ({ run: async () => { throw new Error('LLM completion failed (401).'); } }),
+    });
+    await service.initSession('ui_err_chan');
+    await service.sendMessage('hi', null, scope);
+    const reply = service.getActiveSession()!.messages.at(-1)!;
+    assert(reply.isError && reply.errorKind === 'auth', `ChatService did not set structured errorKind: ${JSON.stringify(reply)}`);
   });
 
   const scopeSrc = readFileSync(new URL('../components/ScopeIndicator.tsx', import.meta.url), 'utf8');

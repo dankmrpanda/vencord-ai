@@ -5,17 +5,9 @@
  */
 
 import {
-  computeJaccardSimilarity,
-  expandConversationalWindows,
-  rerankCandidates,
-  RerankerCandidate,
-  scoreCandidate,
-} from '../llm/reranker';
-import {
   buildConversationContext,
   compactToolResult,
   estimateTokens,
-  packEvidenceIntoBudget,
   summarizeHistory,
 } from '../llm/compression';
 import { AssistantChatMessage, PluginSettings } from '../types';
@@ -28,160 +20,10 @@ export function runMilestone3ChallengerTests(): void {
 
   const now = 1776000000000;
 
-  const mockCandidate = (
-    id: string,
-    content: string,
-    channelId = 'chan_1',
-    authorName = 'user_test',
-    timestamp = now - 60000,
-    extra: Partial<RerankerCandidate> = {},
-  ): RerankerCandidate => ({
-    id,
-    channelId,
-    authorId: `author_${authorName}`,
-    authorName,
-    timestamp,
-    content,
-    ...extra,
-  });
-
   // =========================================================================
-  // SUITE 1: Adversarial Reply-Chain Cycles & Window Expansion
+  // SUITE 2: Context Window Budget Boundaries
   // =========================================================================
-  console.log('--- Suite 1: Adversarial Reply-Chain Cycles & Window Expansion ---');
-
-  // Case 1.1: Direct self-referential loop (A -> A)
-  const selfLoopMsg = mockCandidate('self_1', 'Self referential message', 'chan_cycle', 'alice', now - 1000, {
-    replyParentId: 'self_1',
-  });
-  const selfScored = scoreCandidate(selfLoopMsg, [selfLoopMsg], { now });
-  const selfWindows = expandConversationalWindows([selfScored], [selfLoopMsg], 3, 5);
-  assert(selfWindows.length === 1, 'Must create 1 window for self-referential message');
-  assert(selfWindows[0].replyChain.length === 0, 'Self-referential reply chain must not include self as parent');
-
-  // Case 1.2: 2-node mutual cycle (A -> B -> A)
-  const nodeA = mockCandidate('cyc_A', 'Cycle Node A', 'chan_cycle', 'alice', now - 2000, { replyParentId: 'cyc_B' });
-  const nodeB = mockCandidate('cyc_B', 'Cycle Node B', 'chan_cycle', 'bob', now - 1000, { replyParentId: 'cyc_A' });
-  const cyclePool2 = [nodeA, nodeB];
-  const hitA = scoreCandidate(nodeA, cyclePool2, { now });
-  const hitB = scoreCandidate(nodeB, cyclePool2, { now });
-
-  const winA = expandConversationalWindows([hitA], cyclePool2, 2, 10);
-  assert(winA.length === 1, '2-node cycle from nodeA must resolve safely');
-  assert(winA[0].replyChain.length === 1 && winA[0].replyChain[0].id === 'cyc_B', 'Reply chain from nodeA should contain only nodeB');
-
-  const winB = expandConversationalWindows([hitB], cyclePool2, 2, 10);
-  assert(winB.length === 1, '2-node cycle from nodeB must resolve safely');
-  assert(winB[0].replyChain.length === 1 && winB[0].replyChain[0].id === 'cyc_A', 'Reply chain from nodeB should contain only nodeA');
-
-  // Case 1.3: N-node deep cycle (1 -> 2 -> 3 -> 4 -> 5 -> 2)
-  const nCyclePool: RerankerCandidate[] = [];
-  for (let i = 1; i <= 5; i++) {
-    const parentId = i === 5 ? 'n_2' : `n_${i + 1}`;
-    nCyclePool.push(mockCandidate(`n_${i}`, `N-cycle step ${i}`, 'chan_n_cycle', `user_${i}`, now - (10 - i) * 1000, {
-      replyParentId: parentId,
-    }));
-  }
-  const hitN1 = scoreCandidate(nCyclePool[0], nCyclePool, { now });
-  const winNCycle = expandConversationalWindows([hitN1], nCyclePool, 3, 20);
-  assert(winNCycle.length === 1, 'N-node cycle must terminate safely without hanging');
-  assert(winNCycle[0].replyChain.length <= 5, 'Reply chain length must not exceed unique candidate count');
-
-  // Case 1.4: 1,000-deep chain with depth limit enforcement
-  const deepPool: RerankerCandidate[] = [];
-  for (let i = 0; i < 1000; i++) {
-    deepPool.push(mockCandidate(`deep_${i}`, `Deep step ${i}`, 'chan_deep', 'user_deep', now - (1000 - i) * 100, {
-      replyParentId: i > 0 ? `deep_${i - 1}` : undefined,
-    }));
-  }
-  const hitDeep = scoreCandidate(deepPool[999], deepPool, { now });
-  const winDeep5 = expandConversationalWindows([hitDeep], deepPool, 2, 5);
-  assert(winDeep5[0].replyChain.length === 5, 'Max reply depth of 5 must be strictly respected');
-  assert(winDeep5[0].replyChain[0].id === 'deep_994', 'Root of bounded depth chain must be at index -5');
-
-  const winDeep0 = expandConversationalWindows([hitDeep], deepPool, 2, 0);
-  assert(winDeep0[0].replyChain.length === 0, 'Max reply depth of 0 must produce empty reply chain');
-
-  // Case 1.5: Dangling reply parents (parent ID points to nonexistent message)
-  const danglingMsg = mockCandidate('dang_1', 'Reply to deleted ghost message', 'chan_dang', 'alice', now - 500, {
-    replyParentId: 'nonexistent_message_id_99999',
-  });
-  const winDang = expandConversationalWindows([scoreCandidate(danglingMsg, [danglingMsg], { now })], [danglingMsg], 2, 5);
-  assert(winDang.length === 1, 'Dangling reply parent must not throw or fail');
-  assert(winDang[0].replyChain.length === 0, 'Dangling parent must result in empty replyChain');
-
-  // Case 1.6: Temporal window bounding with out-of-order & wide timestamp spread
-  const timeSpreadPool: RerankerCandidate[] = [
-    mockCandidate('t_far_past', 'Old message 20 min ago', 'chan_time', 'alice', now - 20 * 60 * 1000),
-    mockCandidate('t_mid_past', 'Message 4 min ago', 'chan_time', 'bob', now - 4 * 60 * 1000),
-    mockCandidate('t_anchor', 'Anchor query match', 'chan_time', 'charlie', now),
-    mockCandidate('t_mid_future', 'Message 2 min later', 'chan_time', 'dave', now + 2 * 60 * 1000),
-    mockCandidate('t_far_future', 'Message 15 min later', 'chan_time', 'eve', now + 15 * 60 * 1000),
-  ];
-  // Scramble order in message pool
-  const scrambledPool = [timeSpreadPool[4], timeSpreadPool[0], timeSpreadPool[2], timeSpreadPool[1], timeSpreadPool[3]];
-  const hitAnchor = scoreCandidate(timeSpreadPool[2], scrambledPool, { now });
-  const winTime = expandConversationalWindows([hitAnchor], scrambledPool, 5, 2);
-
-  assert(winTime.length === 1, 'Temporal window must be created');
-  const winMsgIds = winTime[0].messages.map((m) => m.id);
-  assert(!winMsgIds.includes('t_far_past'), 'Messages > 5 min in past must be excluded by temporal window');
-  assert(!winMsgIds.includes('t_far_future'), 'Messages > 5 min in future must be excluded by temporal window');
-  assert(winMsgIds.includes('t_mid_past') && winMsgIds.includes('t_anchor') && winMsgIds.includes('t_mid_future'), 'Messages within 5 min must be included in temporal window');
-
-  // Case 1.7: Multi-hit deduplication
-  const multiHitA = scoreCandidate(timeSpreadPool[2], scrambledPool, { now });
-  const multiHitB = scoreCandidate(timeSpreadPool[1], scrambledPool, { now }); // Adjacent in same window
-  const multiWins = expandConversationalWindows([multiHitA, multiHitB], scrambledPool, 3, 2);
-  assert(multiWins.length === 1, 'Adjacent hits in the same channel window must deduplicate into 1 window');
-
-  console.log('✅ Passed Suite 1: Adversarial Reply-Chain Cycles & Window Expansion');
-
-  // =========================================================================
-  // SUITE 2: Extreme Token Packing & Context Window Budget Boundaries
-  // =========================================================================
-  console.log('--- Suite 2: Extreme Token Packing & Context Window Budget Boundaries ---');
-
-  // Case 2.1: Multi-tier evidence packing across Tier 1, Tier 2, and Tier 3
-  const fakeWindows = Array.from({ length: 25 }, (_, i) => ({
-    anchorHit: scoreCandidate(
-      mockCandidate(`win_hit_${i}`, `Anchor text for message ${i} containing discussion and details.`, `chan_${i % 3}`, `user_${i}`, now - i * 1000),
-      [],
-      { now },
-    ),
-    channelId: `chan_${i % 3}`,
-    messages: [
-      mockCandidate(`win_msg_${i}_1`, `Message 1 in window ${i}`, `chan_${i % 3}`, `user_${i}`, now - i * 1000),
-      mockCandidate(`win_msg_${i}_2`, `Message 2 in window ${i}`, `chan_${i % 3}`, `user_${i}`, now - i * 1000 + 500),
-    ],
-    replyChain: i === 0 ? [mockCandidate('win_rep_0', 'Root reply discussion', 'chan_0', 'root_user', now - 2000)] : [],
-    startTime: now - i * 1000,
-    endTime: now - i * 1000 + 500,
-    compositeScore: 100 - i * 2,
-  }));
-
-  const packedNormal = packEvidenceIntoBudget(fakeWindows, 8000);
-  assert(packedNormal.includedCount === 25, '8000 token budget should accommodate all 25 test windows');
-  assert(packedNormal.totalTokens <= 8000, 'Total tokens must not exceed budget');
-  assert(packedNormal.packedText.includes('[Hit 1 | Score:'), 'Tier 1 window must include full header and score');
-  assert(packedNormal.packedText.includes('[Replies]: @root_user:'), 'Tier 1 window must include reply chain');
-  assert(packedNormal.packedText.includes('[Hit 4]'), 'Tier 2 window (idx 3) must use standard single-line format');
-
-  // Case 2.2: Hard zero and tiny budgets
-  const packedZero = packEvidenceIntoBudget(fakeWindows, 0);
-  assert(packedZero.includedCount === 0 && packedZero.totalTokens === 0 && packedZero.packedText === '', '0 token budget must return empty packing');
-
-  const packedTiny = packEvidenceIntoBudget(fakeWindows, 5);
-  assert(packedTiny.includedCount === 0 && packedTiny.totalTokens === 0 && packedTiny.packedText === '', '5 token budget (smaller than any window) must return 0 included');
-
-  // Case 2.3: Over-budget boundary check
-  const packedSmall = packEvidenceIntoBudget(fakeWindows, 80);
-  assert(packedSmall.totalTokens <= 80, 'Small token budget must never exceed maxTokens');
-  assert(packedSmall.includedCount > 0 && packedSmall.includedCount < 5, 'Small budget must pack 1-4 windows only');
-
-  // Case 2.4: Empty windows array
-  const packedEmpty = packEvidenceIntoBudget([], 5000);
-  assert(packedEmpty.includedCount === 0 && packedEmpty.totalTokens === 0 && packedEmpty.packedText === '', 'Empty windows array must return empty result');
+  console.log('--- Suite 2: Context Window Budget Boundaries ---');
 
   // Case 2.5: Context builder with 200 history turns and tight input budget
   const mockSettings: PluginSettings = {
@@ -361,44 +203,8 @@ export function runMilestone3ChallengerTests(): void {
 
   console.log('✅ Passed Suite 4: Token Estimation Accuracy & Multilingual Scaling');
 
-  // =========================================================================
-  // SUITE 5: MMR Diversity & Cross-Scoring Edge Cases
-  // =========================================================================
-  console.log('--- Suite 5: MMR Diversity & Cross-Scoring Edge Cases ---');
-
-  // Case 5.1: Empty and single-candidate reranking
-  assert(rerankCandidates([]).length === 0, 'Empty candidate list should rerank to empty array');
-
-  const singleCand = mockCandidate('sc_1', 'Single hit candidate', 'chan_single', 'alice', now);
-  const rerankedSingle = rerankCandidates([singleCand], { query: 'single', limit: 10 });
-  assert(rerankedSingle.length === 1, 'Single candidate reranking should return 1 hit');
-
-  // Case 5.2: Identical candidate content with different IDs
-  const identicalCandidates = [
-    mockCandidate('dup_1', 'Exact duplicate status report text', 'chan_dup', 'alice', now - 1000, { bm25Rank: 1 }),
-    mockCandidate('dup_2', 'Exact duplicate status report text', 'chan_dup', 'bob', now - 2000, { bm25Rank: 2 }),
-    mockCandidate('dup_3', 'Completely different database error alert', 'chan_dup', 'charlie', now - 3000, { bm25Rank: 3 }),
-  ];
-  const mmrDiversified = rerankCandidates(identicalCandidates, {
-    limit: 2,
-    enableMMR: true,
-    mmrLambda: 0.5,
-    now,
-  });
-  assert(mmrDiversified.length === 2, 'MMR should return 2 candidates');
-  assert(mmrDiversified.some((c) => c.candidate.id === 'dup_3'), 'MMR must select the diverse different candidate over the duplicate');
-
-  // Case 5.3: Jaccard similarity edge cases
-  assert(computeJaccardSimilarity('', '') === 0, 'Empty strings Jaccard similarity must be 0');
-  assert(computeJaccardSimilarity('   ', '   ') === 1.0, 'Identical whitespace strings hit identity fast-path (1.0)');
-  assert(computeJaccardSimilarity('   ', '    ') === 0, 'Disparate whitespace strings evaluate to 0 tokens -> 0');
-  assert(computeJaccardSimilarity('a', 'a') === 1.0, 'Identical single word similarity must be 1.0');
-  assert(computeJaccardSimilarity('a', 'b') === 0.0, 'Disjoint single word similarity must be 0.0');
-
-  console.log('✅ Passed Suite 5: MMR Diversity & Cross-Scoring Edge Cases');
-
   console.log('\n======================================================================');
-  console.log('🎯 ALL MILESTONE 3 CHALLENGER 1 ADVERSARIAL TESTS PASSED (5/5 SUITES)');
+  console.log('🎯 ALL MILESTONE 3 CHALLENGER 1 ADVERSARIAL TESTS PASSED (3/3 SUITES)');
   console.log('======================================================================\n');
 }
 

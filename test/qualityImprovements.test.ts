@@ -377,14 +377,17 @@ export async function runQualityImprovementTests(): Promise<void> {
   const prevSavedWindow = (globalThis as any).window;
   try {
     await withRestGet(() => [makeMessage('840000000000000001', threadScope.channelId, 'Thread starter decision: ship v2')], async () => {
-      const agent = new AIAssistantAgent(makeSettings());
       let calls = 0;
-      (agent as any).client.complete = async (req: any) => {
-        calls++;
-        const toolMsg = req.messages.find((m: any) => m.role === 'tool');
-        assert(toolMsg && String(toolMsg.content).includes('ship v2'), 'Thread launch must prefetch thread messages');
-        return { content: '<|thought|>ok<thought|>Decision was [ship v2](discord://message/300000000000000001/840000000000000001).' };
-      };
+      const agent = new AIAssistantAgent(makeSettings(), {
+        client: {
+          complete: async (req: any) => {
+            calls++;
+            const toolMsg = req.messages.find((m: any) => m.role === 'tool');
+            assert(toolMsg && String(toolMsg.content).includes('ship v2'), 'Thread launch must prefetch thread messages');
+            return { content: '<|thought|>ok<thought|>Decision was [ship v2](discord://message/300000000000000001/840000000000000001).' };
+          },
+        },
+      });
       const res = await agent.run('Summarize this thread', [], undefined, undefined, {
         targetChannelId: threadScope.channelId,
         mode: 'thread',

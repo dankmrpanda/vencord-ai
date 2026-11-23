@@ -14,6 +14,7 @@ import {
   ProviderPreset,
   ToolDefinition,
 } from '../types';
+import { mergeUserContents } from './compression';
 import { normalizeBaseUrl, resolveModelIdentifier } from './modelSettings';
 
 const CONSERVATIVE_CAPABILITIES: ProviderCapabilities = {
@@ -220,13 +221,6 @@ export async function consumeChatCompletionStream(
 
 const OPENAI_REASONING_MODEL = /^(o\d|gpt-5)/i;
 const GEMMA_MODEL = /gemma/i;
-
-export function mergeUserContents(a: any, b: any): any {
-  if (typeof a === 'string' && typeof b === 'string') return `${a}\n\n${b}`;
-  const toParts = (val: any): any[] =>
-    Array.isArray(val) ? val.map((p) => ({ ...p })) : [{ type: 'text', text: String(val ?? '') }];
-  return [...toParts(a), ...toParts(b)];
-}
 
 /**
  * Normalizes message roles for the target provider/model:

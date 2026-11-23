@@ -27,6 +27,11 @@ import {
   UserImageAttachment,
 } from '../types';
 
+export interface ChatServiceDeps {
+  lifecycle?: { acquire: typeof modelLifecycle.acquire };
+  createAgent?: (settings: PluginSettings) => Pick<AIAssistantAgent, 'run'>;
+}
+
 export class ChatService {
   private activeSession: ChatSession | null = null;
   private generating = false;
@@ -35,9 +40,13 @@ export class ChatService {
   private deletedWhileGenerating = new Set<string>();
   private listeners = new Set<() => void>();
   private settings: PluginSettings;
+  private readonly lifecycle: { acquire: typeof modelLifecycle.acquire };
+  private readonly createAgent: (settings: PluginSettings) => Pick<AIAssistantAgent, 'run'>;
 
-  constructor(initialSettings: PluginSettings) {
+  constructor(initialSettings: PluginSettings, deps: ChatServiceDeps = {}) {
     this.settings = initialSettings;
+    this.lifecycle = deps.lifecycle ?? modelLifecycle;
+    this.createAgent = deps.createAgent ?? ((s) => new AIAssistantAgent(s));
   }
 
   updateSettings(newSettings: PluginSettings): void {
@@ -222,9 +231,10 @@ export class ChatService {
         updater(reply);
         this.notify();
       };
-      releaseModel = await modelLifecycle.acquire(runSettings, controller.signal);
+      if (!scope) throw new Error('Open a channel or DM first.');
+      releaseModel = await this.lifecycle.acquire(runSettings, controller.signal);
       controller.signal.throwIfAborted();
-      const result = await new AIAssistantAgent(runSettings).run(
+      const result = await this.createAgent(runSettings).run(
         trimmed,
         history,
         {

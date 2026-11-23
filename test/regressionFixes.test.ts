@@ -1,7 +1,6 @@
 import { renderDiagnosticLogEntry, serializeLogArgument } from '../diagnostics';
 import { AIAssistantAgent } from '../llm/agent';
-import { modelLifecycle } from '../llm/modelLifecycle';
-import { getChatService } from '../services/chatService';
+import { ChatService, getChatService } from '../services/chatService';
 import { ChannelType, CurrentScopeContext, PluginSettings } from '../types';
 import { assert } from './assert';
 
@@ -52,26 +51,29 @@ export async function runRegressionFixTests(): Promise<void> {
   assert(!renderedLog.includes('<script>') && !renderedLog.includes('<img'), 'Diagnostic fallback HTML must escape log content');
   assert(renderedLog.includes('&lt;script&gt;') && renderedLog.includes('&amp;'), 'Escaped diagnostics must preserve readable content');
 
-  const agent = new AIAssistantAgent(settings);
   let completionCall = 0;
   let toolMessages: Array<{ tool_call_id?: string; content: unknown }> = [];
-  (agent as any).client.complete = async (request: any) => {
-    completionCall++;
-    if (completionCall === 1) {
-      return {
-        content: '',
-        toolCalls: [
-          { id: 'rejected', type: 'function', function: { name: 'get_current_context', arguments: '{}' } },
-          { id: 'fulfilled', type: 'function', function: { name: 'get_current_context', arguments: '{}' } },
-        ],
-      };
-    }
-    if (completionCall === 2) {
-      toolMessages = request.messages.filter((message: any) => message.role === 'tool');
-      return { content: 'Evidence gathered.' };
-    }
-    return { content: 'Final answer.' };
-  };
+  const agent = new AIAssistantAgent(settings, {
+    client: {
+      complete: async (request: any) => {
+        completionCall++;
+        if (completionCall === 1) {
+          return {
+            content: '',
+            toolCalls: [
+              { id: 'rejected', type: 'function', function: { name: 'get_current_context', arguments: '{}' } },
+              { id: 'fulfilled', type: 'function', function: { name: 'get_current_context', arguments: '{}' } },
+            ],
+          };
+        }
+        if (completionCall === 2) {
+          toolMessages = request.messages.filter((message: any) => message.role === 'tool');
+          return { content: 'Evidence gathered.' };
+        }
+        return { content: 'Final answer.' };
+      },
+    },
+  });
   const result = await agent.run('Run both tools.', [], {
     onStepAdded: (step) => {
       if (step.type === 'tool_call' && step.id.startsWith('tool_rejected_')) throw new Error('Fixture callback failure');
@@ -82,25 +84,22 @@ export async function runRegressionFixTests(): Promise<void> {
   const rejected = toolMessages.find((message) => message.tool_call_id === 'rejected');
   assert(String(rejected?.content).includes('tool_error'), 'Rejected executions must become structured tool errors');
 
-  const service = getChatService(settings);
-  const updatedSettings = { ...settings, model: 'updated-model' };
-  service.updateSettings(updatedSettings);
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   let acquiredModel = '';
-  modelLifecycle.acquire = async (runSettings) => {
-    acquiredModel = runSettings.model;
-    return () => {};
-  };
-  AIAssistantAgent.prototype.run = async () => ({ content: 'done', steps: [], citations: [] });
-  try {
-    await service.initSession('regression-channel');
-    await service.sendMessage('Use the updated settings.');
-  } finally {
-    modelLifecycle.acquire = originalAcquire;
-    AIAssistantAgent.prototype.run = originalRun;
-  }
+  const injectedService = new ChatService(settings, {
+    lifecycle: {
+      acquire: async (runSettings) => {
+        acquiredModel = runSettings.model;
+        return () => {};
+      },
+    },
+    createAgent: () => ({ run: async () => ({ content: 'done', steps: [], citations: [] }) }),
+  });
+  const updatedSettings = { ...settings, model: 'updated-model' };
+  injectedService.updateSettings(updatedSettings);
+  await injectedService.initSession('regression-channel');
+  await injectedService.sendMessage('Use the updated settings.', null, scope);
+  const service = getChatService(settings);
   assert(getChatService() === service, 'No-argument getter must return the initialized singleton');
-  assert(acquiredModel === 'updated-model', 'The global chat service must use updated settings for the next run');
+  assert(acquiredModel === 'updated-model', 'The chat service must use updated settings for the next run');
   console.log('✅ Diagnostics, parallel tool fallback, and chat settings regressions passed');
 }

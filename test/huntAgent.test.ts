@@ -5,10 +5,9 @@
 
 import { RestAPI } from '@webpack/common';
 import { AIAssistantAgent } from '../llm/agent';
-import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
 import { getSessionById } from '../storage/chatHistory';
-import { buildConversationContext, compactToolResult, estimateTokens } from '../llm/compression';
+import { buildConversationContext, compactToolResult, DEFAULT_AGENT_RUN_BUDGET, estimateTokens } from '../llm/compression';
 import { buildSystemPrompt } from '../llm/prompts';
 import {
   consumeChatCompletionStream,
@@ -17,7 +16,6 @@ import {
   providerErrorDetail,
   testProviderConnection,
 } from '../llm/provider';
-import { DEFAULT_AGENT_RUN_BUDGET } from '../llm/runBudget';
 import { AGENT_TOOLS, availableToolDefinitions, executeRegisteredTool, TOOL_REGISTRY } from '../llm/toolRegistry';
 import { DEFAULT_SETTINGS } from '../settings';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
@@ -710,8 +708,6 @@ async function sec11UntrustedNamesInSystemMessage(): Promise<void> {
 
 /** LLM-11: deleting the active session while a run is generating is undone when the run's finally re-saves it. */
 async function llm11DeletedSessionResurrected(): Promise<void> {
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   let releaseRun: () => void = () => undefined;
   const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
   const memory = new Map<string, string>();
@@ -725,15 +721,19 @@ async function llm11DeletedSessionResurrected(): Promise<void> {
         get length() { return memory.size; },
       };
     }
-    modelLifecycle.acquire = async () => () => undefined;
-    AIAssistantAgent.prototype.run = () => new Promise((resolve) => {
-      releaseRun = () => resolve({ content: 'late reply', steps: [], citations: [] });
+    const channelId = `hunt_delete_${Date.now()}`;
+    const service = new ChatService(settings(), {
+      lifecycle: { acquire: async () => () => undefined },
+      createAgent: () => ({
+        run: () => new Promise((resolve) => {
+          releaseRun = () => resolve({ content: 'late reply', steps: [], citations: [] });
+        }),
+      }),
     });
-    const service = new ChatService(settings());
-    const session = await service.initSession(`hunt_delete_${Date.now()}`);
+    const session = await service.initSession(channelId);
     const sessionId = service.getActiveSession()!.id;
     assert(sessionId === session.id, 'fixture: active session');
-    const sending = service.sendMessage('question that is still generating');
+    const sending = service.sendMessage('question that is still generating', null, { ...dmScope(), channelId } as CurrentScopeContext);
     await new Promise((resolve) => setTimeout(resolve, 20));
     await service.deleteSession(sessionId);
     const afterDelete = await getSessionById(sessionId);
@@ -743,16 +743,12 @@ async function llm11DeletedSessionResurrected(): Promise<void> {
     assert(!afterRun,
       `LLM-11 session ${sessionId} was deleted mid-run (stored after delete: ${Boolean(afterDelete)}) but the run re-saved it with ${afterRun?.messages.length} messages`);
   } finally {
-    modelLifecycle.acquire = originalAcquire;
-    AIAssistantAgent.prototype.run = originalRun;
     if (!hadLocalStorage) delete (globalThis as any).localStorage;
   }
 }
 
 /** SEC-09 (chatService half): a send scoped to another channel must not replay or extend the active session of a different channel. */
 async function sec09SessionFollowsScopeChannel(): Promise<void> {
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
   const memory = new Map<string, string>();
   const histories: string[][] = [];
@@ -766,14 +762,18 @@ async function sec09SessionFollowsScopeChannel(): Promise<void> {
         get length() { return memory.size; },
       };
     }
-    modelLifecycle.acquire = async () => () => undefined;
-    AIAssistantAgent.prototype.run = async (_prompt, history) => {
-      histories.push(history.map((entry) => entry.content));
-      return { content: 'reply', steps: [], citations: [] };
+    const deps = {
+      lifecycle: { acquire: async () => () => undefined },
+      createAgent: () => ({
+        run: async (_prompt: string, history: Array<{ content: string }>) => {
+          histories.push(history.map((entry) => entry.content));
+          return { content: 'reply', steps: [], citations: [] };
+        },
+      }),
     };
     const channelA = `${Date.now()}00001`;
     const channelB = `${Date.now()}00002`;
-    const service = new ChatService(settings());
+    const service = new ChatService(settings(), deps);
     const sessionA = await service.initSession(channelA);
     await service.sendMessage('what did alice say about the lawsuit', null, { ...dmScope(), channelId: channelA } as CurrentScopeContext);
     await service.sendMessage('anything new here?', null, { ...dmScope(), channelId: channelB } as CurrentScopeContext);
@@ -782,22 +782,19 @@ async function sec09SessionFollowsScopeChannel(): Promise<void> {
     const storedA = await getSessionById(sessionA.id);
     assert(storedA?.messages.length === 2, `SEC-09 channel A session was extended by a channel-B turn (${storedA?.messages.length} messages)`);
     // A fresh service restoring the stored active session must not adopt one from another channel.
-    const restored = await new ChatService(settings()).initSession(channelA);
+    const restored = await new ChatService(settings(), deps).initSession(channelA);
     assert(restored.channelId === channelA, `SEC-09 initSession(${channelA}) restored a session of channel ${restored.channelId}`);
   } finally {
-    modelLifecycle.acquire = originalAcquire;
-    AIAssistantAgent.prototype.run = originalRun;
     if (!hadLocalStorage) delete (globalThis as any).localStorage;
   }
 }
 
-/** HARD-01: a scope with `channelId: ''` skipped the per-channel session check and replayed another channel's history. */
+/** HARD-01: a scope with `channelId: ''` must fail closed before acquiring the model or running the agent. */
 async function rpt6EmptyChannelScopeFailsClosed(): Promise<void> {
-  const originalAcquire = modelLifecycle.acquire;
-  const originalRun = AIAssistantAgent.prototype.run;
   const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
   const memory = new Map<string, string>();
   const runs: Array<{ history: number; scope: string }> = [];
+  let acquireCalls = 0;
   try {
     if (!hadLocalStorage) {
       (globalThis as any).localStorage = {
@@ -808,32 +805,39 @@ async function rpt6EmptyChannelScopeFailsClosed(): Promise<void> {
         get length() { return memory.size; },
       };
     }
-    modelLifecycle.acquire = async () => () => undefined;
-    AIAssistantAgent.prototype.run = async (_prompt, history, _callbacks, _signal, _launch, scope) => {
-      runs.push({ history: history.length, scope: scope === null ? 'null' : JSON.stringify(scope?.channelId) });
-      return { content: 'reply', steps: [], citations: [] };
-    };
+    const service = new ChatService(settings(), {
+      lifecycle: {
+        acquire: async () => {
+          acquireCalls++;
+          return () => undefined;
+        },
+      },
+      createAgent: () => ({
+        run: async (_prompt, history, _callbacks, _signal, _launch, scope) => {
+          runs.push({ history: history.length, scope: scope === null ? 'null' : JSON.stringify(scope?.channelId) });
+          return { content: 'reply', steps: [], citations: [] };
+        },
+      }),
+    });
     const channelA = `${Date.now()}00003`;
-    const service = new ChatService(settings());
     await service.initSession(channelA);
     await service.sendMessage('what did alice say', null, { ...dmScope(), channelId: channelA } as CurrentScopeContext);
     await service.sendMessage('and now?', null, { ...dmScope(), channelId: '' } as CurrentScopeContext);
-    const second = runs[1];
-    assert(second && (second.scope === 'null' || second.history === 0),
-      `HARD-01 a scope with channelId '' ran with scope ${second?.scope} and ${second?.history} history entries from channel A`);
+    const reply = service.getActiveSession()!.messages.at(-1)!;
+    assert(acquireCalls === 1 && runs.length === 1,
+      `HARD-01 empty channelId reached model (acquireCalls=${acquireCalls}, runs=${runs.length})`);
+    assert(reply.isError && /open a channel or dm first/i.test(reply.content),
+      `HARD-01 expected fail-closed scope error, got "${reply.content}"`);
   } finally {
-    modelLifecycle.acquire = originalAcquire;
-    AIAssistantAgent.prototype.run = originalRun;
     if (!hadLocalStorage) delete (globalThis as any).localStorage;
   }
 }
 
 /**
  * SEC-09 follow-up: sendMessage resolves the scope once, before it picks the session, and hands that scope to the agent.
- * A send with no resolvable scope must not reach the model, even if the user opens another DM while the model loads.
+ * A send with no resolvable scope must fail closed before acquiring the model, even if another DM opens afterwards.
  */
 async function sec09ScopeResolvedBeforeSession(): Promise<void> {
-  const originalAcquire = modelLifecycle.acquire;
   const hadWindow = 'window' in globalThis;
   const originalWindow = (globalThis as any).window;
   const hadLocalStorage = typeof (globalThis as any).localStorage !== 'undefined';
@@ -861,32 +865,39 @@ async function sec09ScopeResolvedBeforeSession(): Promise<void> {
       };
     }
     (globalThis as any).window = { Vencord: { Webpack: { findStore: (name: string) => stores[name] ?? null, findByProps: () => null } } };
-    modelLifecycle.acquire = async () => () => undefined;
+    const counts = { acquire: 0 };
     await quiet(() => withScriptedLLM(() => ({ content: 'ok' }), async (requests) => {
-      const service = new ChatService(settings());
+      const service = new ChatService(settings(), {
+        lifecycle: {
+          acquire: async () => {
+            counts.acquire++;
+            return () => undefined;
+          },
+        },
+      });
       await service.initSession(channelA);
       await service.sendMessage('SECRET-A question about the lawsuit');
       const afterA = requests.length;
       assert(afterA > 0 && service.getActiveSession()!.channelId === channelA, `fixture: first send ran in A (${afterA} requests)`);
 
-      // No channel selected at send time; the user opens DM B while the model loads.
+      // No channel selected at send time: fail closed before model acquisition.
       selected = null;
-      modelLifecycle.acquire = async () => { selected = channelB; return () => undefined; };
       await service.sendMessage('anything new here?');
+      assert(counts.acquire === 1, `SEC-09 no-scope send should not acquire the model (acquireCalls=${counts.acquire})`);
       const leaked = requests.slice(afterA).map((body) => JSON.stringify(body.messages));
       assert(leaked.length === 0, `SEC-09 a send with no scope reached the model (${leaked.length} request(s)): ${leaked.join(' ').slice(0, 300)}`);
       const reply = service.getActiveSession()!.messages.at(-1)!;
       assert(/open a channel or dm first/i.test(reply.content), `SEC-09 no-scope send should ask the user to open a channel: "${reply.content}"`);
 
       // B is selected at send time but A's session is still active: the scope picks a fresh B session before history is read.
-      modelLifecycle.acquire = async () => () => undefined;
+      selected = channelB;
       await service.sendMessage('and in this DM?');
+      assert((counts.acquire as number) === 2, `SEC-09 expected second model acquisition for DM B (acquireCalls=${counts.acquire})`);
       const replayed = JSON.stringify(requests.slice(afterA).map((body) => body.messages));
       assert(requests.length > afterA && !replayed.includes('SECRET-A'), `SEC-09 a B-scoped run replayed A history: ${replayed.slice(0, 300)}`);
       assert(service.getActiveSession()!.channelId === channelB, `SEC-09 the B turn was saved into a ${service.getActiveSession()!.channelId} session`);
     }));
   } finally {
-    modelLifecycle.acquire = originalAcquire;
     if (hadWindow) (globalThis as any).window = originalWindow;
     else delete (globalThis as any).window;
     if (!hadLocalStorage) delete (globalThis as any).localStorage;

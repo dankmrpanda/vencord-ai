@@ -54,16 +54,19 @@ export async function runMessageLaunchTests(): Promise<void> {
     return { body: [neighbor, target] };
   }) as typeof RestAPI.get;
   try {
-    const agent = new AIAssistantAgent(settings);
     let modelCalls = 0;
-    (agent as any).client.complete = async (request: any) => {
-      modelCalls++;
-      const evidence = request.messages.filter((entry: any) => entry.role === 'tool');
-      assert(evidence.some((entry: any) => entry.content.includes(target.content)), 'Selected message content must reach the model even when it never calls a tool');
-      assert(evidence.some((entry: any) => entry.content.includes(neighbor.content)), 'Surrounding context must reach the model before its first answer');
-      assert(evidence.every((entry: any) => JSON.parse(entry.content).untrustedData), 'Prefetched Discord content must remain untrusted data');
-      return { content: 'The deployment is waiting on the database migration.' };
-    };
+    const agent = new AIAssistantAgent(settings, {
+      client: {
+        complete: async (request: any) => {
+          modelCalls++;
+          const evidence = request.messages.filter((entry: any) => entry.role === 'tool');
+          assert(evidence.some((entry: any) => entry.content.includes(target.content)), 'Selected message content must reach the model even when it never calls a tool');
+          assert(evidence.some((entry: any) => entry.content.includes(neighbor.content)), 'Surrounding context must reach the model before its first answer');
+          assert(evidence.every((entry: any) => JSON.parse(entry.content).untrustedData), 'Prefetched Discord content must remain untrusted data');
+          return { content: 'The deployment is waiting on the database migration.' };
+        },
+      },
+    });
     const result = await agent.run('Explain this message and its surrounding context.', [], undefined, undefined, {
       targetChannelId: scope.channelId,
       targetMessageId: target.id,
@@ -82,15 +85,18 @@ export async function runMessageLaunchTests(): Promise<void> {
       mode: 'message' as const,
       initialPrompt: 'Explain this message.',
     };
-    const deniedAgent = new AIAssistantAgent(settings);
-    (deniedAgent as any).client.complete = async (request: any) => {
-      const toolResults = request.messages.filter((entry: any) => entry.role === 'tool');
-      assert(toolResults.length === 2, 'Every launch read must have a matching tool response');
-      const declarations = request.messages.flatMap((entry: any) => entry.tool_calls || []);
-      assert(toolResults.every((entry: any) => declarations.some((call: any) => call.id === entry.tool_call_id)), 'Launch tool responses must match declared call IDs');
-      assert(toolResults.every((entry: any) => JSON.parse(entry.content).code === 'scope_denied'), 'Launch reads outside the active DM must fail closed');
-      return { content: 'That message is outside the permitted scope.' };
-    };
+    const deniedAgent = new AIAssistantAgent(settings, {
+      client: {
+        complete: async (request: any) => {
+          const toolResults = request.messages.filter((entry: any) => entry.role === 'tool');
+          assert(toolResults.length === 2, 'Every launch read must have a matching tool response');
+          const declarations = request.messages.flatMap((entry: any) => entry.tool_calls || []);
+          assert(toolResults.every((entry: any) => declarations.some((call: any) => call.id === entry.tool_call_id)), 'Launch tool responses must match declared call IDs');
+          assert(toolResults.every((entry: any) => JSON.parse(entry.content).code === 'scope_denied'), 'Launch reads outside the active DM must fail closed');
+          return { content: 'That message is outside the permitted scope.' };
+        },
+      },
+    });
     requests.length = 0;
     const denied = await deniedAgent.run(launch.initialPrompt, [], undefined, undefined, launch, {
       ...scope,
@@ -103,25 +109,31 @@ export async function runMessageLaunchTests(): Promise<void> {
     });
     assert(requests.length === 0 && denied.citations.length === 0, 'Denied launches must neither fetch nor cite Discord data');
 
-    const failedAgent = new AIAssistantAgent(settings);
     RestAPI.get = (async (request: any) => {
       if (request.query?.around === '100' && request.query?.limit === '1') throw new Error('Message is unavailable.');
       return { body: [] };
     }) as typeof RestAPI.get;
-    (failedAgent as any).client.complete = async (request: any) => {
-      const toolResults = request.messages.filter((entry: any) => entry.role === 'tool');
-      assert(toolResults.some((entry: any) => JSON.parse(entry.content).code === 'tool_error'), 'Failed launch reads must reach the model as structured errors');
-      assert(toolResults.some((entry: any) => JSON.parse(entry.content).code === 'empty_results'), 'Missing surrounding context must be reported honestly');
-      return { content: 'The message could not be retrieved.' };
-    };
+    const failedAgent = new AIAssistantAgent(settings, {
+      client: {
+        complete: async (request: any) => {
+          const toolResults = request.messages.filter((entry: any) => entry.role === 'tool');
+          assert(toolResults.some((entry: any) => JSON.parse(entry.content).code === 'tool_error'), 'Failed launch reads must reach the model as structured errors');
+          assert(toolResults.some((entry: any) => JSON.parse(entry.content).code === 'empty_results'), 'Missing surrounding context must be reported honestly');
+          return { content: 'The message could not be retrieved.' };
+        },
+      },
+    });
     const failed = await failedAgent.run(launch.initialPrompt, [], undefined, undefined, launch, scope);
     assert(failed.citations.length === 0, 'Failed reads must not invent citations');
 
-    const ordinaryAgent = new AIAssistantAgent(settings);
-    (ordinaryAgent as any).client.complete = async (request: any) => {
-      assert(!request.messages.some((entry: any) => entry.role === 'tool'), 'Ordinary chat must not inherit a previous launch target');
-      return { content: 'Hello.' };
-    };
+    const ordinaryAgent = new AIAssistantAgent(settings, {
+      client: {
+        complete: async (request: any) => {
+          assert(!request.messages.some((entry: any) => entry.role === 'tool'), 'Ordinary chat must not inherit a previous launch target');
+          return { content: 'Hello.' };
+        },
+      },
+    });
     RestAPI.get = (async () => { throw new Error('Unexpected automatic Discord read'); }) as typeof RestAPI.get;
     await ordinaryAgent.run('Hello.', [], undefined, undefined, undefined, scope);
 

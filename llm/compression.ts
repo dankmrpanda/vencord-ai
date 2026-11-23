@@ -5,8 +5,15 @@
  */
 
 import { sanitizeUntrustedContent } from '../discord/guardrails';
-import { AssistantChatMessage, LLMMessage, PluginSettings, ToolCompactionPolicy, UserImageAttachment } from '../types';
-import { ExpandedConversationalWindow } from './reranker';
+import {
+  AgentRunBudget,
+  AssistantChatMessage,
+  LLMMessage,
+  PluginSettings,
+  ToolCompactionPolicy,
+  ToolExecutionResult,
+  UserImageAttachment,
+} from '../types';
 
 /**
  * Accurate, fast multilingual token estimator.
@@ -154,55 +161,125 @@ export function compactToolResult(
   }
 }
 
+/** Merges two user-turn contents (string or multimodal array) cleanly into one content value. */
+export function mergeUserContents(a: any, b: any): any {
+  if (typeof a === 'string' && typeof b === 'string') return `${a}\n\n${b}`;
+  const toParts = (val: any): any[] =>
+    Array.isArray(val) ? val.map((p) => ({ ...p })) : [{ type: 'text', text: String(val ?? '') }];
+  return [...toParts(a), ...toParts(b)];
+}
+
+/** Appends extra plain text to the final user message in-place (preserving any image parts). */
+export function appendTextToLastUserMessage(messages: LLMMessage[], extraText: string): void {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'user') return;
+  if (typeof last.content === 'string') {
+    last.content = mergeUserContents(last.content, extraText);
+  } else if (Array.isArray(last.content)) {
+    const textPart = last.content.find((p: any) => p?.type === 'text');
+    if (textPart) textPart.text = `${textPart.text}\n\n${extraText}`;
+    else last.content.unshift({ type: 'text', text: extraText });
+  }
+}
+
 /**
- * Multi-tier evidence packing formatting conversational windows into token-budgeted prompt strings.
+ * JSON.stringify replacer that neutralizes chat-template tokens and control/bidi characters in every string leaf.
+ * It runs after toJSON, so Date/moment values serialize exactly as JSON.stringify would and their output is sanitized too.
  */
-export function packEvidenceIntoBudget(
-  windows: ExpandedConversationalWindow[],
-  maxTokens = 8000,
-): { packedText: string; totalTokens: number; includedCount: number } {
-  const parts: string[] = [];
-  let currentTokens = 0;
-  let includedCount = 0;
+function sanitizeStringLeaf(_key: string, value: unknown): unknown {
+  // A boxed String reaches the replacer as an object and would be unboxed after it: sanitize it too.
+  if (value instanceof String) return sanitizeUntrustedContent(value.valueOf());
+  return typeof value === 'string' ? sanitizeUntrustedContent(value) : value;
+}
 
-  for (let idx = 0; idx < windows.length; idx++) {
-    const win = windows[idx];
-    let block = '';
+/** Serializes the model-facing view of a tool result; UI-only fields such as citations are left out. */
+export function toolMessageContent(
+  result: ToolExecutionResult,
+  maxChars = 12_000,
+  compactionPolicy?: ToolCompactionPolicy,
+): string {
+  const { citations: _citations, ...modelView } = result;
+  return compactToolResult(JSON.stringify(modelView, sanitizeStringLeaf), maxChars, compactionPolicy);
+}
 
-    if (idx < 3) {
-      // Tier 1: Full Context with Reply Chain
-      const replyText = win.replyChain.length
-        ? `  [Replies]: ${win.replyChain.map((r) => `@${r.authorName}: ${r.content}`).join(' -> ')}\n`
-        : '';
-      const turnsText = win.messages
-        .map((m) => `  [${new Date(m.timestamp).toISOString()}] @${m.authorName}: ${m.content}`)
-        .join('\n');
-      block = `[Hit ${idx + 1} | Score: ${win.compositeScore.toFixed(1)} | Channel: ${win.channelId}]\n${replyText}${turnsText}\n`;
-    } else if (idx < 12) {
-      // Tier 2: Standard Context
-      const primary = win.anchorHit.candidate;
-      block = `[Hit ${idx + 1}] [${new Date(primary.timestamp).toISOString()}] @${primary.authorName} in #${primary.channelId}: ${primary.content.slice(0, 250)}\n`;
-    } else {
-      // Tier 3: Compact One-Line Summary
-      const primary = win.anchorHit.candidate;
-      block = `[${new Date(primary.timestamp).toISOString().slice(0, 10)}] @${primary.authorName}: ${primary.content.slice(0, 80)}\n`;
-    }
+/**
+ * Shrinks the oldest tool results to their summary until the request fits the input budget.
+ * Tool messages are kept (only their content changes), so every tool_call keeps its result.
+ */
+export function fitToolResultsToBudget(messages: LLMMessage[], maxTokens: number): void {
+  let total = messages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+  for (const message of messages) {
+    if (total <= maxTokens) return;
+    if (message.role !== 'tool') continue;
+    const previous = String(message.content || '');
+    let compact = JSON.stringify({ ok: false, summary: 'Output omitted to fit the input budget.', untrustedData: true });
+    try {
+      const { ok, code, summary, truncation } = JSON.parse(previous);
+      compact = JSON.stringify({
+        ok,
+        code,
+        summary: typeof summary === 'string' ? summary.slice(0, 500) : undefined,
+        truncation,
+        untrustedData: true,
+        omitted: 'Full output omitted to fit the input budget.',
+      });
+    } catch {}
+    if (compact.length >= previous.length) continue;
+    message.content = compact;
+    total += estimateTokens(compact) - estimateTokens(previous);
+  }
+}
 
-    const blockTokens = estimateTokens(block);
-    if (currentTokens + blockTokens > maxTokens) {
-      break;
-    }
+export const DEFAULT_AGENT_RUN_BUDGET: AgentRunBudget = {
+  maxModelTurns: 10,
+  maxToolCalls: 30,
+  maxElapsedMs: 180_000,
+  maxReturnedRecords: 400,
+  maxEstimatedInputTokens: 48_000,
+  finalizationCalls: 1,
+};
 
-    parts.push(block);
-    currentTokens += blockTokens;
-    includedCount++;
+const normalizeBudgetArg = (value: unknown): unknown => Array.isArray(value)
+  ? value.map(normalizeBudgetArg)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b)).map(([key, current]) => [key, normalizeBudgetArg(current)]))
+    : value;
+
+/** Tracks model turns, deduplicated tool calls, returned records, and elapsed deadline for one run. */
+export class AgentBudgetTracker {
+  readonly startedAt = Date.now();
+  modelTurns = 0;
+  toolCalls = 0;
+  returnedRecords = 0;
+  finalizationCalls = 0;
+  estimatedInputTokens = 0;
+  truncations = 0;
+  private calls = new Set<string>();
+
+  constructor(readonly limits: AgentRunBudget = DEFAULT_AGENT_RUN_BUDGET) {}
+
+  canModelTurn = (): boolean => this.modelTurns < this.limits.maxModelTurns
+    && this.estimatedInputTokens <= this.limits.maxEstimatedInputTokens && !this.expired();
+
+  canToolCall = (): boolean => this.toolCalls < this.limits.maxToolCalls && !this.expired();
+  expired = (): boolean => Date.now() - this.startedAt >= this.limits.maxElapsedMs;
+  remainingMs = (): number => Math.max(0, this.limits.maxElapsedMs - (Date.now() - this.startedAt));
+
+  private callKey = (name: string, args: Record<string, unknown>): string => `${name}:${JSON.stringify(normalizeBudgetArg(args))}`;
+
+  markCall(name: string, args: Record<string, unknown>): boolean {
+    const key = this.callKey(name, args);
+    if (this.calls.has(key)) return false;
+    this.calls.add(key);
+    this.toolCalls++;
+    return true;
   }
 
-  return {
-    packedText: parts.join('\n'),
-    totalTokens: currentTokens,
-    includedCount,
-  };
+  /** Lets a call that failed transiently be retried once more; the spent tool-call budget is kept. */
+  forgetCall(name: string, args: Record<string, unknown>): void {
+    this.calls.delete(this.callKey(name, args));
+  }
 }
 
 function buildUserTurnContent(text: string, images?: UserImageAttachment[]): any {
