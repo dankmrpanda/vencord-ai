@@ -8,8 +8,8 @@ import { definePluginSettings } from '@api/Settings';
 import { OptionType } from '@utils/types';
 import { React } from '@webpack/common';
 import { modelLifecycle } from './llm/modelLifecycle';
-import { normalizeBaseUrl, resolveModelIdentifier } from './llm/modelSettings';
-import { providerErrorDetail } from './llm/transport';
+import { DEFAULT_BASE_URL, normalizeBaseUrl } from './llm/modelSettings';
+import { testProviderConnection } from './llm/provider';
 import { PluginSettings, ProviderPreset } from './types';
 
 /**
@@ -27,7 +27,7 @@ export function validateBaseUrlInput(raw: string | undefined): { ok: true; url: 
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providerPreset: 'omlx',
-  baseUrl: 'http://localhost:8000/v1',
+  baseUrl: DEFAULT_BASE_URL,
   apiKey: '',
   model: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
   // Low temperature keeps tool calls and argument JSON reliable.
@@ -59,7 +59,7 @@ export const settings = definePluginSettings({
   baseUrl: {
     type: OptionType.STRING,
     description: 'API Base URL',
-    default: 'http://localhost:8000/v1',
+    default: DEFAULT_BASE_URL,
   },
   apiKey: {
     type: OptionType.STRING,
@@ -95,8 +95,8 @@ export const settings = definePluginSettings({
   },
 });
 
-export const pluginSettings = settings;
-export const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
+const pluginSettings = settings;
+const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
 
 function applySettings(target: PluginSettings, source?: any): void {
   if (!source || typeof source !== 'object') return;
@@ -151,7 +151,7 @@ const PRESET_CONFIGS: Record<
 > = {
   omlx: {
     name: 'omlx (Local Apple Silicon / MLX)',
-    defaultBaseUrl: 'http://localhost:8000/v1',
+    defaultBaseUrl: DEFAULT_BASE_URL,
     defaultModel: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
     needsKey: false,
   },
@@ -187,7 +187,7 @@ const PRESET_CONFIGS: Record<
   },
   custom: {
     name: 'Custom OpenAI-Compatible Endpoint',
-    defaultBaseUrl: 'http://localhost:8000/v1',
+    defaultBaseUrl: DEFAULT_BASE_URL,
     defaultModel: 'default',
     needsKey: false,
   },
@@ -246,33 +246,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
     let releaseModel: (() => void) | undefined;
     try {
       releaseModel = await modelLifecycle.acquire(testSettings, signal);
-      const cleanUrl = testSettings.baseUrl;
-
-      const authKey = testSettings.apiKey?.trim() || 'local-no-auth';
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authKey}`,
-      };
-
-      const response = await fetch(`${cleanUrl}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: await resolveModelIdentifier(testSettings),
-          messages: [{ role: 'user', content: 'Say "connected" if you hear me.' }],
-          // OpenAI reasoning models reject max_tokens (LLM-16); other servers expect it.
-          [testSettings.providerPreset === 'openai' ? 'max_completion_tokens' : 'max_tokens']: 10,
-        }),
-        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-      });
-
-      if (!response.ok) {
-        // Same redaction as chat errors: the provider may echo the API key.
-        const detail = await providerErrorDetail(response, testSettings.apiKey || '');
-        setTestStatus(`❌ Failed (${response.status})${detail ? `: ${detail}` : '.'}`);
-      } else {
-        setTestStatus('✅ Connection successful!');
-      }
+      const outcome = await testProviderConnection(testSettings, signal);
+      setTestStatus(outcome.ok ? '✅ Connection successful!' : `❌ ${outcome.message}`);
     } catch (err: any) {
       setTestStatus(`❌ Network error: ${err.message || String(err)}`);
     } finally {

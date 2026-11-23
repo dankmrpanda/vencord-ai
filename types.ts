@@ -165,10 +165,9 @@ export interface LLMMessage {
 
 export interface ProviderCapabilities {
   strictSchemas: boolean;
-  streamingTools: boolean;
   parallelToolCalls: boolean;
   developerMessages: boolean;
-  vision: boolean;
+  isLocal: boolean;
 }
 
 export interface CompletionRequest {

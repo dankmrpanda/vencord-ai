@@ -8,7 +8,7 @@ import { PluginSettings } from '../types';
 const resolutions = new Map<string, { pending: Promise<string>; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 32;
-const DEFAULT_BASE_URL = 'http://localhost:8000/v1';
+export const DEFAULT_BASE_URL = 'http://localhost:8000/v1';
 
 /**
  * Validates a configured API base URL before any request carries credentials to it.

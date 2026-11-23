@@ -6,8 +6,7 @@
 import { RestAPI } from '@webpack/common';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { compileRegexSafely, filterMessagesLocally } from '../discord/messages';
-import { consumeChatCompletionStream, OpenAICompatibleTransport } from '../llm/transport';
-import { getProviderCapabilities } from '../llm/capabilities';
+import { consumeChatCompletionStream, OpenAICompatibleClient } from '../llm/provider';
 import { indexBridge } from '../storage/index/workerBridge';
 import { ChannelType, CurrentScopeContext, DiscordMessage, PluginSettings } from '../types';
 import { assert } from './assert';
@@ -139,9 +138,9 @@ export async function runRetryCancellationRegression(): Promise<void> {
     return new Response(new ReadableStream({ cancel() { retryBodyCancelled = true; } }), { status: 429, headers: { 'Retry-After': '0.1' } });
   }) as typeof fetch;
   try {
-    const transport = new OpenAICompatibleTransport(settings, getProviderCapabilities('custom'));
+    const client = new OpenAICompatibleClient(settings);
     const verdict = await Promise.race([
-      transport.complete({ messages: [], stream: false }, {}, controller.signal).then(() => 'resolved', () => 'aborted'),
+      client.complete({ messages: [], stream: false }, {}, controller.signal).then(() => 'resolved', () => 'aborted'),
       new Promise<string>((resolve) => { timer = setTimeout(() => resolve('still waiting'), 50); }),
     ]);
     assert(verdict === 'aborted', 'Cancellation must interrupt rate-limit backoff immediately');

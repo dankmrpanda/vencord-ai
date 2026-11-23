@@ -25,7 +25,7 @@ import {
 } from '../types';
 import { buildConversationContext, compactToolResult, estimateMessageTokens, estimateTokens } from './compression';
 import { buildSystemPrompt } from './prompts';
-import { OpenAICompatibleClient } from './provider';
+import { isLocalPreset, OpenAICompatibleClient } from './provider';
 import { AgentBudgetTracker, DEFAULT_AGENT_RUN_BUDGET } from './runBudget';
 import { availableToolDefinitions, TOOL_REGISTRY } from './toolRegistry';
 import { isVoiceMessage } from '../discord/voiceMessages';
@@ -356,11 +356,6 @@ export class AIAssistantAgent {
     this.client = new OpenAICompatibleClient(settings);
   }
 
-  updateSettings(settings: PluginSettings): void {
-    this.settings = settings;
-    this.client.updateSettings(settings);
-  }
-
   async run(
     userPrompt: string,
     history: AssistantChatMessage[],
@@ -475,13 +470,11 @@ export class AIAssistantAgent {
         : '',
     ].filter(Boolean).join('\n');
 
-    const isLocalPreset = this.settings.providerPreset === 'omlx'
-      || this.settings.providerPreset === 'ollama'
-      || this.settings.providerPreset === 'lmstudio';
-    const effectiveInputTokenLimit = isLocalPreset
+    const isLocal = isLocalPreset(this.settings.providerPreset);
+    const effectiveInputTokenLimit = isLocal
       ? Math.min(DEFAULT_AGENT_RUN_BUDGET.maxEstimatedInputTokens, 24_000)
       : DEFAULT_AGENT_RUN_BUDGET.maxEstimatedInputTokens;
-    const toolCompactMaxChars = isLocalPreset ? 9_500 : 12_000;
+    const toolCompactMaxChars = isLocal ? 9_500 : 12_000;
 
     const systemContent = `${buildSystemPrompt(this.settings.systemPrompt)}\n\n${runtimeContext}`;
     const messages = buildConversationContext(systemContent, history, userPrompt, this.settings, effectiveInputTokenLimit, images);

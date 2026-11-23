@@ -22,7 +22,6 @@ import { startAssistantRuntime, stopAssistantRuntime } from './services/runtimeL
 import {
   DEFAULT_SETTINGS,
   loadSavedSettings,
-  persistSettings,
   settings,
   SettingsPanel,
 } from './settings';
@@ -483,7 +482,6 @@ export default definePlugin({
     <SettingsPanel
       settings={currentSettings}
       onChange={(newSettings) => {
-        persistSettings(newSettings);
         currentSettings = newSettings;
         getChatService(newSettings).updateSettings(newSettings);
         renderSidebar();

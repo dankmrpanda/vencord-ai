@@ -3,7 +3,6 @@
  * Every case covers a committed fix and must stay green; each case restores the globals it patches.
  */
 
-import { readFileSync } from 'node:fs';
 import { RestAPI } from '@webpack/common';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
@@ -11,11 +10,15 @@ import { ChatService } from '../services/chatService';
 import { getSessionById } from '../storage/chatHistory';
 import { buildConversationContext, compactToolResult, estimateTokens } from '../llm/compression';
 import { AGENT_TOOLS, buildSystemPrompt } from '../llm/prompts';
-import { OpenAICompatibleClient } from '../llm/provider';
+import {
+  consumeChatCompletionStream,
+  getProviderCapabilities,
+  OpenAICompatibleClient,
+  providerErrorDetail,
+  testProviderConnection,
+} from '../llm/provider';
 import { DEFAULT_AGENT_RUN_BUDGET } from '../llm/runBudget';
 import { availableToolDefinitions, TOOL_REGISTRY } from '../llm/toolRegistry';
-import { consumeChatCompletionStream, OpenAICompatibleTransport } from '../llm/transport';
-import { getProviderCapabilities } from '../llm/capabilities';
 import { DEFAULT_SETTINGS } from '../settings';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
@@ -463,7 +466,7 @@ async function llm16OpenAiReasoningParams(): Promise<void> {
   const payloads: Array<Record<string, unknown>> = [];
   const send = async (preset: PluginSettings['providerPreset'], model: string) => {
     const runSettings = settings({ providerPreset: preset, model, baseUrl: 'https://api.openai.test/v1' });
-    await new OpenAICompatibleTransport(runSettings, getProviderCapabilities(preset))
+    await new OpenAICompatibleClient(runSettings)
       .complete({ messages: [{ role: 'user', content: 'hi' }], stream: false });
   };
   try {
@@ -475,25 +478,25 @@ async function llm16OpenAiReasoningParams(): Promise<void> {
     await send('openai', 'gpt-5-mini');
     await send('openai', 'gpt-4o');
     await send('custom', 'o3-mini');
+    await testProviderConnection(settings({ providerPreset: 'openai', model: 'o3-mini', baseUrl: 'https://api.openai.test/v1' }));
   } finally {
     globalThis.fetch = originalFetch;
   }
-  const [o3, gpt5, gpt4o, custom] = payloads;
+  const [o3, gpt5, gpt4o, custom, connTest] = payloads;
   const shape = (p: Record<string, unknown>) => JSON.stringify({ max_tokens: p.max_tokens, max_completion_tokens: p.max_completion_tokens, temperature: p.temperature });
   assert(o3.max_tokens === undefined && o3.max_completion_tokens === 512 && o3.temperature === undefined, `LLM-16 openai o3-mini: ${shape(o3)}`);
   assert(gpt5.max_tokens === undefined && gpt5.max_completion_tokens === 512 && gpt5.temperature === undefined, `LLM-16 openai gpt-5-mini: ${shape(gpt5)}`);
   assert(gpt4o.max_tokens === undefined && gpt4o.max_completion_tokens === 512 && gpt4o.temperature === 0.2, `LLM-16 openai gpt-4o keeps temperature: ${shape(gpt4o)}`);
   assert(custom.max_tokens === 512 && custom.max_completion_tokens === undefined && custom.temperature === 0.2, `LLM-16 other servers keep max_tokens: ${shape(custom)}`);
-  const settingsSource = readFileSync(new URL('../settings.tsx', import.meta.url), 'utf8');
-  assert(!/^\s*max_tokens: 10,/m.test(settingsSource) && settingsSource.includes("'openai' ? 'max_completion_tokens' : 'max_tokens'"),
-    'LLM-16 Test Connection uses max_completion_tokens for OpenAI');
+  assert(connTest.max_tokens === undefined && connTest.max_completion_tokens === 10 && connTest.temperature === undefined,
+    `LLM-16 testProviderConnection uses max_completion_tokens for OpenAI: ${shape(connTest)}`);
 }
 
 /** LLM-17: redacted provider error detail, capped Retry-After, trailing slashes stripped. */
 async function llm17TransportErrorDetailAndRetry(): Promise<void> {
   const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
   const transportSettings = settings({ apiKey, baseUrl: 'http://llm.test/v1///' });
-  const transport = new OpenAICompatibleTransport(transportSettings, getProviderCapabilities('custom'));
+  const transport = new OpenAICompatibleClient(transportSettings);
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
   const urls: string[] = [];
@@ -862,7 +865,7 @@ async function srch10ToolsReceiveAbortSignal(): Promise<void> {
 /** LLM-17 follow-up: an `error` object inside a 200 SSE stream gets the same redaction and length cap as a non-OK response. */
 async function llm17StreamErrorRedacted(): Promise<void> {
   const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
-  const transport = new OpenAICompatibleTransport(settings({ apiKey }), getProviderCapabilities('custom'));
+  const transport = new OpenAICompatibleClient(settings({ apiKey }));
   const originalFetch = globalThis.fetch;
   const thrown: string[] = [];
   const payloads = [
@@ -898,7 +901,7 @@ async function sec2_03EncodedKeyEchoesRedacted(): Promise<void> {
   try {
     for (const [apiKey, body, fragment, status] of cases) {
       (globalThis as any).fetch = async () => new Response(body, { status });
-      const transport = new OpenAICompatibleTransport(settings({ apiKey }), getProviderCapabilities('custom'));
+      const transport = new OpenAICompatibleClient(settings({ apiKey }));
       const thrown = await transport.complete({ messages: [{ role: 'user', content: 'hi' }], stream: false })
         .then(() => 'resolved', (error) => String(error?.message));
       if (thrown.includes(fragment) || !thrown.includes(String(status))) leaks.push(thrown);
@@ -912,13 +915,17 @@ async function sec2_03EncodedKeyEchoesRedacted(): Promise<void> {
 /** SEC2-02: Test Connection showed the provider's raw error body; it must use the same redacted detail as chat errors. */
 async function sec2_02TestConnectionRedacted(): Promise<void> {
   const apiKey = 'sk-test-SECRETKEY0123456789abcdef';
-  const transport: any = await import('../llm/transport');
-  assert(typeof transport.providerErrorDetail === 'function', 'SEC2-02 providerErrorDetail is not exported for Test Connection');
-  const detail = await transport.providerErrorDetail(new Response(`invalid key ${apiKey}`, { status: 401 }), apiKey);
+  const detail = await providerErrorDetail(new Response(`invalid key ${apiKey}`, { status: 401 }), apiKey);
   assert(detail.includes('invalid key') && !detail.includes('SECRETKEY'), `SEC2-02 redacted detail wrong: ${detail}`);
-  const source = readFileSync(new URL('../settings.tsx', import.meta.url), 'utf8');
-  assert(/providerErrorDetail\(response, /.test(source) && !/text\.slice\(0, 120\)/.test(source),
-    'SEC2-02 settings.tsx Test Connection still shows the raw provider body');
+  const originalFetch = globalThis.fetch;
+  try {
+    (globalThis as any).fetch = async () => new Response(`invalid key ${apiKey}`, { status: 401 });
+    const outcome = await testProviderConnection(settings({ apiKey }));
+    assert(!outcome.ok && outcome.message.includes('401') && !outcome.message.includes('SECRETKEY'),
+      `SEC2-02 testProviderConnection leaked key: ${JSON.stringify(outcome)}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 /** SEC2-01: get_message_details and list_channel_pins must also stop on Stop during a 429 wait and not honour a huge retry_after. */
@@ -1026,14 +1033,14 @@ async function life07TransportRejectsUnsafeBaseUrl(): Promise<void> {
     // A blank base URL falls back to the absolute default endpoint, never a page-relative path.
     for (const baseUrl of ['', '   ']) {
       const runSettings = settings({ baseUrl, apiKey: 'local-server-key' });
-      await new OpenAICompatibleTransport(runSettings, getProviderCapabilities(runSettings.providerPreset))
+      await new OpenAICompatibleClient(runSettings)
         .complete({ messages: [{ role: 'user', content: 'hi' }], stream: false }).catch(() => undefined);
     }
     assert(requested.every((url) => url.startsWith('http://localhost:8000/v1/')), `LIFE-07 blank base URL requested ${requested.join(', ')}`);
     requested.length = 0;
     for (const baseUrl of ['127.0.0.1:8000/v1', '/proxy-path', 'ftp://llm.test/v1', 'http://user:hunter2@llm.test/v1']) {
       const runSettings = settings({ baseUrl, apiKey: 'local-server-key' });
-      const transport = new OpenAICompatibleTransport(runSettings, getProviderCapabilities(runSettings.providerPreset));
+      const transport = new OpenAICompatibleClient(runSettings);
       let message = '';
       try {
         await transport.complete({ messages: [{ role: 'user', content: 'hi' }], stream: false });

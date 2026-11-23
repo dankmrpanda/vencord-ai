@@ -5,6 +5,7 @@
 
 import { PluginSettings } from '../types';
 import { normalizeBaseUrl, resolveModelIdentifier } from './modelSettings';
+import { isLocalPreset } from './provider';
 
 export const MODEL_IDLE_TIMEOUT_MS = 5 * 60_000;
 const UNLOAD_RETRY_MS = 30_000;
@@ -69,7 +70,7 @@ export class ModelLifecycle {
     const lifecycleSignal = this.shutdownController.signal;
     const waitSignal = signal ? AbortSignal.any([signal, lifecycleSignal]) : lifecycleSignal;
     await waitFor(this.shutdownPromise, waitSignal);
-    if (!['omlx', 'ollama', 'lmstudio'].includes(settings.providerPreset)) return () => {};
+    if (!isLocalPreset(settings.providerPreset)) return () => {};
     // Snapshot the endpoint and credentials so settings changes cannot unload another model.
     const snapshot = { ...settings, baseUrl: normalizeBaseUrl(settings.baseUrl) };
     snapshot.model = await waitFor(resolveModelIdentifier(snapshot), waitSignal);

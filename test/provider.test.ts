@@ -1,5 +1,4 @@
-import { getProviderCapabilities } from '../llm/capabilities';
-import { consumeChatCompletionStream, OpenAICompatibleTransport } from '../llm/transport';
+import { consumeChatCompletionStream, getProviderCapabilities, OpenAICompatibleClient } from '../llm/provider';
 import { PluginSettings, ProviderPreset, ToolDefinition } from '../types';
 import { assert } from './assert';
 
@@ -59,8 +58,8 @@ export async function runProviderTests(): Promise<void> {
           headers: { 'Content-Type': 'application/json' },
         });
       }) as typeof fetch;
-      const transport = new OpenAICompatibleTransport(settings, getProviderCapabilities(preset));
-      const completion = await transport.complete({
+      const client = new OpenAICompatibleClient(settings);
+      const completion = await client.complete({
         messages: [{ role: 'developer', content: 'fixture' }],
         tools: [fixtureTool],
         stream: false,

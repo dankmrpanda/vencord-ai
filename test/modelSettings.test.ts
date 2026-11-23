@@ -1,5 +1,4 @@
-import { OpenAICompatibleTransport } from '../llm/transport';
-import { getProviderCapabilities } from '../llm/capabilities';
+import { OpenAICompatibleClient } from '../llm/provider';
 import { ModelLifecycle } from '../llm/modelLifecycle';
 import { resolveModelIdentifier } from '../llm/modelSettings';
 import { PluginSettings } from '../types';
@@ -31,8 +30,8 @@ export async function runModelSettingsTests(): Promise<void> {
     const release = await lifecycle.acquire(settings);
     const canonicalRelease = await lifecycle.acquire({ ...settings, model: 'Qwen2.5-32B-Instruct-4bit' });
     assert(calls.filter((call) => call.url.endsWith('/load')).length === 1, 'Repository names and canonical IDs share one model lease');
-    const transport = new OpenAICompatibleTransport(settings, getProviderCapabilities('omlx'));
-    const completion = await transport.complete({ messages: [{ role: 'user', content: 'fixture' }], stream: false });
+    const client = new OpenAICompatibleClient(settings);
+    const completion = await client.complete({ messages: [{ role: 'user', content: 'fixture' }], stream: false });
     assert(completion.content === 'connected', 'Prefixed saved settings must reach inference without a model-load 404');
     release();
     canonicalRelease();
