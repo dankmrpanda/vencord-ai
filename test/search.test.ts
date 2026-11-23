@@ -17,7 +17,7 @@ import {
   resolveDateSnowflakeBounds,
   snowflakeToDate,
 } from '../discord/search';
-import { resolvePromptMentions } from '../discord/stores';
+import { resolvePromptMentions } from '../discord/participants';
 import { DiscordMessage } from '../types';
 import { assert } from './assert';
 

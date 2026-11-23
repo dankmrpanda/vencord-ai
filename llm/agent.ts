@@ -5,8 +5,9 @@
 
 import { buildRecentChannelSnapshot } from '../discord/channelSnapshot';
 import { sanitizeUntrustedContent } from '../discord/guardrails';
+import { resolvePromptMentions } from '../discord/participants';
 import { getCurrentScopeContext, restrictScopeForUserPrompt } from '../discord/scope';
-import { getChannel, getCurrentUser, resolvePromptMentions } from '../discord/stores';
+import { getChannel, getCurrentUser } from '../discord/stores';
 import {
   AgentStep,
   AssistantLaunchRequest,

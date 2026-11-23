@@ -16,7 +16,7 @@ import { SIDEBAR_CSS } from './components/sidebarCss';
 import { setSidebarDocked } from './components/sidebarLayout';
 import { DiagnosticLogEntry, renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
 import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
-import { find, findByCode, findByProps } from './discord/stores';
+import { findByCode, findByProps } from './discord/stores';
 import { getChatService } from './services/chatService';
 import { startAssistantRuntime, stopAssistantRuntime } from './services/runtimeLifecycle';
 import {

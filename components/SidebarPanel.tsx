@@ -6,8 +6,9 @@
 
 import { React } from '@webpack/common';
 import { normalizeImageBlobToDataUrl } from '../discord/messages';
+import { searchMentionableUsers } from '../discord/participants';
 import { getCurrentScopeContext } from '../discord/scope';
-import { getCurrentChannelId, getLoadedMessages, getSelectedChannelStore, searchMentionableUsers } from '../discord/stores';
+import { getCurrentChannelId, getLoadedMessages, getSelectedChannelStore } from '../discord/stores';
 import { getVoiceTranscriber } from '../discord/voiceMessages';
 import { getChatService } from '../services/chatService';
 import { getSessionsForChannel } from '../storage/chatHistory';

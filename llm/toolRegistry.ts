@@ -8,8 +8,9 @@ import { extractMessageSearchText, fetchRecentMessages, fetchSurroundingMessages
 import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES, slimMessage } from '../discord/searchContext';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { isChannelAllowedInScope } from '../discord/scope';
+import { resolveInScopeUserByName } from '../discord/participants';
 import { getVoiceTranscriber, transcribeVoiceMessage } from '../discord/voiceMessages';
-import { getCurrentUser, resolveInScopeUserByName } from '../discord/stores';
+import { getCurrentUser } from '../discord/stores';
 import { compileSafeRegex } from '../storage/regex';
 import {
   CurrentScopeContext,

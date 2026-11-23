@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { canGuildMemberAccessChannel, resolvePromptMentions, searchMentionableUsers } from '../discord/participants';
 import { getPermittedChannelIdsForScope, isChannelAllowedInScope } from '../discord/scope';
-import { resolvePromptMentions, searchMentionableUsers } from '../discord/stores';
 import { ChannelType, CurrentScopeContext, DiscordUser } from '../types';
 import { assert } from './assert';
 
@@ -422,6 +422,62 @@ function runMentionAndScopeCases() {
   const privateStaffIds = privateStaffResults.map((u) => u.id);
   assert(privateStaffIds.includes('usr_staff_lurker'), 'Staff member with VIEW_CHANNEL overwrite must appear in ch_private_staff');
   assert(!privateStaffIds.includes('usr_guild_lurker'), 'Non-staff guild member denied VIEW_CHANNEL must NOT appear in ch_private_staff');
+
+  // Test 15: canGuildMemberAccessChannel edge cases (owner, ADMINISTRATOR, PRIVATE_THREAD, member overwrite, thread parent inheritance)
+  const testGuild = { id: 'guild_test', name: 'Test Guild', ownerId: 'usr_owner' };
+  const roles = new Map<string, bigint>([
+    ['guild_test', 1024n],
+    ['role_admin', 8n],
+    ['role_mod', 1n << 34n], // MANAGE_THREADS
+    ['role_muted', 0n],
+  ]);
+  const lockedChannel = {
+    id: 'ch_locked',
+    name: 'locked',
+    type: ChannelType.GUILD_TEXT,
+    guild_id: 'guild_test',
+    permissionOverwrites: {
+      guild_test: { id: 'guild_test', allow: '0', deny: '1024' },
+      role_muted: { id: 'role_muted', allow: '0', deny: '1024' },
+      usr_vip: { id: 'usr_vip', allow: '1024', deny: '0' },
+    },
+  };
+  assert(canGuildMemberAccessChannel('usr_owner', [], lockedChannel, testGuild, roles), 'Guild owner must always access channel');
+  assert(canGuildMemberAccessChannel('usr_admin', ['role_admin'], lockedChannel, testGuild, roles), 'ADMINISTRATOR must bypass channel overwrites');
+  assert(!canGuildMemberAccessChannel('usr_regular', ['role_muted'], lockedChannel, testGuild, roles), 'Denied @everyone must block regular member');
+  assert(canGuildMemberAccessChannel('usr_vip', ['role_muted'], lockedChannel, testGuild, roles), 'Member allow overwrite must beat role deny overwrite');
+
+  mockChannels.ch_locked_parent = lockedChannel;
+  const privateThread = {
+    id: 'th_private',
+    name: 'private-thread',
+    type: ChannelType.PRIVATE_THREAD,
+    guild_id: 'guild_test',
+    parent_id: 'ch_locked',
+  };
+  assert(!canGuildMemberAccessChannel('usr_vip', [], privateThread, testGuild, roles), 'PRIVATE_THREAD requires MANAGE_THREADS as well as VIEW_CHANNEL');
+  assert(canGuildMemberAccessChannel('usr_vip', ['role_mod'], privateThread, testGuild, roles), 'PRIVATE_THREAD allows member with parent VIEW_CHANNEL and MANAGE_THREADS');
+  delete mockChannels.ch_locked_parent;
+
+  // Test 16: resolvePromptMentions with multiple @mentions scans stores once per prompt
+  let messageReads = 0;
+  let memberScans = 0;
+  const origGetMessages = mockStores.MessageStore.getMessages;
+  const origGetMembers = mockStores.GuildMemberStore.getMembers;
+  mockStores.MessageStore.getMessages = (channelId: string) => {
+    messageReads++;
+    return origGetMessages(channelId);
+  };
+  mockStores.GuildMemberStore.getMembers = () => {
+    memberScans++;
+    return origGetMembers();
+  };
+  const multiAt = resolvePromptMentions('Compare @Alice and @Bobby and @Charlie and @Lurker', guildScopeDefault);
+  assert(multiAt.length === 4, `Expected all 4 @mentions resolved, got ${multiAt.length}`);
+  assert(messageReads === 1, `Expected 1 MessageStore scan across multiple @mentions, got ${messageReads}`);
+  assert(memberScans === 1, `Expected 1 GuildMemberStore scan across multiple @mentions, got ${memberScans}`);
+  mockStores.MessageStore.getMessages = origGetMessages;
+  mockStores.GuildMemberStore.getMembers = origGetMembers;
 
   console.log('✅ Member Mention Matching & Manual Scope Modification Tests Passed Successfully!');
 }
