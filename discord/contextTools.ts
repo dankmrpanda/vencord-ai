@@ -180,16 +180,22 @@ export async function listThreads(
     const requestedParentMatches = !channelId || parent === parentId || thread.id === targetChannelId;
     return requestedParentMatches && (isChannelAllowedInScope(parent, scope) || isChannelAllowedInScope(thread.id, scope));
   }).slice(0, limit);
-  const items = await Promise.all(permitted.map(async (thread): Promise<ThreadListItem> => {
+  const items: ThreadListItem[] = [];
+  for (let i = 0; i < permitted.length; i++) {
+    throwIfAborted(signal);
+    const thread = permitted[i];
     let starterMessage: DiscordMessage | undefined;
-    if (isSnowflake(thread.id)) {
+    // Fetch starter messages sequentially for at most the top 10 threads to avoid 429 bursts.
+    if (i < 10 && isSnowflake(thread.id)) {
       try {
         const starter = await fetchOneMessage(thread.id, thread.id, signal);
         if (starter?.channel_id === thread.id || (thread.parent_id && starter?.channel_id === thread.parent_id)) starterMessage = starter;
-      } catch {}
+      } catch (err) {
+        if (signal?.aborted) throw err;
+      }
     }
-    return { thread, parent: getChannel(thread.parent_id || '') || undefined, starterMessage };
-  }));
+    items.push({ thread, parent: getChannel(thread.parent_id || '') || undefined, starterMessage });
+  }
   return {
     ok: true,
     code: items.length ? 'threads' : 'empty_results',

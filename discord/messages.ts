@@ -59,17 +59,76 @@ export function extractPatternMatches(text: string, pattern: string | RegExp): s
 }
 
 /**
- * Tokenizes and normalizes a search query into clean search tokens
+ * Tokenizes and normalizes a search query into clean search tokens (Unicode-aware).
  */
 export function extractSearchTokens(query: string): string[] {
   if (!query || typeof query !== 'string') return [];
   // Split on whitespace, quotes, and punctuation except hyphens/dots in words
   return query
     .toLowerCase()
-    .replace(/[^\w\s\.-]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s.-]/gu, ' ')
     .split(/\s+/)
     .map((t) => t.trim())
     .filter((t) => t.length > 0);
+}
+
+const RELEVANCE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'to', 'for', 'in', 'on', 'at', 'by', 'from', 'with',
+  'is', 'was', 'were', 'are', 'be', 'been', 'that', 'this', 'it', 'its', 'of', 'about',
+  'what', 'when', 'where', 'who', 'why', 'how', 'did', 'do', 'does', 'find', 'show',
+]);
+
+/**
+ * Concatenates searchable text from a Discord message: content, attachment filenames/descriptions,
+ * embed author/title/description/fields/footer, and forwarded message snapshots.
+ */
+export function extractMessageSearchText(msg: DiscordMessage): string {
+  const parts: string[] = [];
+  if (msg.content) parts.push(msg.content);
+  if (Array.isArray(msg.attachments)) {
+    for (const a of msg.attachments) {
+      if (a?.filename) parts.push(a.filename);
+      if (a?.description) parts.push(a.description);
+    }
+  }
+  if (Array.isArray(msg.embeds)) {
+    for (const e of msg.embeds) {
+      if (!e) continue;
+      if (e.author?.name) parts.push(e.author.name);
+      if (e.title) parts.push(e.title);
+      if (e.description) parts.push(e.description);
+      if (Array.isArray(e.fields)) {
+        for (const f of e.fields) {
+          if (f?.name) parts.push(f.name);
+          if (f?.value) parts.push(f.value);
+        }
+      }
+      if (e.footer?.text) parts.push(e.footer.text);
+    }
+  }
+  if (Array.isArray(msg.message_snapshots)) {
+    for (const snap of msg.message_snapshots) {
+      const inner = snap?.message;
+      if (!inner) continue;
+      if (inner.content) parts.push(inner.content);
+      if (Array.isArray(inner.attachments)) {
+        for (const a of inner.attachments) {
+          if (a?.filename) parts.push(a.filename);
+        }
+      }
+      if (Array.isArray(inner.embeds)) {
+        for (const e of inner.embeds) {
+          if (e?.title) parts.push(e.title);
+          if (e?.description) parts.push(e.description);
+        }
+      }
+    }
+  }
+  return parts.join(' ');
+}
+
+function escapeRegExpToken(token: string): string {
+  return token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -105,11 +164,9 @@ export function scoreMessageRelevance(msg: DiscordMessage, query: string): numbe
   if (!query || !query.trim()) return 1;
 
   const queryLower = query.trim().toLowerCase();
-  const content = msg.content || '';
-  const attachments = msg.attachments?.map((a) => a.filename).join(' ') || '';
-  const embeds = msg.embeds?.map((e) => `${e.title || ''} ${e.description || ''}`).join(' ') || '';
+  const searchable = extractMessageSearchText(msg);
   const author = `${msg.author?.username || ''} ${msg.author?.globalName || ''}`;
-  const fullTextLower = `${content} ${attachments} ${embeds} ${author}`.toLowerCase();
+  const fullTextLower = `${searchable} ${author}`.toLowerCase();
 
   let score = 0;
 
@@ -118,14 +175,21 @@ export function scoreMessageRelevance(msg: DiscordMessage, query: string): numbe
     score += 100;
   }
 
-  // 2. Tokenized multi-word matching
-  const tokens = extractSearchTokens(query);
-  if (tokens.length === 0) return score > 0 ? score : 1;
+  // 2. Tokenized multi-word matching (prefer non-stopwords when any exist)
+  const rawTokens = extractSearchTokens(query);
+  if (rawTokens.length === 0) return score > 0 ? score : 1;
+  const nonStop = rawTokens.filter((t) => !RELEVANCE_STOPWORDS.has(t));
+  const tokens = nonStop.length > 0 ? nonStop : rawTokens;
 
   let matchedTokens = 0;
+  let wholeWordMatches = 0;
   for (const token of tokens) {
     if (tokenMatchesText(token, fullTextLower)) {
       matchedTokens++;
+      try {
+        const boundaryRe = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExpToken(token)}(?![\\p{L}\\p{N}_])`, 'u');
+        if (boundaryRe.test(fullTextLower)) wholeWordMatches++;
+      } catch {}
     }
   }
 
@@ -134,11 +198,15 @@ export function scoreMessageRelevance(msg: DiscordMessage, query: string): numbe
   if (matchFraction === 1) {
     // All tokens matched
     score += 60;
-  } else if (matchFraction >= 0.7) {
-    // High token match fraction (e.g. 3 of 4 tokens)
-    score += Math.round(matchFraction * 40);
+  } else if (matchFraction >= 0.5) {
+    // Partial multi-word match (e.g. 2 of 3 tokens = 0.67 -> 30)
+    score += Math.round(matchFraction * 45);
   } else if (tokens.length === 2 && matchedTokens === 1) {
     score += 20;
+  }
+
+  if (wholeWordMatches > 0) {
+    score += Math.min(10, wholeWordMatches * 4);
   }
 
   return score;
@@ -256,7 +324,7 @@ export function filterMessagesLocally(
       if (!hasMatch) continue;
     }
 
-    const fullMessageText = `${msg.content || ''} ${msg.attachments?.map((a) => a.filename).join(' ') || ''} ${msg.embeds?.map((e) => `${e.title || ''} ${e.description || ''}`).join(' ') || ''}`;
+    const fullMessageText = extractMessageSearchText(msg);
 
     // Filter by pattern if specified (bounded input limits worst-case regex cost)
     if (patternRegex) {
@@ -384,26 +452,36 @@ export async function fetchSurroundingMessages(
 }
 
 /**
- * Fetches the latest N messages from a channel, integrating local MessageStore cache and REST API
+ * Fetches N messages from a channel (newest by default, backward via `beforeMessageId`, or forward via `afterMessageId`),
+ * integrating local MessageStore cache and REST API.
  */
 export async function fetchRecentMessages(
   channelId: string,
   limit: number = 50,
   beforeMessageId?: string,
   signal?: AbortSignal,
+  afterMessageId?: string,
 ): Promise<DiscordMessage[]> {
-  const loadedFromCache = beforeMessageId ? [] : getLoadedMessages(channelId);
+  const forward = Boolean(afterMessageId && !beforeMessageId);
+  const loadedFromCache = beforeMessageId || forward ? [] : getLoadedMessages(channelId);
   const targetLimit = clampLimit(limit, 50, 500);
   const fetchedMessages: DiscordMessage[] = [];
   let before = beforeMessageId;
+  let after = afterMessageId;
   while (fetchedMessages.length < targetLimit) {
-    const page = await fetchDiscordMessagesApi(channelId, {
+    const query: Record<string, string> = {
       limit: String(Math.min(100, targetLimit - fetchedMessages.length)),
-      ...(before ? { before } : {}),
-    }, 3, signal);
+    };
+    if (forward && after) query.after = after;
+    else if (before) query.before = before;
+    const page = await fetchDiscordMessagesApi(channelId, query, 3, signal);
     if (page.length === 0) break;
     fetchedMessages.push(...page);
-    before = page.reduce((oldest, message) => BigInt(message.id) < BigInt(oldest) ? message.id : oldest, page[0].id);
+    if (forward) {
+      after = page.reduce((newest, message) => BigInt(message.id) > BigInt(newest) ? message.id : newest, page[0].id);
+    } else {
+      before = page.reduce((oldest, message) => BigInt(message.id) < BigInt(oldest) ? message.id : oldest, page[0].id);
+    }
     if (page.length < 100) break;
   }
 
@@ -417,31 +495,122 @@ export async function fetchRecentMessages(
 
   const allMessages = Array.from(combinedMap.values());
   if (allMessages.length > 0) {
-    return allMessages
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .slice(-targetLimit);
+    const sorted = allMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    return forward ? sorted.slice(0, targetLimit) : sorted.slice(-targetLimit);
   }
 
   return Array.isArray(loadedFromCache) ? loadedFromCache.slice(-targetLimit) : [];
 }
 
+function detectImageMimeFromBytes(bytes: Uint8Array): string | null {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+    return 'image/gif';
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 /**
- * Encodes an image attachment URL to base64 for vision models
+ * Normalizes an image Blob into a clean JPEG/PNG data URL safe for local VLMs (e.g. oMLX / mlx-vlm).
+ * In browser environments, decodes via Image/canvas and caps dimensions at 1536px to avoid AVIF/octet-stream
+ * or oversized 4K PNG rejections; in headless/Node environments, inspects magic bytes to ensure a valid MIME type.
  */
-export async function fetchImageAsBase64(imageUrl: string): Promise<string> {
-  try {
-    const response = await fetch(imageUrl);
+export async function normalizeImageBlobToDataUrl(blob: Blob, maxDimension = 1536): Promise<string> {
+  if (blob.size > 10 * 1024 * 1024) {
+    throw new Error('Image exceeds the 10 MB inspection limit.');
+  }
+
+  // Browser / Electron canvas normalization: guarantees real JPEG/PNG encoding and bounded resolution.
+  if (typeof document !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && typeof Image !== 'undefined') {
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const dims = await new Promise<{ img: HTMLImageElement; width: number; height: number }>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
+        img.onerror = () => reject(new Error('Image decode failed.'));
+        img.src = objectUrl;
+      });
+      if (dims.width > 0 && dims.height > 0) {
+        const scale = Math.min(1, maxDimension / Math.max(dims.width, dims.height));
+        const width = Math.max(1, Math.round(dims.width * scale));
+        const height = Math.max(1, Math.round(dims.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(dims.img, 0, 0, width, height);
+          const keepPng = blob.type === 'image/png' && width <= 1024 && height <= 1024;
+          const outMime = keepPng ? 'image/png' : 'image/jpeg';
+          return canvas.toDataURL(outMime, keepPng ? undefined : 0.88);
+        }
+      }
+    } catch {
+      // Fall through to magic-byte normalization when canvas decode is unavailable.
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const detectedMime = detectImageMimeFromBytes(bytes);
+  const rawType = (blob.type || '').split(';')[0].trim().toLowerCase();
+  const validType = rawType.startsWith('image/') && rawType !== 'image/avif' ? rawType : null;
+  const mime = detectedMime || validType || 'image/png';
+  return `data:${mime};base64,${uint8ToBase64(bytes)}`;
+}
+
+/**
+ * Encodes an image attachment URL to a normalized base64 data URL for vision models.
+ * Retries cdn.discordapp.com failures against media.discordapp.net.
+ */
+export async function fetchImageAsBase64(imageUrl: string, signal?: AbortSignal): Promise<string> {
+  const fetchOnce = async (url: string): Promise<Blob> => {
+    const response = await fetch(url, { signal });
     if (!response.ok) throw new Error(`HTTP error ${response.status}`);
     const declaredSize = Number(response.headers.get('Content-Length') || 0);
     if (declaredSize > 10 * 1024 * 1024) throw new Error('Image exceeds the 10 MB inspection limit.');
     const blob = await response.blob();
     if (blob.size > 10 * 1024 * 1024) throw new Error('Image exceeds the 10 MB inspection limit.');
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    return blob;
+  };
+
+  try {
+    let blob: Blob;
+    try {
+      blob = await fetchOnce(imageUrl);
+    } catch (primaryErr) {
+      if (signal?.aborted) throw primaryErr;
+      const mediaUrl = imageUrl.replace(/^https:\/\/cdn\.discord(?:app)?\.com\//i, 'https://media.discordapp.net/');
+      if (mediaUrl === imageUrl) throw primaryErr;
+      blob = await fetchOnce(mediaUrl);
+    }
+    return await normalizeImageBlobToDataUrl(blob);
   } catch (err) {
     console.error('[VencordAI] Failed to fetch image as base64:', err);
     throw err;

@@ -17,7 +17,7 @@ import {
   filterMessagesLocally,
   scoreMessageRelevance,
 } from './messages';
-import { filterIndexQueryToScope, filterMessagesToScope, isChannelAllowedInScope } from './scope';
+import { filterIndexQueryToScope, filterMessagesToScope, getPermittedChannelIdsForScope, isChannelAllowedInScope } from './scope';
 import { getChannel } from './stores';
 import { retrievalEngine } from '../storage/retrieval';
 import { MESSAGE_FLAGS, StoredMessageRecord } from '../storage/index/types';
@@ -46,6 +46,7 @@ export interface MessageSearchData {
   messages: DiscordMessage[];
   variants: string[];
   fallbackUsed?: 'local_index' | 'local_scan' | 'none';
+  embeddedContext?: Record<string, DiscordMessage[]>;
 }
 
 function hitMessages(groups: DiscordMessage[][]): DiscordMessage[] {
@@ -53,6 +54,16 @@ function hitMessages(groups: DiscordMessage[][]): DiscordMessage[] {
     const hit = group.find((message) => message.hit) || group[0];
     return hit ? [hit] : [];
   });
+}
+
+function collectEmbeddedContext(groups: DiscordMessage[][], target: Record<string, DiscordMessage[]>): void {
+  for (const group of groups) {
+    if (!Array.isArray(group) || group.length <= 1) continue;
+    const hit = group.find((message) => message.hit) || group[0];
+    if (hit?.id && !target[hit.id]) {
+      target[hit.id] = group;
+    }
+  }
 }
 
 /** Messages rebuilt from a local-index record: no embeds, mentions or attachment URLs. */
@@ -111,8 +122,17 @@ export async function runMessageSearch(
 ): Promise<ToolExecutionResult<MessageSearchData>> {
   // 1. Fail-Closed Scope Pre-Check
   const isGuildWideAllowed = Boolean(scope.isGuild && (scope.scopeMode === 'server' || scope.scopeMode === undefined));
-  const guildWide = Boolean(request.guildWide && isGuildWideAllowed);
-  const channelId = guildWide ? undefined : (request.channelId || scope.channelId);
+  const isCustomMultiChannel = Boolean(scope.isGuild && scope.scopeMode === 'custom' && !request.channelId);
+  const permittedCustomChannels = isCustomMultiChannel ? getPermittedChannelIdsForScope(scope) : [];
+  const guildWide = Boolean(
+    (request.guildWide && isGuildWideAllowed) ||
+    (isCustomMultiChannel && permittedCustomChannels.length > 4),
+  );
+  const channelId = guildWide
+    ? undefined
+    : isCustomMultiChannel && permittedCustomChannels.length > 1
+      ? undefined
+      : (request.channelId || scope.channelId);
 
   if (channelId && !isChannelAllowedInScope(channelId, scope)) {
     return {
@@ -154,55 +174,95 @@ export async function runMessageSearch(
     ? [query, ...generateRelaxedQueries(query)].slice(0, 3)
     : [];
   const candidates: DiscordMessage[] = [];
+  const embeddedContext: Record<string, DiscordMessage[]> = {};
   let fallbackUsed: 'local_index' | 'local_scan' | 'none' = 'none';
   let remoteSearchFailed = false;
   const offset = request.offset || 0;
   // The offset cursor belongs to the primary remote variant; other sources do not share it.
   let primary: { hits: DiscordMessage[]; totalResults: number } | undefined;
 
-  // 3. Remote Discord Search with Throttling & 429 Backoff
-  for (const variant of variants.length ? variants : [undefined]) {
-    if (
-      !variant &&
-      !request.authorId &&
-      !request.has &&
-      !request.date &&
-      !request.afterDate &&
-      !request.beforeDate &&
-      request.pinned === undefined &&
-      !request.mentions
-    ) {
-      break;
-    }
+  const hasRemoteSearchCriteria = (variant?: string) => Boolean(
+    variant ||
+    request.authorId ||
+    request.has ||
+    request.date ||
+    request.afterDate ||
+    request.beforeDate ||
+    request.pinned !== undefined ||
+    request.mentions,
+  );
 
-    try {
-      const response = await searchDiscordMessages({
-        query: variant,
-        pattern,
-        channelId,
-        guildId: scope.isGuild ? scope.guildId : getChannel(channelId || scope.channelId)?.guild_id,
-        guildWide,
-        authorId: request.authorId,
-        has: request.has,
-        duringDate: request.date,
-        afterDate: request.afterDate,
-        beforeDate: request.beforeDate,
-        sortBy: request.sortBy,
-        sortOrder: request.sortOrder,
-        offset: request.offset,
-        pinned: request.pinned,
-        mentions: request.mentions,
-      }, 3, signal);
-      const hits = hitMessages(response.messages);
-      if (variant === variants[0]) primary = { hits, totalResults: response.totalResults };
-      candidates.push(...hits);
-      if (offset > 0) break;
-    } catch (remoteErr) {
-      // A cancelled run must stop, not fall back to local sources.
-      if (signal?.aborted) throw remoteErr;
-      console.warn('[VencordAI] Remote Discord search failed, falling back to local index:', remoteErr);
-      remoteSearchFailed = true;
-      break;
+  // 3. Remote Discord Search with Throttling & 429 Backoff
+  if (isCustomMultiChannel && permittedCustomChannels.length > 1 && permittedCustomChannels.length <= 4 && offset === 0) {
+    for (const customChId of permittedCustomChannels) {
+      const variant = variants[0];
+      if (!hasRemoteSearchCriteria(variant)) break;
+      try {
+        const response = await searchDiscordMessages({
+          query: variant,
+          pattern,
+          channelId: customChId,
+          guildId: scope.guildId,
+          guildWide: false,
+          authorId: request.authorId,
+          has: request.has,
+          duringDate: request.date,
+          afterDate: request.afterDate,
+          beforeDate: request.beforeDate,
+          sortBy: request.sortBy,
+          sortOrder: request.sortOrder,
+          offset: 0,
+          pinned: request.pinned,
+          mentions: request.mentions,
+        }, 3, signal);
+        collectEmbeddedContext(response.messages, embeddedContext);
+        candidates.push(...hitMessages(response.messages));
+        if (candidates.length >= request.limit * 2) break;
+      } catch (remoteErr) {
+        if (signal?.aborted) throw remoteErr;
+        console.warn('[VencordAI] Custom-scope Discord search failed, falling back:', remoteErr);
+        remoteSearchFailed = true;
+        break;
+      }
+    }
+  } else {
+    for (const variant of variants.length ? variants : [undefined]) {
+      if (!hasRemoteSearchCriteria(variant)) {
+        break;
+      }
+
+      try {
+        const response = await searchDiscordMessages({
+          query: variant,
+          pattern,
+          channelId,
+          guildId: scope.isGuild ? scope.guildId : getChannel(channelId || scope.channelId)?.guild_id,
+          guildWide,
+          authorId: request.authorId,
+          has: request.has,
+          duringDate: request.date,
+          afterDate: request.afterDate,
+          beforeDate: request.beforeDate,
+          sortBy: request.sortBy,
+          sortOrder: request.sortOrder,
+          offset: request.offset,
+          pinned: request.pinned,
+          mentions: request.mentions,
+        }, 3, signal);
+        collectEmbeddedContext(response.messages, embeddedContext);
+        const hits = hitMessages(response.messages);
+        if (variant === variants[0]) primary = { hits, totalResults: response.totalResults };
+        candidates.push(...hits);
+        if (offset > 0) break;
+        // Stop relaxed variants once the primary query returned plenty of permitted hits.
+        if (variant === variants[0] && hits.length >= Math.max(request.limit, 5)) break;
+      } catch (remoteErr) {
+        // A cancelled run must stop, not fall back to local sources.
+        if (signal?.aborted) throw remoteErr;
+        console.warn('[VencordAI] Remote Discord search failed, falling back to local index:', remoteErr);
+        remoteSearchFailed = true;
+        break;
+      }
     }
   }
 
@@ -257,29 +317,44 @@ export async function runMessageSearch(
 
   // 5. Local Channel MessageStore Recent Scan Fallback
   let localNextBeforeMessageId: string | undefined;
-  if (offset === 0 && channelId && candidates.length < request.limit) {
-    try {
-      const recent = await fetchRecentMessages(channelId, request.scanLimit, request.beforeMessageId, signal);
-      if (recent.length === request.scanLimit) {
-        localNextBeforeMessageId = recent.reduce((oldest, message) =>
-          new Date(message.timestamp).getTime() < new Date(oldest.timestamp).getTime() ? message : oldest,
-        ).id;
+  const scanChannelIds = channelId
+    ? [channelId]
+    : isCustomMultiChannel
+      ? permittedCustomChannels.slice(0, 4)
+      : [];
+  if (offset === 0 && scanChannelIds.length > 0 && candidates.length < request.limit) {
+    const perChannelScan = scanChannelIds.length === 1
+      ? request.scanLimit
+      : Math.max(25, Math.floor(request.scanLimit / scanChannelIds.length));
+    for (const scanChId of scanChannelIds) {
+      try {
+        const recent = await fetchRecentMessages(
+          scanChId,
+          perChannelScan,
+          scanChannelIds.length === 1 ? request.beforeMessageId : undefined,
+          signal,
+        );
+        if (scanChannelIds.length === 1 && recent.length === request.scanLimit) {
+          localNextBeforeMessageId = recent.reduce((oldest, message) =>
+            new Date(message.timestamp).getTime() < new Date(oldest.timestamp).getTime() ? message : oldest,
+          ).id;
+        }
+        const filteredRecent = filterMessagesLocally(recent, {
+          query,
+          pattern,
+          authorId: request.authorId,
+          has: request.has,
+          duringDate: request.date,
+          afterDate: request.afterDate,
+          beforeDate: request.beforeDate,
+          pinned: request.pinned,
+          mentions: request.mentions,
+        });
+        candidates.push(...filteredRecent);
+        if (fallbackUsed === 'none') fallbackUsed = 'local_scan';
+      } catch (scanErr) {
+        if (signal?.aborted) throw scanErr;
       }
-      const filteredRecent = filterMessagesLocally(recent, {
-        query,
-        pattern,
-        authorId: request.authorId,
-        has: request.has,
-        duringDate: request.date,
-        afterDate: request.afterDate,
-        beforeDate: request.beforeDate,
-        pinned: request.pinned,
-        mentions: request.mentions,
-      });
-      candidates.push(...filteredRecent);
-      if (fallbackUsed === 'none') fallbackUsed = 'local_scan';
-    } catch (scanErr) {
-      if (signal?.aborted) throw scanErr;
     }
   }
 
@@ -294,8 +369,9 @@ export async function runMessageSearch(
     pinned: request.pinned,
     mentions: request.mentions,
   }), scope);
+  const sortByTimestamp = request.sortBy === 'timestamp' || (!query && Boolean(request.sortOrder));
   const ranked = scoped.sort((a, b) => {
-    if (request.sortBy === 'timestamp') {
+    if (sortByTimestamp) {
       const timeDifference = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
       return request.sortOrder === 'asc' ? timeDifference : -timeDifference;
     }
@@ -315,15 +391,42 @@ export async function runMessageSearch(
     messages = ranked.filter((message) => pageIds.has(message.id));
   }
 
+  const activeFilters = [
+    query ? `query=${JSON.stringify(variants.filter(Boolean))}` : '',
+    pattern ? `pattern=${JSON.stringify(pattern)}` : '',
+    request.authorId ? `author_id=${request.authorId}` : '',
+    request.mentions ? `mentions=${request.mentions}` : '',
+    request.has ? `has=${request.has}` : '',
+    request.date ? `date=${request.date}` : '',
+    request.afterDate ? `after=${request.afterDate}` : '',
+    request.beforeDate ? `before=${request.beforeDate}` : '',
+    request.pinned !== undefined ? `pinned=${request.pinned}` : '',
+  ].filter(Boolean);
+  const emptySummary = activeFilters.length
+    ? `No permitted messages matched (${activeFilters.join(', ')}). Try broader 1-word keywords, remove optional filters, increase scan_limit, or check list_threads/list_channel_pins.`
+    : 'No permitted messages matched the bounded search. Try specifying a keyword, pattern, author, date, or media filter.';
+
   return {
     ok: true,
     code: messages.length ? 'search_results' : 'empty_results',
     summary: messages.length
       ? `Found ${messages.length} permitted message${messages.length === 1 ? '' : 's'} across ${Math.max(variants.length, 1)} search variant(s)${fallbackUsed !== 'none' ? ` via ${fallbackUsed}` : ''}.`
-      : 'No permitted messages matched the bounded search.',
+      : emptySummary,
     untrustedData: true,
-    data: { messages, variants: variants.filter(Boolean) as string[], fallbackUsed },
-    scope: { channelIds: channelId ? [channelId] : scope.accessibleGuildChannels?.map((c) => c.id) || [], guildId: scope.guildId },
+    data: {
+      messages,
+      variants: variants.filter(Boolean) as string[],
+      fallbackUsed,
+      ...(Object.keys(embeddedContext).length ? { embeddedContext } : {}),
+    },
+    scope: {
+      channelIds: channelId
+        ? [channelId]
+        : isCustomMultiChannel
+          ? permittedCustomChannels
+          : scope.accessibleGuildChannels?.map((c) => c.id) || [],
+      guildId: scope.guildId,
+    },
     pagination: { nextOffset, nextBeforeMessageId: localNextBeforeMessageId },
     truncation: { truncated: ranked.length > messages.length || Boolean(localNextBeforeMessageId), returned: messages.length, available: ranked.length },
   };
