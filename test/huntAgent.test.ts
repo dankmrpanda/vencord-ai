@@ -9,7 +9,7 @@ import { modelLifecycle } from '../llm/modelLifecycle';
 import { ChatService } from '../services/chatService';
 import { getSessionById } from '../storage/chatHistory';
 import { buildConversationContext, compactToolResult, estimateTokens } from '../llm/compression';
-import { AGENT_TOOLS, buildSystemPrompt } from '../llm/prompts';
+import { buildSystemPrompt } from '../llm/prompts';
 import {
   consumeChatCompletionStream,
   getProviderCapabilities,
@@ -18,7 +18,7 @@ import {
   testProviderConnection,
 } from '../llm/provider';
 import { DEFAULT_AGENT_RUN_BUDGET } from '../llm/runBudget';
-import { availableToolDefinitions, TOOL_REGISTRY } from '../llm/toolRegistry';
+import { AGENT_TOOLS, availableToolDefinitions, executeRegisteredTool, TOOL_REGISTRY } from '../llm/toolRegistry';
 import { DEFAULT_SETTINGS } from '../settings';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
@@ -348,6 +348,70 @@ async function llm15NumericLimitsClamped(): Promise<void> {
   });
   const bad = limits.filter((limit) => !/^[1-9]\d*$/.test(limit));
   assert(bad.length === 0, `LLM-15 non-positive or fractional limits reached Discord: ${JSON.stringify(limits)}`);
+}
+
+/** REG-01: explicit 0 args, preserved channel-mismatch summary, voice scope hint, and CDN-only image prefetch. */
+async function reg01RegistryDispatchAndImagePrefetch(): Promise<void> {
+  const context: ToolExecutionContext = {
+    scope: {
+      channelId: ACTIVE_DM,
+      channelName: '@alice',
+      channelType: ChannelType.DM,
+      isDM: true,
+      isGroupDM: false,
+      isGuild: true,
+      guildId: '500000000000000005',
+      scopeMode: 'channel',
+      accessibleGuildChannels: [{ id: ACTIVE_DM, name: 'general' }, { id: '200000000000000002', name: 'other' }],
+    } as CurrentScopeContext,
+    settings: settings({ enableVision: true }),
+    addCitation: (entry: DiscordMessage) => ({ messageId: entry.id } as CitationItem),
+    analyzeImage: async () => 'ok',
+  };
+
+  // 1. reply_depth: 0 must not fall back to 3 (no extra reply fetch)
+  let detailGets = 0;
+  const targetWithRef = {
+    ...message('300000000000000051', 'hello'),
+    message_reference: { channel_id: ACTIVE_DM, message_id: '300000000000000050' },
+  };
+  const detailsTool = TOOL_REGISTRY.get('get_message_details')!;
+  const zeroDepth = await withRestGet(() => { detailGets++; return [targetWithRef]; },
+    () => executeRegisteredTool(detailsTool, detailsTool.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000051', reply_depth: 0 }), context));
+  assert(zeroDepth.ok && detailGets === 1 && (zeroDepth.data as any)?.replyChain?.length === 0,
+    `REG-01 reply_depth: 0 fell back to default (gets=${detailGets})`);
+
+  // 2. get_message_details channel-mismatch spoofing summary must not be clobbered by channel-mode scope hint
+  const spoofed = await withRestGet(() => [{ ...message('300000000000000052', 'spoof'), channel_id: '200000000000000002' }],
+    () => executeRegisteredTool(detailsTool, detailsTool.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000052' }), context));
+  assert(!spoofed.ok && /does not belong to the requested channel/i.test(spoofed.summary),
+    `REG-01 channel-mismatch summary was clobbered: ${spoofed.summary}`);
+
+  // 3. transcribe_voice_message out-of-scope receives channel-only hint
+  const voiceTool = TOOL_REGISTRY.get('transcribe_voice_message')!;
+  const voiceDenied = await executeRegisteredTool(voiceTool, voiceTool.parseArgs({ channel_id: '200000000000000002', message_id: '300000000000000053' }), context);
+  assert(!voiceDenied.ok && voiceDenied.code === 'scope_denied' && /limited to this channel only/i.test(voiceDenied.summary),
+    `REG-01 voice scope_denied lacked channel-mode hint: ${voiceDenied.summary}`);
+
+  // 4. Message launch on external non-Discord embed image must NOT schedule failing inspect_image followup
+  const externalEmbedMsg = {
+    ...message('300000000000000054', 'external link'),
+    embeds: [{ image: { url: 'https://example.com/photo.png' } }],
+  };
+  const run = await quiet(() => withRestGet(() => [externalEmbedMsg],
+    () => withScriptedLLM(() => ({ content: 'External image not inspected.' }), async (requests) => {
+      const result = await new AIAssistantAgent(settings({ enableVision: true })).run(
+        'what is this?',
+        [],
+        undefined,
+        undefined,
+        { mode: 'message', targetChannelId: ACTIVE_DM, targetMessageId: externalEmbedMsg.id, initialPrompt: 'what is this?' },
+        dmScope(),
+      );
+      return { result, requests };
+    })));
+  assert(!run.result.steps.some((s) => s.toolName === 'inspect_image'),
+    `REG-01 external non-Discord embed image triggered inspect_image: ${JSON.stringify(run.result.steps.map((s) => s.toolName))}`);
 }
 
 /**
@@ -1314,6 +1378,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['LLM-12 loop-turn failure skips finalization', llm12LoopTurnFailureSkipsFinalization],
   ['REV-LLM-03 persistent turn-2 provider error surfaces', revLlm03PersistentTurnTwoErrorSurfaces],
   ['LLM-13 vision follows the Vision setting', llm13VisionFollowsTheSetting],
+  ['REG-01 registry dispatch, zero intArg, and CDN image prefetch', reg01RegistryDispatchAndImagePrefetch],
 ];
 
 export async function runHuntAgentTests(): Promise<void> {

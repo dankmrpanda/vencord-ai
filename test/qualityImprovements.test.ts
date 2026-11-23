@@ -14,9 +14,9 @@ import { resolvePromptMentions, searchMentionableUsers } from '../discord/partic
 import { runMessageSearch } from '../discord/searchPipeline';
 import { AIAssistantAgent, cleanFinalAnswerText, createStreamTagFilter } from '../llm/agent';
 import { compactToolResult, estimateMessageTokens } from '../llm/compression';
-import { AGENT_TOOLS, buildSystemPrompt } from '../llm/prompts';
+import { buildSystemPrompt } from '../llm/prompts';
 import { getProviderCapabilities, normalizeMessagesForModel } from '../llm/provider';
-import { TOOL_REGISTRY } from '../llm/toolRegistry';
+import { AGENT_TOOLS, TOOL_REGISTRY } from '../llm/toolRegistry';
 import { parseToolArguments, ToolArgumentError } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
 import { assert } from './assert';

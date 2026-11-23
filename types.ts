@@ -197,13 +197,15 @@ export interface ToolExecutionResult<TData = unknown> {
   truncation?: { truncated: boolean; returned: number; available?: number };
 }
 
+export type ToolCompactionPolicy = 'tail' | 'oldest' | 'edges';
+
 export interface RegisteredTool<TArgs extends Record<string, unknown>, TData = unknown> {
   definition: ToolDefinition;
   parseArgs: (value: unknown) => TArgs;
   isAvailable: (context: CurrentScopeContext, settings: PluginSettings) => boolean;
   timeoutMs: number;
   readOnly: true;
-  kind: 'local' | 'discord';
+  compactionPolicy?: ToolCompactionPolicy;
   execute: (args: TArgs, context: ToolExecutionContext) => Promise<ToolExecutionResult<TData>>;
 }
 

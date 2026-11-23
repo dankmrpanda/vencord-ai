@@ -19,6 +19,7 @@ import {
   LLMMessage,
   LLMToolCall,
   PluginSettings,
+  ToolCompactionPolicy,
   ToolExecutionContext,
   ToolExecutionResult,
   UserImageAttachment,
@@ -27,9 +28,16 @@ import { buildConversationContext, compactToolResult, estimateMessageTokens, est
 import { buildSystemPrompt } from './prompts';
 import { isLocalPreset, OpenAICompatibleClient } from './provider';
 import { AgentBudgetTracker, DEFAULT_AGENT_RUN_BUDGET } from './runBudget';
-import { availableToolDefinitions, TOOL_REGISTRY } from './toolRegistry';
+import {
+  availableToolDefinitions,
+  executeRegisteredTool,
+  getToolCompactionPolicy,
+  hasInspectableDiscordImage,
+  parseRegisteredToolArguments,
+  TOOL_REGISTRY,
+} from './toolRegistry';
 import { isVoiceMessage } from '../discord/voiceMessages';
-import { parseToolArguments, ToolArgumentError } from './validation';
+import { ToolArgumentError } from './validation';
 
 export interface AgentRunCallbacks {
   onStepAdded?: (step: AgentStep) => void;
@@ -175,9 +183,13 @@ function sanitizeStringLeaf(_key: string, value: unknown): unknown {
 }
 
 /** Serializes the model-facing view of a tool result; UI-only fields such as citations are left out. */
-function toolMessageContent(result: ToolExecutionResult, maxChars = 12_000): string {
+function toolMessageContent(
+  result: ToolExecutionResult,
+  maxChars = 12_000,
+  compactionPolicy?: ToolCompactionPolicy,
+): string {
   const { citations: _citations, ...modelView } = result;
-  return compactToolResult(JSON.stringify(modelView, sanitizeStringLeaf), maxChars);
+  return compactToolResult(JSON.stringify(modelView, sanitizeStringLeaf), maxChars, compactionPolicy);
 }
 
 /**
@@ -318,22 +330,6 @@ function extractCitedMessageIds(text: string): string[] {
     }
   }
   return ids;
-}
-
-function hasInspectableImage(message: any): boolean {
-  if (!message) return false;
-  const imgExt = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#].*)?$/i;
-  if (Array.isArray(message.attachments)) {
-    for (const a of message.attachments) {
-      if (a?.content_type?.startsWith('image/') || imgExt.test(a?.filename || a?.url || '')) return true;
-    }
-  }
-  if (Array.isArray(message.embeds)) {
-    for (const e of message.embeds) {
-      if (e?.image_url || e?.image?.url || e?.thumbnail?.url) return true;
-    }
-  }
-  return false;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout?: () => void): Promise<T> {
@@ -532,7 +528,7 @@ export class AIAssistantAgent {
           if (!tool || !tool.isAvailable(toolContext.scope, toolContext.settings)) {
             throw new ToolArgumentError(`Unknown or unavailable tool "${call.function.name}".`);
           }
-          const args = parseToolArguments(tool.definition, call.function.arguments);
+          const args = parseRegisteredToolArguments(tool, call.function.arguments);
           toolStep.toolArgs = args;
           if (!budget.canToolCall()) {
             result = { ok: false, code: 'tool_budget_exhausted', summary: 'The tool-call budget was exhausted.' };
@@ -544,9 +540,7 @@ export class AIAssistantAgent {
             };
           } else {
             executedArgs = args;
-            result = await withTimeout(tool.execute(args, callContext), tool.timeoutMs, () => callController.abort());
-            // Local tools also return Discord-authored names and topics.
-            result.untrustedData = true;
+            result = await withTimeout(executeRegisteredTool(tool, args, callContext), tool.timeoutMs, () => callController.abort());
             if (result.truncation?.truncated) budget.truncations++;
             budget.returnedRecords += countRecords(result);
           }
@@ -570,7 +564,7 @@ export class AIAssistantAgent {
           role: 'tool' as const,
           tool_call_id: call.id,
           name: call.function.name,
-          content: toolMessageContent(result, toolCompactMaxChars),
+          content: toolMessageContent(result, toolCompactMaxChars, getToolCompactionPolicy(call.function.name)),
         };
       });
       const settled = await Promise.allSettled(executions);
@@ -634,7 +628,7 @@ export class AIAssistantAgent {
           function: { name: 'transcribe_voice_message', arguments: JSON.stringify(targetArgs) },
         });
       }
-      if (hasInspectableImage(targetMsg) && tools.some((tool) => tool.function.name === 'inspect_image')) {
+      if (hasInspectableDiscordImage(targetMsg) && tools.some((tool) => tool.function.name === 'inspect_image')) {
         followupCalls.push({
           id: 'launch_image_inspect',
           type: 'function',

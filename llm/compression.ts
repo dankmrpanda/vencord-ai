@@ -5,7 +5,7 @@
  */
 
 import { sanitizeUntrustedContent } from '../discord/guardrails';
-import { AssistantChatMessage, LLMMessage, PluginSettings, UserImageAttachment } from '../types';
+import { AssistantChatMessage, LLMMessage, PluginSettings, ToolCompactionPolicy, UserImageAttachment } from '../types';
 import { ExpandedConversationalWindow } from './reranker';
 
 /**
@@ -69,7 +69,11 @@ export function summarizeHistory(history: AssistantChatMessage[]): string {
 /**
  * Compacts and safely serializes JSON tool outputs to fit within character bounds.
  */
-export function compactToolResult(content: string, maxChars = 12_000): string {
+export function compactToolResult(
+  content: string,
+  maxChars = 12_000,
+  declaredPolicy?: ToolCompactionPolicy,
+): string {
   if (content.length <= maxChars) return content;
 
   try {
@@ -93,14 +97,18 @@ export function compactToolResult(content: string, maxChars = 12_000): string {
     // (chronological) recent-messages or pins list, the records nearest the anchor of a
     // surrounding-context window, and the head of anything else (ranked or explicitly sorted
     // search results keep the order the model asked for).
-    const records = parsed?.data?.messages || parsed?.data?.hits || parsed?.data?.threads;
+    const records = parsed?.data?.messages || parsed?.data?.threads || parsed?.data?.channels;
     const time = (record: any) => Date.parse(record?.timestamp ?? '');
-    const chronological = parsed?.code === 'recent_messages' || parsed?.code === 'channel_pins';
-    const policy = parsed?.code === 'surrounding_messages'
+    const inferredPolicy: ToolCompactionPolicy = parsed?.code === 'surrounding_messages'
       ? 'edges'
-      : chronological && Array.isArray(records) && records.length > 1 && time(records[0]) < time(records[records.length - 1])
+      : (parsed?.code === 'recent_messages' || parsed?.code === 'channel_pins')
         ? 'oldest'
         : 'tail';
+    const basePolicy = declaredPolicy ?? inferredPolicy;
+    const policy: ToolCompactionPolicy = basePolicy === 'oldest'
+      && (!Array.isArray(records) || records.length <= 1 || !(time(records[0]) < time(records[records.length - 1])))
+      ? 'tail'
+      : basePolicy;
     const dropOne = (list: any[]) => {
       if (policy === 'oldest' || (policy === 'edges' && list.length % 2 === 0)) list.shift();
       else list.pop();
@@ -109,7 +117,7 @@ export function compactToolResult(content: string, maxChars = 12_000): string {
 
     const safe = compactNode(parsed);
     safe.truncation = { ...(safe.truncation || {}), truncated: true };
-    const messagesArray = safe?.data?.messages || safe?.data?.hits || safe?.data?.threads;
+    const messagesArray = safe?.data?.messages || safe?.data?.threads || safe?.data?.channels;
     if (Array.isArray(messagesArray)) safe.truncation.returned = messagesArray.length;
     let serialized = JSON.stringify(safe);
 
