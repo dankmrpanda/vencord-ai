@@ -48,6 +48,9 @@ export interface DiscordEmbed {
   url?: string;
   timestamp?: string;
   color?: number;
+  author?: { name?: string; url?: string };
+  footer?: { text?: string };
+  fields?: Array<{ name?: string; value?: string; inline?: boolean }>;
   image?: { url: string; proxy_url?: string; width?: number; height?: number };
   thumbnail?: { url: string; proxy_url?: string; width?: number; height?: number };
 }
@@ -69,6 +72,7 @@ export interface DiscordMessage {
   type?: number;
   message_reference?: { channel_id?: string; message_id?: string; guild_id?: string };
   referenced_message?: DiscordMessage | null;
+  message_snapshots?: Array<{ message?: Partial<DiscordMessage> }>;
   reactions?: Array<{ count: number; me?: boolean; emoji: { id?: string | null; name?: string | null } }>;
   poll?: { question?: { text?: string }; answers?: Array<{ answer_id: number; poll_media?: { text?: string } }>; results?: unknown };
   thread?: DiscordChannel;
@@ -190,7 +194,7 @@ export interface ToolExecutionResult<TData = unknown> {
   data?: TData;
   citations?: CitationItem[];
   scope?: { channelIds: string[]; guildId?: string };
-  pagination?: { nextOffset?: number; nextBeforeMessageId?: string; nextCursor?: string };
+  pagination?: { nextOffset?: number; nextBeforeMessageId?: string; nextAfterMessageId?: string; nextCursor?: string };
   truncation?: { truncated: boolean; returned: number; available?: number };
 }
 
@@ -250,10 +254,16 @@ export interface AgentStep {
   timestamp: number;
 }
 
+export interface UserImageAttachment {
+  name: string;
+  dataUrl: string;
+}
+
 export interface AssistantChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  images?: UserImageAttachment[];
   steps?: AgentStep[];
   citations?: CitationItem[];
   timestamp: number;
@@ -275,6 +285,17 @@ export interface CurrentScopeContext {
   channelId: string;
   channelName: string;
   channelType: ChannelType;
+  channelTopic?: string;
+  parentChannelId?: string;
+  parentChannelName?: string;
+  threadMetadata?: {
+    archived?: boolean;
+    locked?: boolean;
+    messageCount?: number;
+    appliedTagNames?: string[];
+  };
+  forumAvailableTags?: string[];
+  groupDMRecipients?: Array<{ id: string; username: string; globalName?: string | null }>;
   isDM: boolean;
   isGroupDM: boolean;
   isGuild: boolean;

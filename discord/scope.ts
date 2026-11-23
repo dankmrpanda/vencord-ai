@@ -213,12 +213,78 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
     channelName = channel.name || 'Group DM';
   }
 
+  let groupDMRecipients: Array<{ id: string; username: string; globalName?: string | null }> | undefined;
+  if (isGroupDM) {
+    const recipientMap = new Map<string, { id: string; username: string; globalName?: string | null }>();
+    if (Array.isArray(channel.rawRecipients)) {
+      for (const r of channel.rawRecipients) {
+        if (r?.id) {
+          recipientMap.set(r.id, {
+            id: r.id,
+            username: r.username || `user_${String(r.id).slice(-4)}`,
+            globalName: r.globalName ?? r.global_name ?? null,
+          });
+        }
+      }
+    }
+    if (Array.isArray(channel.recipients)) {
+      for (const rId of channel.recipients) {
+        if (recipientMap.has(rId)) continue;
+        const u = userStore?.getUser?.(rId);
+        recipientMap.set(rId, {
+          id: rId,
+          username: u?.username || `user_${String(rId).slice(-4)}`,
+          globalName: u?.globalName ?? (u as any)?.global_name ?? null,
+        });
+      }
+    }
+    if (recipientMap.size > 0) {
+      groupDMRecipients = Array.from(recipientMap.values()).slice(0, 20);
+    }
+  }
+
+  const parentChannelId = channel.parent_id || undefined;
+  const parentChannel = parentChannelId ? getChannel(parentChannelId) : null;
+  const parentChannelName = parentChannel?.name || undefined;
+  const isThread =
+    Boolean(channel.isThread?.()) ||
+    channel.type === ChannelType.PUBLIC_THREAD ||
+    channel.type === ChannelType.PRIVATE_THREAD ||
+    channel.type === ChannelType.ANNOUNCEMENT_THREAD;
+
+  let threadMetadata: CurrentScopeContext['threadMetadata'];
+  if (isThread) {
+    const tagById = new Map<string, string>();
+    for (const tag of parentChannel?.available_tags || []) {
+      if (tag?.id && tag?.name) tagById.set(tag.id, tag.name);
+    }
+    const appliedTagNames = (channel.applied_tags || [])
+      .map((tagId) => tagById.get(tagId))
+      .filter((name): name is string => Boolean(name));
+    threadMetadata = {
+      archived: channel.thread_metadata?.archived,
+      locked: channel.thread_metadata?.locked,
+      messageCount: channel.message_count ?? channel.total_message_sent,
+      ...(appliedTagNames.length ? { appliedTagNames } : {}),
+    };
+  }
+
+  const forumAvailableTags = Array.isArray(channel.available_tags) && channel.available_tags.length > 0
+    ? channel.available_tags.map((t) => t?.name).filter((name): name is string => Boolean(name))
+    : undefined;
+
   const currentUser = getCurrentUser() ?? undefined;
 
   return {
     channelId,
     channelName,
     channelType: channel.type,
+    ...(channel.topic ? { channelTopic: channel.topic } : {}),
+    ...(parentChannelId ? { parentChannelId } : {}),
+    ...(parentChannelName ? { parentChannelName } : {}),
+    ...(threadMetadata ? { threadMetadata } : {}),
+    ...(forumAvailableTags?.length ? { forumAvailableTags } : {}),
+    ...(groupDMRecipients ? { groupDMRecipients } : {}),
     isDM,
     isGroupDM,
     isGuild,

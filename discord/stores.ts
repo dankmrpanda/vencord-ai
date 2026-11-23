@@ -331,8 +331,22 @@ export function searchMentionableUsers(
     .slice(0, 8);
 }
 
+const BARE_NAME_STOPWORDS = new Set([
+  'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was',
+  'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new',
+  'now', 'old', 'see', 'two', 'way', 'who', 'did', 'let', 'put', 'say', 'she', 'too',
+  'use', 'chat', 'help', 'info', 'user', 'bot', 'mod', 'admin', 'here', 'this', 'that',
+  'what', 'when', 'with', 'from', 'have', 'they', 'will', 'said', 'about', 'just',
+  'last', 'next', 'find', 'show', 'list', 'link', 'file', 'note', 'post', 'poll',
+  'code', 'pin', 'pins', 'today', 'week', 'month', 'year',
+]);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * Resolves user mentions (@username or <@id>) found in a prompt string
+ * Resolves user mentions (@username, <@id>, or unambiguous bare in-scope names) found in a prompt string
  */
 export function resolvePromptMentions(
   prompt: string,
@@ -373,6 +387,48 @@ export function resolvePromptMentions(
     if (exactMatch && !seenIds.has(exactMatch.id)) {
       seenIds.add(exactMatch.id);
       mentionedUsers.push(exactMatch);
+    }
+  }
+
+  // 3. Match bare (un-@-prefixed) participant names strictly within active scope when unambiguous
+  const candidateMap = new Map<string, DiscordUser>();
+  for (const u of searchMentionableUsers('', scopeOrChannelId, guildId)) {
+    if (u?.id) candidateMap.set(u.id, u);
+  }
+  if (scopeOrChannelId && typeof scopeOrChannelId === 'object') {
+    if (scopeOrChannelId.otherUser?.id) candidateMap.set(scopeOrChannelId.otherUser.id, scopeOrChannelId.otherUser);
+    for (const rec of scopeOrChannelId.groupDMRecipients || []) {
+      if (rec?.id && !candidateMap.has(rec.id)) {
+        candidateMap.set(rec.id, { id: rec.id, username: rec.username, globalName: rec.globalName });
+      }
+    }
+  }
+
+  if (candidateMap.size > 0) {
+    const nameToIds = new Map<string, Set<string>>();
+    const nameToUser = new Map<string, DiscordUser>();
+    const registerLabel = (label: string | null | undefined, user: DiscordUser) => {
+      const normalized = (label || '').trim().toLowerCase();
+      if (normalized.length < 3 || BARE_NAME_STOPWORDS.has(normalized)) return;
+      if (!nameToIds.has(normalized)) nameToIds.set(normalized, new Set());
+      nameToIds.get(normalized)!.add(user.id);
+      nameToUser.set(normalized, user);
+    };
+
+    for (const user of candidateMap.values()) {
+      registerLabel(user.username, user);
+      registerLabel(user.globalName, user);
+    }
+
+    for (const [label, ids] of nameToIds.entries()) {
+      if (ids.size !== 1) continue;
+      const user = nameToUser.get(label)!;
+      if (seenIds.has(user.id)) continue;
+      const wholeWord = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(label)}(?![\\p{L}\\p{N}_])`, 'iu');
+      if (wholeWord.test(prompt)) {
+        seenIds.add(user.id);
+        mentionedUsers.push(user);
+      }
     }
   }
 
