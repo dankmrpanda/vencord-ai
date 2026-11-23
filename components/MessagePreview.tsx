@@ -5,6 +5,8 @@
  */
 
 import { React } from '@webpack/common';
+import { stripInvisibleAndBidi } from '../discord/guardrails';
+import { IMAGE_EXT_RE } from '../discord/media';
 import { jumpToMessage } from '../discord/stores';
 import { CitationItem } from '../types';
 import { clickableProps } from './a11y';
@@ -13,8 +15,6 @@ import { FileIcon, ImageIcon, JumpIcon } from './icons';
 interface MessagePreviewProps {
   citation: CitationItem;
 }
-
-const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
 
 /**
  * UI-Q11: whether an attachment URL can be shown as a thumbnail, and the file name to label it with. Only the last
@@ -27,8 +27,8 @@ export function attachmentDisplay(url: string): { kind: 'image' | 'file'; name: 
   let name = segment;
   try { name = decodeURIComponent(segment); } catch {}
   // Bidi and tag characters could make `invoice<U+202E>fdp.exe` display as `invoiceexe.pdf`.
-  name = name.replace(/[؜‎‏‪-‮⁦-⁩]|[\u{E0000}-\u{E007F}]/gu, '') || 'attachment';
-  return { kind: IMAGE_EXTENSIONS.test(name) ? 'image' : 'file', name };
+  name = stripInvisibleAndBidi(name) || 'attachment';
+  return { kind: IMAGE_EXT_RE.test(name) ? 'image' : 'file', name };
 }
 
 const AttachmentItem: React.FC<{ url: string; onOpen: (e: React.MouseEvent) => void }> = ({ url, onOpen }) => {

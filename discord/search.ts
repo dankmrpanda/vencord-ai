@@ -59,6 +59,7 @@ export interface SearchOptions {
   offset?: number;
   pinned?: boolean;
   mentions?: string;
+  skipPatternDetection?: boolean;
 }
 
 export interface SearchResponse {
@@ -421,24 +422,33 @@ export function buildSearchCacheKey(
   });
 }
 
+/** Parses a strict YYYY-MM-DD calendar day at local midnight or a general Date/ISO timestamp. */
+export function parseLocalSearchDate(value: string | Date): Date | null {
+  if (typeof value === 'string') {
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (dateOnly) {
+      const [year, month, day] = dateOnly.slice(1).map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+    }
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
 export function resolveDateSnowflakeBounds(options: SearchOptions): { minId?: string; maxId?: string } {
   if (options.duringDate) {
-    const raw = options.duringDate;
-    const d = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)
-      ? new Date(`${raw}T00:00:00`)
-      : new Date(raw);
-    if (!isNaN(d.getTime())) {
+    const d = parseLocalSearchDate(options.duringDate);
+    if (d) {
       const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
       const end = new Date(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime() - 1);
       return { minId: dateToSnowflake(start), maxId: dateToSnowflake(end) };
     }
   }
-  const localizeDateOnly = (value: string | Date): string | Date =>
-    typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
-      ? new Date(`${value}T00:00:00`)
-      : value;
-  const minId = options.afterDate ? dateToSnowflake(localizeDateOnly(options.afterDate)) : options.minId;
-  const maxId = options.beforeDate ? dateToSnowflake(localizeDateOnly(options.beforeDate)) : options.maxId;
+  const afterParsed = options.afterDate ? parseLocalSearchDate(options.afterDate) : null;
+  const beforeParsed = options.beforeDate ? parseLocalSearchDate(options.beforeDate) : null;
+  const minId = afterParsed ? dateToSnowflake(afterParsed) : options.minId;
+  const maxId = beforeParsed ? dateToSnowflake(beforeParsed) : options.maxId;
   return {
     minId: minId && minId !== '0' ? minId : undefined,
     maxId: maxId && maxId !== '0' ? maxId : undefined,
@@ -458,7 +468,7 @@ export async function searchDiscordMessages(
 
   // Check if options.query is a pure pattern descriptor with no keyword (e.g. "6-digit")
   let sanitizedQuery = options.query?.trim();
-  if (sanitizedQuery) {
+  if (sanitizedQuery && !options.skipPatternDetection) {
     const patInfo = detectPatternFromQuery(sanitizedQuery);
     if (patInfo.pattern && !patInfo.cleanedQuery) {
       // It's a pure pattern request like "6-digit" - omit literal content query to Discord API

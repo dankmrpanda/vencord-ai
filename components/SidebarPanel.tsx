@@ -5,7 +5,7 @@
  */
 
 import { React } from '@webpack/common';
-import { normalizeImageBlobToDataUrl } from '../discord/messages';
+import { normalizeImageBlobToDataUrl } from '../discord/media';
 import { searchMentionableUsers } from '../discord/participants';
 import { getCurrentScopeContext } from '../discord/scope';
 import { getCurrentChannelId, getLoadedMessages, getSelectedChannelStore } from '../discord/stores';

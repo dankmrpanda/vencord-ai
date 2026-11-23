@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { hasInspectableDiscordImage } from '../discord/media';
 import { buildRecentChannelSnapshot } from '../discord/channelSnapshot';
 import { sanitizeUntrustedContent } from '../discord/guardrails';
 import { resolvePromptMentions } from '../discord/participants';
@@ -32,7 +33,6 @@ import {
   availableToolDefinitions,
   executeRegisteredTool,
   getToolCompactionPolicy,
-  hasInspectableDiscordImage,
   parseRegisteredToolArguments,
   TOOL_REGISTRY,
 } from './toolRegistry';

@@ -11,9 +11,8 @@ import {
   DiscordGuild,
   DiscordUser,
 } from '../types';
-import { VIEW_CHANNEL_PERMISSION } from './guardrails';
 import { DISCORD_EPOCH } from './rest';
-import { getCurrentScopeContext, getPermittedChannelIdsForScope } from './scope';
+import { getCurrentScopeContext, getPermittedChannelIdsForScope, VIEW_CHANNEL_PERMISSION } from './scope';
 import {
   getChannel,
   getCurrentChannelId,

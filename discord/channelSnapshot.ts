@@ -5,7 +5,7 @@
 
 import { CurrentScopeContext, DiscordMessage } from '../types';
 import { sanitizeUntrustedContent } from './guardrails';
-import { slimMessage } from './searchContext';
+import { slimMessage } from './messageFormat';
 import { getLoadedMessages } from './stores';
 
 export interface ChannelSnapshotResult {

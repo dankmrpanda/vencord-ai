@@ -4,11 +4,13 @@
  */
 
 import { getMessageDetails, listChannelPins, listThreads } from '../discord/contextTools';
-import { extractMessageSearchText, fetchRecentMessages, fetchSurroundingMessages } from '../discord/messages';
+import { DISCORD_CDN_RE, extractMessageImageUrls, hasInspectableDiscordImage } from '../discord/media';
+import { extractMessageSearchText, slimMessage } from '../discord/messageFormat';
+import { fetchRecentMessages, fetchSurroundingMessages } from '../discord/messages';
 import { resolveInScopeUserByName } from '../discord/participants';
 import { fetchOneMessage, SNOWFLAKE_PATTERN } from '../discord/rest';
 import { isChannelAllowedInScope } from '../discord/scope';
-import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES, slimMessage } from '../discord/searchContext';
+import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES } from '../discord/searchContext';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { getCurrentUser } from '../discord/stores';
 import { getVoiceTranscriber, transcribeVoiceMessage } from '../discord/voiceMessages';
@@ -57,9 +59,6 @@ function intArg(value: unknown, fallback: number, min: number, max: number): num
 function ok<T>(code: string, summary: string, data: T): ToolExecutionResult<T> {
   return { ok: true, code, summary, data };
 }
-
-const DISCORD_IMAGE_CDN_RE = /^https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\//i;
-const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#].*)?$/i;
 
 function resolveChannelArg(raw: unknown, scope: CurrentScopeContext): string | undefined {
   if (typeof raw !== 'string') return undefined;
@@ -133,25 +132,6 @@ function scopeDeniedSummary(scope: CurrentScopeContext): string {
     return 'The requested channel is outside the permitted scope (currently limited to this channel only). Search this channel or tell the user they can switch the scope selector to "Entire server" or "Choose channels".';
   }
   return 'The requested channel is outside the permitted scope.';
-}
-
-export function extractMessageImageUrls(message: DiscordMessage | null | undefined): string[] {
-  if (!message) return [];
-  const urls: string[] = [];
-  for (const a of message.attachments || []) {
-    if (!a?.url || !DISCORD_IMAGE_CDN_RE.test(a.url)) continue;
-    const isImage = Boolean(a.content_type?.startsWith('image/')) || IMAGE_EXT_RE.test(a.filename || a.url);
-    if (isImage) urls.push(a.url);
-  }
-  for (const e of message.embeds || []) {
-    const candidate = e?.image?.proxy_url || e?.image?.url || e?.thumbnail?.proxy_url || e?.thumbnail?.url;
-    if (candidate && DISCORD_IMAGE_CDN_RE.test(candidate)) urls.push(candidate);
-  }
-  return Array.from(new Set(urls));
-}
-
-export function hasInspectableDiscordImage(message: DiscordMessage | null | undefined): boolean {
-  return extractMessageImageUrls(message).length > 0;
 }
 
 const getCurrentContext = registered({
@@ -560,7 +540,7 @@ const inspectImage = registered({
       };
     }
 
-    if (!DISCORD_IMAGE_CDN_RE.test(url)) {
+    if (!DISCORD_CDN_RE.test(url)) {
       return { ok: false, code: 'untrusted_image_url', summary: 'Only Discord CDN attachment URLs can be inspected.' };
     }
     const analysis = await context.analyzeImage(url, String(args.question || 'Describe this image and transcribe any visible text.'), context.signal);

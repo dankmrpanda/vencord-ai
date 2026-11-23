@@ -4,6 +4,7 @@
  */
 
 import { CurrentScopeContext, DiscordAttachment, DiscordMessage, ToolExecutionResult } from '../types';
+import { DISCORD_CDN_ATTACHMENTS_RE } from './media';
 import { fetchOneMessage, isSnowflake } from './rest';
 import { isChannelAllowedInScope } from './scope';
 
@@ -11,7 +12,6 @@ import { isChannelAllowedInScope } from './scope';
 export const VOICE_MESSAGE_FLAG = 1 << 13;
 /** Same limit the VoiceTranscribe service enforces. */
 const MAX_VOICE_BYTES = 25 * 1024 * 1024;
-const DISCORD_CDN = /^https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\/attachments\//i;
 
 /**
  * The native helper of the user's VoiceTranscribe plugin. It downloads only validated Discord CDN URLs, runs speech
@@ -51,7 +51,7 @@ export function isVoiceMessage(message: Pick<DiscordMessage, 'flags'> | null | u
 export function voiceAttachmentOf(message: DiscordMessage): DiscordAttachment | undefined {
   if (!isVoiceMessage(message)) return undefined;
   return (message.attachments || []).find((attachment) =>
-    DISCORD_CDN.test(attachment.url || '')
+    DISCORD_CDN_ATTACHMENTS_RE.test(attachment.url || '')
     && (attachment.size ?? 0) <= MAX_VOICE_BYTES
     && (!attachment.content_type || attachment.content_type.startsWith('audio/')));
 }

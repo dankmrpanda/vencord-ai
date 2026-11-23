@@ -11,11 +11,6 @@ import {
   DiscordUser,
 } from '../types';
 import {
-  PERMITTED_TEXT_CHANNEL_TYPES,
-  validateChannelPermission,
-  validateScopeBoundary,
-} from './guardrails';
-import {
   getChannel,
   getChannelStore,
   getCurrentChannelId,
@@ -24,6 +19,156 @@ import {
   getPermissionStore,
   getUserStore,
 } from './stores';
+
+/**
+ * Discord Permissions Bitfield: VIEW_CHANNEL (1 << 10 = 1024n)
+ */
+export const VIEW_CHANNEL_PERMISSION = 1024n;
+export const VIEW_CHANNEL_PERMISSION_NUM = 1024;
+
+/**
+ * Set of channel types that are valid readable text channels.
+ */
+export const PERMITTED_TEXT_CHANNEL_TYPES = new Set<ChannelType>([
+  ChannelType.GUILD_TEXT,
+  ChannelType.GUILD_ANNOUNCEMENT,
+  ChannelType.ANNOUNCEMENT_THREAD,
+  ChannelType.PUBLIC_THREAD,
+  ChannelType.PRIVATE_THREAD,
+  ChannelType.GUILD_FORUM,
+  ChannelType.GUILD_MEDIA,
+  ChannelType.DM,
+  ChannelType.GROUP_DM,
+]);
+
+/**
+ * Disallowed channel types (voice, stage, directory, category).
+ */
+export const BLOCKED_CHANNEL_TYPES = new Set<ChannelType>([
+  ChannelType.GUILD_VOICE,
+  ChannelType.GUILD_STAGE_VOICE,
+  ChannelType.GUILD_CATEGORY,
+  ChannelType.GUILD_DIRECTORY,
+]);
+
+/**
+ * Result of a scope boundary validation check.
+ */
+export interface ScopeValidationResult {
+  allowed: boolean;
+  reason?:
+    | 'active_channel'
+    | 'accessible_guild_channel'
+    | 'explicit_mutual_group_dm'
+    | 'active_group_dm'
+    | 'unpermitted_channel'
+    | 'external_guild'
+    | 'dm_boundary_isolation'
+    | 'invalid_channel_type'
+    | 'missing_context';
+}
+
+/**
+ * Validates channel view permission fail-closed.
+ * Returns true ONLY if permissionStore explicitly confirms 1024n VIEW_CHANNEL permission: `can()` must
+ * return literal `true`; any other value (a Promise, object, string or number) is treated as denied.
+ */
+export function validateChannelPermission(
+  channel: DiscordChannel,
+  permissionStore: any = getPermissionStore(),
+): boolean {
+  if (!channel || !channel.id) return false;
+
+  // DMs and Group DMs don't use Guild PermissionStore
+  if (channel.type === ChannelType.DM || channel.type === ChannelType.GROUP_DM) {
+    return true;
+  }
+
+  // Non-text / blocked channel types fail immediately
+  if (BLOCKED_CHANNEL_TYPES.has(channel.type)) {
+    return false;
+  }
+
+  // Must be a permitted text channel type
+  if (!PERMITTED_TEXT_CHANNEL_TYPES.has(channel.type)) {
+    return false;
+  }
+
+  // Permission store discovery must fail closed
+  if (!permissionStore || typeof permissionStore.can !== 'function') {
+    return false;
+  }
+
+  try {
+    const bigintResult = permissionStore.can(VIEW_CHANNEL_PERMISSION, channel);
+    if (bigintResult !== undefined && bigintResult !== null) {
+      return bigintResult === true;
+    }
+  } catch {}
+
+  try {
+    const numResult = permissionStore.can(VIEW_CHANNEL_PERMISSION_NUM, channel);
+    return numResult === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates whether a target channel ID is allowed in the current scope context.
+ */
+export function validateScopeBoundary(
+  targetChannelId: string,
+  context?: CurrentScopeContext | null,
+): ScopeValidationResult {
+  if (!context || !targetChannelId) {
+    return { allowed: false, reason: 'missing_context' };
+  }
+
+  // 1. Active channel is always permitted
+  if (targetChannelId === context.channelId) {
+    return { allowed: true, reason: 'active_channel' };
+  }
+
+  // 2. Guild scope: channel must belong to current guild and be in accessibleGuildChannels
+  if (context.isGuild && context.guildId) {
+    if (context.scopeMode === 'channel') {
+      return { allowed: false, reason: 'unpermitted_channel' };
+    }
+    if (context.scopeMode === 'custom') {
+      const isSelected = context.selectedChannelIds?.includes(targetChannelId);
+      const isAccessible = context.accessibleGuildChannels?.some((c) => c.id === targetChannelId);
+      if (isSelected && isAccessible) {
+        return { allowed: true, reason: 'accessible_guild_channel' };
+      }
+      return { allowed: false, reason: 'unpermitted_channel' };
+    }
+    const isAccessible = context.accessibleGuildChannels?.some((c) => c.id === targetChannelId);
+    if (isAccessible) {
+      return { allowed: true, reason: 'accessible_guild_channel' };
+    }
+    return { allowed: false, reason: 'unpermitted_channel' };
+  }
+
+  // 3. 1-on-1 DM scope: only explicitly requested mutual group DMs or enabled mutual group DMs are allowed
+  if (context.isDM) {
+    const isAllowedMutual = Boolean(
+      (context.includeMutualGroupDMs || context.explicitMutualGroupDMIds?.includes(targetChannelId)) &&
+      context.mutualGroupDMs?.some((g) => g.id === targetChannelId)
+    );
+    if (isAllowedMutual) {
+      return { allowed: true, reason: 'explicit_mutual_group_dm' };
+    }
+    return { allowed: false, reason: 'dm_boundary_isolation' };
+  }
+
+  // 4. Group DM scope: only the active group DM is allowed
+  if (context.isGroupDM) {
+    return { allowed: false, reason: 'dm_boundary_isolation' };
+  }
+
+  return { allowed: false, reason: 'unpermitted_channel' };
+}
 
 /**
  * Finds all mutual Group DMs shared between current user and target user
@@ -119,10 +264,11 @@ export function getPermittedChannelIdsForScope(context: CurrentScopeContext): st
     return [context.channelId];
   }
   if (context.isDM) {
-    if (context.includeMutualGroupDMs && context.mutualGroupDMs) {
-      return [context.channelId, ...context.mutualGroupDMs.map((g) => g.id)];
+    const mutualIds = new Set((context.mutualGroupDMs || []).map((g) => g.id));
+    if (context.includeMutualGroupDMs) {
+      return [context.channelId, ...Array.from(mutualIds)];
     }
-    const explicitGroupDMs = context.explicitMutualGroupDMIds || [];
+    const explicitGroupDMs = (context.explicitMutualGroupDMIds || []).filter((id) => mutualIds.has(id));
     return [context.channelId, ...explicitGroupDMs];
   }
   return [context.channelId];

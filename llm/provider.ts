@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { fetchImageAsBase64 } from '../discord/messages';
+import { fetchImageAsBase64 } from '../discord/media';
 import {
   CompletionRequest,
   CompletionResult,

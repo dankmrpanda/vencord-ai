@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { stripInvisibleAndBidi } from '../discord/guardrails';
+import { isImageAttachment } from '../discord/media';
+import { VOICE_MESSAGE_FLAG } from '../discord/voiceMessages';
 import { ChannelType, CurrentScopeContext, DiscordMessage } from '../types';
 
 export type QuickPromptIconKind =
@@ -25,8 +28,7 @@ export interface QuickPromptItem {
 }
 
 function cleanLabelText(value: string | undefined, max = 26): string {
-  const cleaned = String(value || '')
-    .replace(/[\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+  const cleaned = stripInvisibleAndBidi(String(value || ''))
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return '';
@@ -44,7 +46,7 @@ function detectLiveSignalPrompts(
   const boosts: QuickPromptItem[] = [];
 
   if (hasVoiceTranscribe) {
-    const voice = [...window].reverse().find((m) => Boolean((m.flags ?? 0) & (1 << 13)));
+    const voice = [...window].reverse().find((m) => Boolean((m.flags ?? 0) & VOICE_MESSAGE_FLAG));
     if (voice) {
       boosts.push({
         id: 'live-voice',
@@ -57,9 +59,8 @@ function detectLiveSignalPrompts(
   }
 
   if (enableVision) {
-    const imgExt = /\.(png|jpe?g|webp|gif|bmp|avif)$/i;
     const withImage = [...window].reverse().find((m) =>
-      m.attachments?.some((a) => a.content_type?.startsWith('image/') || imgExt.test(a.filename || '')) ||
+      m.attachments?.some((a) => isImageAttachment(a)) ||
       m.embeds?.some((e) => Boolean(e.image?.url)),
     );
     if (withImage) {
