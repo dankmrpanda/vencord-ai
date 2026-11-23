@@ -23,6 +23,7 @@ import {
   CitationItem,
   CurrentScopeContext,
   PluginSettings,
+  UserImageAttachment,
 } from '../types';
 
 export class ChatService {
@@ -153,8 +154,10 @@ export class ChatService {
     prompt: string,
     launchRequest?: AssistantLaunchRequest | null,
     customScope?: CurrentScopeContext | null,
+    images?: UserImageAttachment[],
   ): Promise<void> {
-    const trimmed = prompt.trim();
+    const cleanImages = Array.isArray(images) && images.length ? images : undefined;
+    const trimmed = prompt.trim() || (cleanImages ? 'Describe this image.' : '');
     if (!trimmed || this.generating) return;
 
     const controller = new AbortController();
@@ -189,6 +192,7 @@ export class ChatService {
         id: `usr_${turnId}`,
         role: 'user',
         content: trimmed,
+        ...(cleanImages ? { images: cleanImages } : {}),
         timestamp: Date.now(),
       };
       const reply: AssistantChatMessage = {
@@ -233,6 +237,7 @@ export class ChatService {
         controller.signal,
         launchRequest || undefined,
         scope,
+        cleanImages,
       );
       controller.signal.throwIfAborted();
       reply.content = result.content;

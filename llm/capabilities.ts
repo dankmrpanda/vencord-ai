@@ -11,7 +11,7 @@ const PRESETS: Record<ProviderPreset, ProviderCapabilities> = {
   openai: { strictSchemas: true, streamingTools: true, parallelToolCalls: true, developerMessages: true, vision: true },
   openrouter: { ...CONSERVATIVE, vision: true },
   groq: { ...CONSERVATIVE, parallelToolCalls: true },
-  omlx: { ...CONSERVATIVE },
+  omlx: { ...CONSERVATIVE, vision: true },
   ollama: { ...CONSERVATIVE },
   lmstudio: { ...CONSERVATIVE },
   custom: { ...CONSERVATIVE },

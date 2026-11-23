@@ -415,7 +415,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onChange
         </label>
         <span style={hintStyle}>
           Lets the assistant look at image attachments. Turn this on only if your model can read images (for example
-          Qwen3-VL, Gemma 3 or GPT-4o); a text-only model will fail the image step.
+          Gemma 4, Qwen3-VL, Gemma 3 or GPT-4o); a text-only model will fail the image step.
         </span>
       </div>
 

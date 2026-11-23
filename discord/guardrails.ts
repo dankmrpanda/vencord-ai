@@ -215,6 +215,10 @@ export function sanitizeUntrustedContent(text?: string | null): string {
     // Brackets are excluded so a token rewritten by another rule (`<｜<think>｜>`) cannot match on a second pass.
     .replace(/<｜([^｜<>[\]\n]{1,40})｜>/g, '[$1]')
     .replace(/<(\/?)(start_of_turn|end_of_turn)>/gi, '[$1$2]')
+    // Gemma 4 thought, call, response, and turn control tokens.
+    .replace(/<\|?(thought|turn)\|?>/gi, '[$1]')
+    .replace(/<\|(call|response):/gi, '[$1:')
+    .replace(/<(call|response)\|>/gi, '[$1]')
     // Qwen/Hermes tool and reasoning tags.
     .replace(/<(\/?)(tool_call|tool_response|think|tools)>/gi, '[$1$2]')
     // Mistral control tokens. This runs after the bar-token rewrites, so `<|SYSTEM_PROMPT|>` ends up here too.

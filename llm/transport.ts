@@ -6,6 +6,7 @@
 import {
   CompletionRequest,
   CompletionResult,
+  LLMMessage,
   LLMToolCall,
   PluginSettings,
   ProviderCapabilities,
@@ -189,6 +190,55 @@ export async function consumeChatCompletionStream(
 }
 
 const OPENAI_REASONING_MODEL = /^(o\d|gpt-5)/i;
+const GEMMA_MODEL = /gemma/i;
+
+function mergeUserContents(a: any, b: any): any {
+  if (typeof a === 'string' && typeof b === 'string') return `${a}\n\n${b}`;
+  const toParts = (val: any): any[] =>
+    Array.isArray(val) ? val.map((p) => ({ ...p })) : [{ type: 'text', text: String(val ?? '') }];
+  return [...toParts(a), ...toParts(b)];
+}
+
+/**
+ * Normalizes message roles for the target provider/model:
+ * - Maps `developer` -> `system` when the preset does not support developer messages.
+ * - For Gemma models, Jinja templates reject non-initial `system` messages and consecutive `user`
+ *   turns; any non-initial `system` message becomes `user` and adjacent `user` turns merge cleanly.
+ */
+export function normalizeMessagesForModel(
+  rawMessages: LLMMessage[],
+  model: string,
+  capabilities: ProviderCapabilities,
+): LLMMessage[] {
+  const mapped = rawMessages.map((message) =>
+    message.role === 'developer' && !capabilities.developerMessages
+      ? { ...message, role: 'system' as const }
+      : { ...message },
+  );
+
+  if (!GEMMA_MODEL.test(model)) return mapped;
+
+  const gemmaSafe: LLMMessage[] = [];
+  for (let i = 0; i < mapped.length; i++) {
+    const msg = mapped[i];
+    const normalized = i > 0 && msg.role === 'system'
+      ? { ...msg, role: 'user' as const }
+      : msg;
+    const prev = gemmaSafe[gemmaSafe.length - 1];
+    if (
+      prev &&
+      prev.role === 'user' &&
+      normalized.role === 'user' &&
+      !prev.tool_calls?.length &&
+      !normalized.tool_calls?.length
+    ) {
+      prev.content = mergeUserContents(prev.content, normalized.content);
+    } else {
+      gemmaSafe.push(normalized);
+    }
+  }
+  return gemmaSafe;
+}
 
 export class OpenAICompatibleTransport {
   constructor(
@@ -209,10 +259,8 @@ export class OpenAICompatibleTransport {
     signal?.throwIfAborted();
     // Throws a fixed message before any request unless the URL is absolute http(s) without credentials.
     const baseUrl = normalizeBaseUrl(this.settings.baseUrl);
-    const messages = request.messages.map((message) => message.role === 'developer' && !this.capabilities.developerMessages
-      ? { ...message, role: 'system' as const }
-      : message);
     const model = await resolveModelIdentifier(this.settings);
+    const messages = normalizeMessagesForModel(request.messages, model, this.capabilities);
     const temperature = request.temperature ?? this.settings.temperature ?? 0.7;
     const maxTokens = request.maxTokens ?? this.settings.maxTokens ?? 2048;
     const payload: Record<string, unknown> = { model, messages, temperature, max_tokens: maxTokens, stream: request.stream !== false };
