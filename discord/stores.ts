@@ -16,6 +16,7 @@ import {
   RestAPI as vcRestAPI,
 } from '@webpack/common';
 import {
+  ChannelType,
   CurrentScopeContext,
   DiscordChannel,
   DiscordGuild,
@@ -128,6 +129,177 @@ export const getGuildMemberStore = () => {
   return findStore('GuildMemberStore') ?? findByProps('getMember', 'getMembers');
 };
 
+export const getGuildRoleStore = () => {
+  if (typeof window !== 'undefined' && (window as any).Vencord?.Webpack?.Common?.GuildRoleStore) {
+    return (window as any).Vencord?.Webpack?.Common?.GuildRoleStore;
+  }
+  return findStore('GuildRoleStore') ?? findByProps('getRoles', 'getRole');
+};
+
+const PERM_ADMINISTRATOR = 8n;
+const PERM_VIEW_CHANNEL = 1024n;
+const PERM_MANAGE_THREADS = 1n << 34n;
+
+function toPermBits(value: unknown): bigint {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      return BigInt(value.trim());
+    } catch {
+      return 0n;
+    }
+  }
+  return 0n;
+}
+
+function getGuildRolesMap(guildId: string): Map<string, bigint> {
+  const rolesMap = new Map<string, bigint>();
+  if (!guildId) return rolesMap;
+
+  try {
+    const roleStore = getGuildRoleStore();
+    if (!roleStore) return rolesMap;
+
+    const raw =
+      (typeof roleStore.getSortedRoles === 'function' ? roleStore.getSortedRoles(guildId) : null) ??
+      (typeof roleStore.getRolesSnapshot === 'function' ? roleStore.getRolesSnapshot(guildId) : null) ??
+      (typeof roleStore.getRoles === 'function' ? roleStore.getRoles(guildId) : null);
+
+    if (!raw) return rolesMap;
+
+    if (raw instanceof Map) {
+      for (const [roleId, roleObj] of raw.entries()) {
+        const id = String((roleObj as any)?.id || roleId);
+        rolesMap.set(id, toPermBits((roleObj as any)?.permissions ?? roleObj));
+      }
+    } else if (Array.isArray(raw)) {
+      for (const roleObj of raw) {
+        if (roleObj?.id) {
+          rolesMap.set(String(roleObj.id), toPermBits(roleObj.permissions));
+        }
+      }
+    } else if (typeof raw === 'object') {
+      for (const [roleId, roleObj] of Object.entries(raw)) {
+        const id = String((roleObj as any)?.id || roleId);
+        rolesMap.set(id, toPermBits((roleObj as any)?.permissions ?? roleObj));
+      }
+    }
+  } catch {}
+
+  return rolesMap;
+}
+
+function getOverwritesMap(channel: any): Map<string, { allow: bigint; deny: bigint }> {
+  const map = new Map<string, { allow: bigint; deny: bigint }>();
+  const raw = channel?.permissionOverwrites;
+  if (!raw) return map;
+
+  if (raw instanceof Map) {
+    for (const [id, ow] of raw.entries()) {
+      map.set(String((ow as any)?.id || id), {
+        allow: toPermBits((ow as any)?.allow),
+        deny: toPermBits((ow as any)?.deny),
+      });
+    }
+  } else if (Array.isArray(raw)) {
+    for (const ow of raw) {
+      if (ow?.id) {
+        map.set(String(ow.id), {
+          allow: toPermBits(ow.allow),
+          deny: toPermBits(ow.deny),
+        });
+      }
+    }
+  } else if (typeof raw === 'object') {
+    for (const [id, ow] of Object.entries(raw)) {
+      map.set(String((ow as any)?.id || id), {
+        allow: toPermBits((ow as any)?.allow),
+        deny: toPermBits((ow as any)?.deny),
+      });
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Evaluates whether a guild member has VIEW_CHANNEL permission on a channel,
+ * accounting for guild owner, ADMINISTRATOR, thread parent inheritance, and
+ * Discord role/member permissionOverwrite precedence.
+ */
+export function canGuildMemberAccessChannel(
+  userId: string,
+  memberRoles: string[] = [],
+  channel: DiscordChannel | null | undefined,
+  guild: DiscordGuild | null | undefined,
+  rolesMap: Map<string, bigint>,
+): boolean {
+  if (!channel) return true;
+  if (channel.type === ChannelType.DM || channel.type === ChannelType.GROUP_DM) return false;
+  if (guild?.ownerId && guild.ownerId === userId) return true;
+
+  const isThread =
+    channel.type === ChannelType.PUBLIC_THREAD ||
+    channel.type === ChannelType.PRIVATE_THREAD ||
+    channel.type === ChannelType.ANNOUNCEMENT_THREAD ||
+    Boolean((channel as any).isThread?.());
+
+  const targetChannel = isThread && channel.parent_id ? (getChannel(channel.parent_id) || channel) : channel;
+  const guildId = targetChannel?.guild_id || channel.guild_id || guild?.id || '';
+  const overwrites = getOverwritesMap(targetChannel);
+
+  let perms: bigint;
+  if (rolesMap.size > 0) {
+    perms = guildId && rolesMap.has(guildId) ? rolesMap.get(guildId)! : 0n;
+    for (const roleId of memberRoles) {
+      const rolePerms = rolesMap.get(roleId);
+      if (rolePerms !== undefined) perms |= rolePerms;
+    }
+  } else {
+    if (overwrites.size === 0) {
+      return channel.type !== ChannelType.PRIVATE_THREAD;
+    }
+    // Partial/mock store without GuildRoleStore: assume base @everyone VIEW_CHANNEL
+    // so channel permissionOverwrites still govern access accurately.
+    perms = PERM_VIEW_CHANNEL;
+  }
+
+  if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
+
+  if (guildId) {
+    const everyoneOverwrite = overwrites.get(guildId);
+    if (everyoneOverwrite) {
+      perms &= ~everyoneOverwrite.deny;
+      perms |= everyoneOverwrite.allow;
+    }
+  }
+
+  let roleAllow = 0n;
+  let roleDeny = 0n;
+  for (const roleId of memberRoles) {
+    const ow = overwrites.get(roleId);
+    if (ow) {
+      roleAllow |= ow.allow;
+      roleDeny |= ow.deny;
+    }
+  }
+  perms &= ~roleDeny;
+  perms |= roleAllow;
+
+  const memberOverwrite = overwrites.get(userId);
+  if (memberOverwrite) {
+    perms &= ~memberOverwrite.deny;
+    perms |= memberOverwrite.allow;
+  }
+
+  if (channel.type === ChannelType.PRIVATE_THREAD) {
+    return (perms & (PERM_VIEW_CHANNEL | PERM_MANAGE_THREADS)) === (PERM_VIEW_CHANNEL | PERM_MANAGE_THREADS);
+  }
+
+  return (perms & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL;
+}
+
 /**
  * Retrieves the current logged-in Discord user
  */
@@ -156,6 +328,8 @@ interface GatheredParticipants {
   users: DiscordUser[];
   latestTime: Map<string, number>;
   nicks: Map<string, string>;
+  aliases: Map<string, Set<string>>;
+  participantIds: Set<string>;
 }
 
 function resolveMessageTimestampMs(msg: any, fallbackIndex: number): number {
@@ -174,9 +348,10 @@ function resolveMessageTimestampMs(msg: any, fallbackIndex: number): number {
 }
 
 /**
- * Gathers all in-scope conversation participants without any 8-user truncation.
- * Strictly isolated to permitted channels — never enumerates non-participating GuildMemberStore
- * or RelationshipStore entries.
+ * Gathers all in-scope mentionable users without any 8-user truncation:
+ * active conversation participants (ordered by recency) plus guild members who have
+ * VIEW_CHANNEL permission on at least one permitted channel in the active scope.
+ * Never enumerates unauthorized private-channel members or RelationshipStore friends.
  */
 function gatherScopeParticipants(
   scopeOrChannelId?: CurrentScopeContext | string | null,
@@ -185,9 +360,18 @@ function gatherScopeParticipants(
   const userMap = new Map<string, DiscordUser>();
   const latestTime = new Map<string, number>();
   const nicks = new Map<string, string>();
+  const aliases = new Map<string, Set<string>>();
+  const participantIds = new Set<string>();
   let effectiveGuildId = guildId;
 
-  const addUser = (u: any, nick?: string | null, messageTimestamp?: number) => {
+  const recordAlias = (id: string, value: string | null | undefined) => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed || trimmed === 'Member' || trimmed === 'User') return;
+    if (!aliases.has(id)) aliases.set(id, new Set());
+    aliases.get(id)!.add(trimmed);
+  };
+
+  const addUser = (u: any, nick?: string | null, messageTimestamp?: number, markParticipant = true) => {
     if (!u) return;
     const id = typeof u === 'string' ? u : (u.id || u.userId);
     if (!id) return;
@@ -209,6 +393,14 @@ function gatherScopeParticipants(
 
     if (nick && nick !== 'Member' && !nicks.has(id)) {
       nicks.set(id, nick);
+    }
+
+    recordAlias(id, rawUser.username);
+    recordAlias(id, rawUser.globalName);
+    recordAlias(id, rawUser.global_name);
+    recordAlias(id, nick);
+    if (markParticipant) {
+      participantIds.add(id);
     }
 
     const userObj: DiscordUser = {
@@ -255,11 +447,17 @@ function gatherScopeParticipants(
       permittedChannelIds = currentCh ? [currentCh] : [];
     }
 
+    const permittedGuildChannels: Array<DiscordChannel | null> = [];
+
     for (const chId of permittedChannelIds) {
       if (!chId || chId === '__FORBIDDEN_SCOPE_BLOCKED__') continue;
 
       const ch = getChannel(chId);
       if (!effectiveGuildId && ch?.guild_id) effectiveGuildId = ch.guild_id;
+
+      if (!ch || (ch.type !== ChannelType.DM && ch.type !== ChannelType.GROUP_DM)) {
+        permittedGuildChannels.push(ch);
+      }
 
       if (ch?.rawRecipients && Array.isArray(ch.rawRecipients)) {
         for (const r of ch.rawRecipients) addUser(r);
@@ -310,17 +508,66 @@ function gatherScopeParticipants(
       addUser(scopeContext.currentUser);
     }
 
-    // Per-user guild nickname enrichment for already-discovered in-scope participants only.
-    if (effectiveGuildId) {
+    // Add channel-accessible guild members (silent / non-recent talkers included when permitted)
+    if (effectiveGuildId && !scopeContext?.isDM) {
       const memberStore = getGuildMemberStore();
+      if (memberStore && permittedGuildChannels.length > 0) {
+        try {
+          const guild = getGuild(effectiveGuildId);
+          const rolesMap = getGuildRolesMap(effectiveGuildId);
+
+          let rawMembers: any[] = [];
+          const fetched = typeof memberStore.getMembers === 'function' ? memberStore.getMembers(effectiveGuildId) : null;
+          if (Array.isArray(fetched)) {
+            rawMembers = fetched;
+          } else if (fetched instanceof Map) {
+            rawMembers = Array.from(fetched.values());
+          } else if (fetched && typeof fetched === 'object') {
+            rawMembers = Object.values(fetched);
+          } else if (typeof memberStore.getMemberIds === 'function' && typeof memberStore.getMember === 'function') {
+            const ids = memberStore.getMemberIds(effectiveGuildId);
+            if (Array.isArray(ids)) {
+              rawMembers = ids.map((id: string) => memberStore.getMember(effectiveGuildId, id)).filter(Boolean);
+            }
+          }
+
+          for (const member of rawMembers) {
+            const memberId = member?.userId || member?.id || member?.user?.id;
+            if (!memberId) continue;
+            if (member?.guildId && member.guildId !== effectiveGuildId) continue;
+
+            const memberRoles = Array.isArray(member?.roles) ? member.roles : [];
+            const hasChannelAccess = permittedGuildChannels.some((ch) =>
+              canGuildMemberAccessChannel(memberId, memberRoles, ch, guild, rolesMap),
+            );
+            if (!hasChannelAccess) continue;
+
+            const storeUser = getUser(memberId) || (member?.user?.username ? member.user : null);
+            const memberNick =
+              typeof member?.nick === 'string' && member.nick.trim() && member.nick.trim() !== 'Member'
+                ? member.nick.trim()
+                : null;
+            const hasRealUsername = Boolean(
+              storeUser?.username && storeUser.username !== 'Member' && storeUser.username !== 'User',
+            );
+
+            if (!hasRealUsername && !memberNick && !userMap.has(memberId)) continue;
+            addUser(storeUser || { id: memberId }, memberNick, undefined, false);
+          }
+        } catch {}
+      }
+
+      // Per-user guild nickname enrichment for all in-scope users (covers mocked stores with only getMember)
       if (typeof memberStore?.getMember === 'function') {
         for (const user of userMap.values()) {
           try {
             const member = memberStore.getMember(effectiveGuildId, user.id);
             const nick = member?.nick;
             if (typeof nick === 'string' && nick.trim() && nick !== 'Member') {
-              nicks.set(user.id, nick.trim());
-              if (!user.globalName) user.globalName = nick.trim();
+              const trimmedNick = nick.trim();
+              nicks.set(user.id, trimmedNick);
+              recordAlias(user.id, trimmedNick);
+              if (!user.globalName) user.globalName = trimmedNick;
             }
           } catch {}
         }
@@ -330,7 +577,7 @@ function gatherScopeParticipants(
     console.warn('[VencordAI] Error gathering mentionable users in scope:', err);
   }
 
-  return { users: Array.from(userMap.values()), latestTime, nicks };
+  return { users: Array.from(userMap.values()), latestTime, nicks, aliases, participantIds };
 }
 
 function sortGatheredUsers(
@@ -338,6 +585,7 @@ function sortGatheredUsers(
   latestTime: Map<string, number>,
   nicks: Map<string, string>,
   queryLower: string,
+  aliases?: Map<string, Set<string>>,
 ): DiscordUser[] {
   return [...users].sort((a, b) => {
     const timeA = latestTime.get(a.id) ?? 0;
@@ -347,14 +595,18 @@ function sortGatheredUsers(
     if (queryLower) {
       const aNick = nicks.get(a.id)?.toLowerCase();
       const bNick = nicks.get(b.id)?.toLowerCase();
+      const aAliases = aliases?.get(a.id);
+      const bAliases = aliases?.get(b.id);
       const aStarts =
         a.username.toLowerCase().startsWith(queryLower) ||
         Boolean(a.globalName?.toLowerCase().startsWith(queryLower)) ||
-        Boolean(aNick?.startsWith(queryLower));
+        Boolean(aNick?.startsWith(queryLower)) ||
+        Boolean(aAliases && Array.from(aAliases).some((al) => al.toLowerCase().startsWith(queryLower)));
       const bStarts =
         b.username.toLowerCase().startsWith(queryLower) ||
         Boolean(b.globalName?.toLowerCase().startsWith(queryLower)) ||
-        Boolean(bNick?.startsWith(queryLower));
+        Boolean(bNick?.startsWith(queryLower)) ||
+        Boolean(bAliases && Array.from(bAliases).some((al) => al.toLowerCase().startsWith(queryLower)));
       if (aStarts && !bStarts) return -1;
       if (!aStarts && bStarts) return 1;
     }
@@ -364,7 +616,7 @@ function sortGatheredUsers(
 }
 
 /**
- * Searches for mentionable users participating within the active conversation scope,
+ * Searches for mentionable users with access to the active conversation scope,
  * ordered by recent message recency (most recent message author first).
  */
 export function searchMentionableUsers(
@@ -373,24 +625,27 @@ export function searchMentionableUsers(
   guildId?: string,
 ): DiscordUser[] {
   const queryLower = query.trim().replace(/^@/, '').toLowerCase();
-  const { users, latestTime, nicks } = gatherScopeParticipants(scopeOrChannelId, guildId);
+  const { users, latestTime, nicks, aliases } = gatherScopeParticipants(scopeOrChannelId, guildId);
 
   const filtered = queryLower
     ? users.filter((u) => {
         const matchUsername = u.username.toLowerCase().includes(queryLower);
         const matchGlobal = Boolean(u.globalName?.toLowerCase().includes(queryLower));
         const matchNick = Boolean(nicks.get(u.id)?.toLowerCase().includes(queryLower));
+        const matchAlias = Boolean(
+          aliases.get(u.id) && Array.from(aliases.get(u.id)!).some((al) => al.toLowerCase().includes(queryLower)),
+        );
         const matchId = u.id === queryLower;
-        return matchUsername || matchGlobal || matchNick || matchId;
+        return matchUsername || matchGlobal || matchNick || matchAlias || matchId;
       })
     : users;
 
-  return sortGatheredUsers(filtered, latestTime, nicks, queryLower).slice(0, 8);
+  return sortGatheredUsers(filtered, latestTime, nicks, queryLower, aliases).slice(0, 8);
 }
 
 /**
  * Resolves a single user name, display name, nickname, or @handle strictly within the active scope,
- * searching all in-scope participants without the 8-item autocomplete cap.
+ * searching all in-scope mentionable users without the 8-item autocomplete cap.
  */
 export function resolveInScopeUserByName(
   nameQuery: string,
@@ -399,16 +654,23 @@ export function resolveInScopeUserByName(
 ): DiscordUser | null {
   const normalized = nameQuery.trim().replace(/^@/, '').toLowerCase();
   if (!normalized) return null;
-  const { users, latestTime, nicks } = gatherScopeParticipants(scopeOrChannelId, guildId);
-  const sorted = sortGatheredUsers(users, latestTime, nicks, normalized);
+  const { users, latestTime, nicks, aliases } = gatherScopeParticipants(scopeOrChannelId, guildId);
+  const sorted = sortGatheredUsers(users, latestTime, nicks, normalized, aliases);
 
-  const exact = sorted.filter(
-    (u) =>
-      u.id === normalized ||
-      u.username.toLowerCase() === normalized ||
-      u.globalName?.toLowerCase() === normalized ||
-      nicks.get(u.id)?.toLowerCase() === normalized,
-  );
+  const userLabels = (u: DiscordUser): string[] => {
+    const set = new Set<string>();
+    if (u.username) set.add(u.username.toLowerCase());
+    if (u.globalName) set.add(u.globalName.toLowerCase());
+    const nick = nicks.get(u.id);
+    if (nick) set.add(nick.toLowerCase());
+    const userAliases = aliases.get(u.id);
+    if (userAliases) {
+      for (const al of userAliases) set.add(al.toLowerCase());
+    }
+    return Array.from(set);
+  };
+
+  const exact = sorted.filter((u) => u.id === normalized || userLabels(u).some((label) => label === normalized));
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) {
     // Prefer exact username match if display names collided
@@ -417,20 +679,10 @@ export function resolveInScopeUserByName(
     return exact[0];
   }
 
-  const prefix = sorted.filter(
-    (u) =>
-      u.username.toLowerCase().startsWith(normalized) ||
-      u.globalName?.toLowerCase().startsWith(normalized) ||
-      nicks.get(u.id)?.toLowerCase().startsWith(normalized),
-  );
+  const prefix = sorted.filter((u) => userLabels(u).some((label) => label.startsWith(normalized)));
   if (prefix.length === 1) return prefix[0];
 
-  const partial = sorted.filter(
-    (u) =>
-      u.username.toLowerCase().includes(normalized) ||
-      u.globalName?.toLowerCase().includes(normalized) ||
-      nicks.get(u.id)?.toLowerCase().includes(normalized),
-  );
+  const partial = sorted.filter((u) => userLabels(u).some((label) => label.includes(normalized)));
   if (partial.length === 1) return partial[0];
   return null;
 }
@@ -461,8 +713,8 @@ export function resolvePromptMentions(
 
   const mentionedUsers: DiscordUser[] = [];
   const seenIds = new Set<string>();
-  const { users, latestTime, nicks } = gatherScopeParticipants(scopeOrChannelId, guildId);
-  const sortedUsers = sortGatheredUsers(users, latestTime, nicks, '');
+  const { users, latestTime, nicks, aliases, participantIds } = gatherScopeParticipants(scopeOrChannelId, guildId);
+  const sortedUsers = sortGatheredUsers(users, latestTime, nicks, '', aliases);
 
   // 1. Match Discord snowflake mentions: <@1234567890> or <@!1234567890>
   const idMatches = prompt.matchAll(/<@!?(\d+)>/g);
@@ -477,7 +729,12 @@ export function resolvePromptMentions(
 
   // 2. Match @username, @display_name, or multi-word @Display Name (ignoring emails like a@b.com)
   const sortedLabels = sortedUsers
-    .flatMap((u) => [u.globalName, nicks.get(u.id), u.username].filter((v): v is string => Boolean(v && v.trim())))
+    .flatMap((u) => [
+      u.globalName,
+      nicks.get(u.id),
+      u.username,
+      ...Array.from(aliases.get(u.id) || []),
+    ].filter((v): v is string => Boolean(v && v.trim())))
     .sort((a, b) => b.length - a.length);
   const atMatches = prompt.matchAll(/(?:^|[\s([{"'.,!?;:])@([\p{L}\p{N}_.-]+)/gu);
   for (const match of atMatches) {
@@ -509,7 +766,7 @@ export function resolvePromptMentions(
     }
   }
 
-  // 3. Match bare (un-@-prefixed) participant names strictly within active scope when unambiguous
+  // 3. Match bare (un-@-prefixed) participant names strictly within active conversation participants
   if (sortedUsers.length > 0) {
     const nameToIds = new Map<string, Set<string>>();
     const nameToUser = new Map<string, DiscordUser>();
@@ -522,6 +779,7 @@ export function resolvePromptMentions(
     };
 
     for (const user of sortedUsers) {
+      if (!participantIds.has(user.id)) continue;
       registerLabel(user.username, user);
       registerLabel(user.globalName, user);
       registerLabel(nicks.get(user.id), user);

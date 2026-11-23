@@ -452,19 +452,65 @@ export async function runQualityImprovementTests(): Promise<void> {
     currentUser: { id: '100000000000000001', username: 'raymond', globalName: 'Raymond' },
   });
   await withWindowStores({
-    MessageStore: { getMessages: () => manyMsgs },
-    ChannelStore: { getChannel: () => ({ id: mentionGuildScope.channelId, guild_id: mentionGuildScope.guildId, type: ChannelType.GUILD_TEXT }) },
+    MessageStore: { getMessages: (cid: string) => (cid === mentionGuildScope.channelId ? manyMsgs : []) },
+    GuildStore: {
+      getGuild: (id: string) => (id === mentionGuildScope.guildId ? { id, name: 'Test Guild', ownerId: '888888888888888888' } : null),
+    },
+    GuildRoleStore: {
+      getRoles: (gid: string) =>
+        gid === mentionGuildScope.guildId
+          ? {
+              [gid]: { id: gid, permissions: '1024' },
+              role_vip: { id: 'role_vip', permissions: '0' },
+              role_admin: { id: 'role_admin', permissions: '8' },
+            }
+          : {},
+    },
+    ChannelStore: {
+      getChannel: (cid: string) =>
+        cid === 'private_vip_ch'
+          ? {
+              id: 'private_vip_ch',
+              guild_id: mentionGuildScope.guildId,
+              type: ChannelType.GUILD_TEXT,
+              permissionOverwrites: {
+                [mentionGuildScope.guildId!]: { id: mentionGuildScope.guildId!, type: 0, allow: '0', deny: '1024' },
+                role_vip: { id: 'role_vip', type: 0, allow: '1024', deny: '0' },
+              },
+            }
+          : { id: cid || mentionGuildScope.channelId, guild_id: mentionGuildScope.guildId, type: ChannelType.GUILD_TEXT },
+    },
     UserStore: {
-      getUser: (id: string) => (id === '900000000000000090' ? { id, username: 'pinged_user', globalName: 'Pinged User' } : null),
+      getUser: (id: string) => {
+        if (id === '900000000000000090') return { id, username: 'pinged_user', globalName: 'Pinged User' };
+        if (id === '999999999999999999') return { id, username: 'silent_member', globalName: 'Silent Member' };
+        if (id === '999999999999999998') return { id, username: 'vip_member', globalName: 'VIP Member' };
+        if (id === '999999999999999997') return { id, username: 'admin_member', globalName: 'Admin Member' };
+        return null;
+      },
     },
     GuildMemberStore: {
-      getMember: (_gid: string, uid: string) => (uid === '900000000000000005' ? { nick: 'NickFive' } : null),
-      getMembers: () => [{ userId: '999999999999999999', nick: 'LurkerShouldNotAppear' }],
+      getMember: (_gid: string, uid: string) => (uid === '900000000000000005' ? { nick: 'NickFive', roles: [] } : null),
+      getMembers: () => [
+        { userId: '999999999999999999', nick: 'SilentMember', roles: [] },
+        { userId: '999999999999999998', nick: 'VipSilent', roles: ['role_vip'] },
+        { userId: '999999999999999997', nick: 'AdminSilent', roles: ['role_admin'] },
+      ],
     },
   }, async () => {
     const nickSuggestions = searchMentionableUsers('nickfive', mentionGuildScope, mentionGuildScope.guildId);
     assert(nickSuggestions.some((u) => u.id === '900000000000000005'), 'searchMentionableUsers must find in-scope guild nicknames');
-    assert(!searchMentionableUsers('', mentionGuildScope, mentionGuildScope.guildId).some((u) => u.id === '999999999999999999'), 'Non-participating guild lurkers must remain excluded');
+    const silentSuggestions = searchMentionableUsers('silentmember', mentionGuildScope, mentionGuildScope.guildId);
+    assert(silentSuggestions.some((u) => u.id === '999999999999999999'), 'Accessible silent guild members must appear in autocomplete');
+    const resolvedSilentAt = resolvePromptMentions('ask @SilentMember about deploy', mentionGuildScope, mentionGuildScope.guildId);
+    assert(resolvedSilentAt.some((u) => u.id === '999999999999999999'), 'Explicit @mention must resolve accessible silent guild members');
+    const bareSilentIgnored = resolvePromptMentions('ask SilentMember about deploy', mentionGuildScope, mentionGuildScope.guildId);
+    assert(bareSilentIgnored.length === 0, 'Bare un-@-prefixed text must NOT match silent non-participating guild members');
+    const privateVipScope = makeGuildScope({ channelId: 'private_vip_ch', channelName: 'vip-only', scopeMode: 'channel', selectedChannelIds: ['private_vip_ch'] });
+    const privateVipResults = searchMentionableUsers('', privateVipScope, privateVipScope.guildId);
+    assert(privateVipResults.some((u) => u.id === '999999999999999998'), 'Private channel must include VIP role silent member');
+    assert(privateVipResults.some((u) => u.id === '999999999999999997'), 'Private channel must include ADMINISTRATOR role member');
+    assert(!privateVipResults.some((u) => u.id === '999999999999999999'), 'Private channel must exclude guild member denied VIEW_CHANNEL');
     assert(searchMentionableUsers('pinged_user', mentionGuildScope, mentionGuildScope.guildId).some((u) => u.id === '900000000000000090'), 'Participants mentioned in loaded messages must be discoverable');
     assert(searchMentionableUsers('reply_author', mentionGuildScope, mentionGuildScope.guildId).some((u) => u.id === '900000000000000091'), 'Replied-to authors must be discoverable');
 

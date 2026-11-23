@@ -250,6 +250,16 @@ function runMentionAndScopeCases() {
     ch_general_1: { id: 'ch_general_1', name: 'general', type: ChannelType.GUILD_TEXT, guild_id: 'guild_test' },
     ch_dev_2: { id: 'ch_dev_2', name: 'dev-chat', type: ChannelType.GUILD_TEXT, guild_id: 'guild_test' },
     ch_random_3: { id: 'ch_random_3', name: 'random', type: ChannelType.GUILD_TEXT, guild_id: 'guild_test' },
+    ch_private_staff: {
+      id: 'ch_private_staff',
+      name: 'staff-only',
+      type: ChannelType.GUILD_TEXT,
+      guild_id: 'guild_test',
+      permissionOverwrites: {
+        guild_test: { id: 'guild_test', type: 0, allow: '0', deny: '1024' },
+        role_staff: { id: 'role_staff', type: 0, allow: '1024', deny: '0' },
+      },
+    },
     dm_bob: { id: 'dm_bob', name: 'Bob', type: ChannelType.DM, recipients: ['usr_bob'] },
     gdm_project_alpha: {
       id: 'gdm_project_alpha',
@@ -271,6 +281,7 @@ function runMentionAndScopeCases() {
     usr_carol: { id: 'usr_carol', username: 'carol', globalName: 'Carol' },
     usr_external_friend: { id: 'usr_external_friend', username: 'friend_guy' },
     usr_guild_lurker: { id: 'usr_guild_lurker', username: 'lurker' },
+    usr_staff_lurker: { id: 'usr_staff_lurker', username: 'staff_lurker', globalName: 'Staff Lurker' },
   };
 
   const mockStores: Record<string, any> = {
@@ -279,6 +290,18 @@ function runMentionAndScopeCases() {
     },
     ChannelStore: {
       getChannel: (id: string) => mockChannels[id] || null,
+    },
+    GuildStore: {
+      getGuild: (id: string) => (id === 'guild_test' ? { id: 'guild_test', name: 'Test Guild', ownerId: 'usr_owner' } : null),
+    },
+    GuildRoleStore: {
+      getRoles: (guildId: string) =>
+        guildId === 'guild_test'
+          ? {
+              guild_test: { id: 'guild_test', permissions: '1024' },
+              role_staff: { id: 'role_staff', permissions: '0' },
+            }
+          : {},
     },
     UserStore: {
       getUser: (id: string) => mockUsers[id] || null,
@@ -289,7 +312,10 @@ function runMentionAndScopeCases() {
       getFriendIDs: () => ['usr_external_friend'],
     },
     GuildMemberStore: {
-      getMembers: () => [{ userId: 'usr_guild_lurker', nick: 'Lurker' }],
+      getMembers: () => [
+        { userId: 'usr_guild_lurker', nick: 'Lurker', roles: [] },
+        { userId: 'usr_staff_lurker', nick: 'Staff Member', roles: ['role_staff'] },
+      ],
     },
   };
 
@@ -302,12 +328,13 @@ function runMentionAndScopeCases() {
     },
   };
 
-  // Test 6: In default single channel scope, results are strictly ordered by recent message recency
+  // Test 6: In default single channel scope, active speakers are ordered first by recency, followed by accessible silent guild members
   const recencyResults = searchMentionableUsers('', guildScopeDefault);
-  assert(recencyResults.length === 3, `Expected 3 users in general channel, got ${recencyResults.length}`);
+  assert(recencyResults.length === 5, `Expected 5 accessible users in general channel, got ${recencyResults.length}`);
   assert(recencyResults[0].id === 'usr_charlie', `Expected most recent author Charlie first, got ${recencyResults[0].username}`);
   assert(recencyResults[1].id === 'usr_bob', `Expected second most recent author Bob second, got ${recencyResults[1].username}`);
   assert(recencyResults[2].id === 'usr_alice', `Expected oldest author Alice third, got ${recencyResults[2].username}`);
+  assert(recencyResults.slice(3).some((u) => u.id === 'usr_guild_lurker'), 'Accessible guild lurker must appear after recent talkers');
 
   // Test 7: Updating recency when a user sends a newer message
   mockMessages.ch_general_1.push({
@@ -321,11 +348,13 @@ function runMentionAndScopeCases() {
   assert(updatedRecencyResults[1].id === 'usr_charlie', `Charlie should now be #2, got ${updatedRecencyResults[1].username}`);
   assert(updatedRecencyResults[2].id === 'usr_bob', `Bob should now be #3, got ${updatedRecencyResults[2].username}`);
 
-  // Test 8: Scope boundary isolation - out-of-scope users must NOT appear
+  // Test 8: Scope boundary isolation - out-of-scope / external users must NOT appear, while accessible guild members do
   const idsInScope = updatedRecencyResults.map((u) => u.id);
-  assert(!idsInScope.includes('usr_dave'), 'Dave from sister channel ch_dev_2 must NOT appear in channel-scoped mentions');
+  assert(!idsInScope.includes('usr_dave'), 'Dave from sister channel ch_dev_2 must NOT appear in channel-scoped mentions (without channel access)');
   assert(!idsInScope.includes('usr_external_friend'), 'External friend from RelationshipStore must NOT appear');
-  assert(!idsInScope.includes('usr_guild_lurker'), 'Non-participating guild member must NOT appear');
+  assert(idsInScope.includes('usr_guild_lurker'), 'Guild member with VIEW_CHANNEL access to ch_general_1 MUST appear');
+  const resolvedLurkerMention = resolvePromptMentions('ask @Lurker about it', guildScopeDefault);
+  assert(resolvedLurkerMention.some((u) => u.id === 'usr_guild_lurker'), '@Lurker with channel access must resolve');
 
   // Test 9: Server-wide scope mode includes authors across all accessible server channels
   const serverScopeResults = searchMentionableUsers('', guildScopeServer);
@@ -375,6 +404,24 @@ function runMentionAndScopeCases() {
   assert(gdmIds.includes('usr_bob'), 'Bob must appear in Project Alpha group DM');
   assert(gdmIds.includes('usr_carol'), 'Carol must appear in Project Alpha group DM');
   assert(!gdmIds.includes('usr_alice'), 'Alice must NOT appear in Project Alpha group DM');
+
+  // Test 14: Private guild channel excludes non-authorized silent members and allows permitted role members
+  const privateStaffScope: CurrentScopeContext = {
+    channelId: 'ch_private_staff',
+    channelName: 'staff-only',
+    channelType: ChannelType.GUILD_TEXT,
+    guildId: 'guild_test',
+    guildName: 'Test Guild',
+    isGuild: true,
+    isDM: false,
+    isGroupDM: false,
+    scopeMode: 'channel',
+    selectedChannelIds: ['ch_private_staff'],
+  };
+  const privateStaffResults = searchMentionableUsers('', privateStaffScope);
+  const privateStaffIds = privateStaffResults.map((u) => u.id);
+  assert(privateStaffIds.includes('usr_staff_lurker'), 'Staff member with VIEW_CHANNEL overwrite must appear in ch_private_staff');
+  assert(!privateStaffIds.includes('usr_guild_lurker'), 'Non-staff guild member denied VIEW_CHANNEL must NOT appear in ch_private_staff');
 
   console.log('✅ Member Mention Matching & Manual Scope Modification Tests Passed Successfully!');
 }
