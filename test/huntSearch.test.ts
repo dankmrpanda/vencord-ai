@@ -5,7 +5,9 @@
  */
 
 import { RestAPI } from '@webpack/common';
+import { listChannelPins, listThreads } from '../discord/contextTools';
 import { compileRegexSafely, fetchDiscordMessagesApi, fetchRecentMessages, fetchSurroundingMessages, filterMessagesLocally } from '../discord/messages';
+import { discordGet } from '../discord/rest';
 import { detectPatternFromQuery, searchDiscordMessages } from '../discord/search';
 import * as searchPipeline from '../discord/searchPipeline';
 import { runMessageSearch } from '../discord/searchPipeline';
@@ -581,6 +583,104 @@ async function srch12SearchCacheUnbounded(): Promise<string | null> {
     : `after 101 cached queries, re-running the newest and the oldest reached Discord for ${JSON.stringify(sent)} (expected only the oldest, evicted by the size cap)`;
 }
 
+/** REST-01: unified discordGet honours abort in RestAPI errors, caps 429s, and falls back to fetch when configured. */
+async function rest01DiscordGetBehavior(): Promise<string | null> {
+  const problems: string[] = [];
+  const controller = new AbortController();
+  let fetchCalls = 0;
+  const originalFetch = globalThis.fetch;
+  try {
+    (globalThis as any).fetch = async () => {
+      fetchCalls++;
+      return new Response(JSON.stringify([{ id: '1' }]), { status: 200 });
+    };
+    const aborted = await withGet(() => {
+      controller.abort();
+      throw new Error('aborted inside RestAPI.get');
+    }, () => discordGet('/channels/1/messages', {}, { signal: controller.signal, fallbackToFetchOnHttpError: true })
+      .then(() => 'resolved', () => 'rejected'));
+    if (aborted !== 'rejected' || fetchCalls !== 0) {
+      problems.push(`aborted RestAPI.get still fell back to fetch (${aborted}, fetchCalls=${fetchCalls})`);
+    }
+
+    const fallback = await withGet(() => {
+      throw new Error('transient RestAPI failure');
+    }, () => discordGet('/channels/1/messages', {}, { fallbackToFetchOnHttpError: true }));
+    if (!Array.isArray(fallback) || fallback[0]?.id !== '1' || fetchCalls !== 1) {
+      problems.push(`expected fetch fallback on non-429 error, got ${JSON.stringify(fallback)} (fetchCalls=${fetchCalls})`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  let attempts = 0;
+  const capped = await withGet(() => {
+    attempts++;
+    throw Object.assign(new Error('429'), { status: 429, body: { retry_after: 30 } });
+  }, () => discordGet('/channels/1/messages', {}, { retries: 3 }).then(() => 'resolved', () => 'rejected'));
+  if (capped !== 'rejected' || attempts !== 1) {
+    problems.push(`expected uncapped retry_after=30 to fail after 1 attempt, got ${capped} (attempts=${attempts})`);
+  }
+  return problems.length ? problems.join('; ') : null;
+}
+
+/** CTX-02: listChannelPins and listThreads enforce scope, handle /pins fallback, and verify starter message channels. */
+async function ctx02PinsAndThreadsCoverage(): Promise<string | null> {
+  const problems: string[] = [];
+  const deniedPins = await listChannelPins(dmScope(), GUILD_CH, 10);
+  if (deniedPins.ok || deniedPins.code !== 'scope_denied') {
+    problems.push(`out-of-scope pins should deny, got ${deniedPins.code}`);
+  }
+
+  const pins = await withGet(({ url }) => {
+    if (url.endsWith('/messages/pins')) throw Object.assign(new Error('404'), { status: 404 });
+    return [
+      msg('101', DM, 'in-scope pin', '2026-01-01T00:00:00Z'),
+      msg('102', '999999999999999999', 'spoofed pin', '2026-01-01T00:01:00Z'),
+    ];
+  }, () => listChannelPins(dmScope(), DM, 10));
+  if (!pins.ok || pins.data?.messages.length !== 1 || pins.data.messages[0].id !== '101') {
+    problems.push(`expected 1 scoped pin via /pins fallback, got ${JSON.stringify(pins.data?.messages.map((m) => m.id))}`);
+  }
+
+  const dmThreads = await listThreads(dmScope(), DM, 10, false);
+  if (dmThreads.ok || dmThreads.code !== 'unavailable') {
+    problems.push(`expected DM listThreads unavailable, got ${dmThreads.code}`);
+  }
+
+  const hadWindow = 'window' in globalThis;
+  const originalWindow = (globalThis as any).window;
+  try {
+    const allowedThread = { id: '800000000000000001', name: 'bug-thread', type: ChannelType.PUBLIC_THREAD, parent_id: GUILD_CH, guild_id: GUILD };
+    const forbiddenThread = { id: '800000000000000002', name: 'secret-thread', type: ChannelType.PUBLIC_THREAD, parent_id: '600000000000000099', guild_id: GUILD };
+    const parentChannel = { id: GUILD_CH, name: 'general', type: ChannelType.GUILD_TEXT, guild_id: GUILD };
+    (globalThis as any).window = {
+      Vencord: {
+        Webpack: {
+          findStore: (name: string) => name === 'ChannelStore' ? { getChannel: (id: string) => (id === GUILD_CH ? parentChannel : null) } : null,
+          findByProps: () => null,
+        },
+      },
+    };
+    const threadsRes = await withGet(({ url }) => {
+      if (url.includes('/threads/active')) return { threads: [allowedThread] };
+      if (url.includes('/threads/archived/public')) return { threads: [forbiddenThread] };
+      if (url.includes(`/channels/${allowedThread.id}/messages`)) {
+        return [msg(allowedThread.id, allowedThread.id, 'starter body', '2026-01-01T00:00:00Z')];
+      }
+      return [];
+    }, () => listThreads(guildScope(), GUILD_CH, 10, true));
+    if (!threadsRes.ok || threadsRes.data?.threads.length !== 1 || threadsRes.data.threads[0].starterMessage?.id !== allowedThread.id) {
+      problems.push(`listThreads filtering/starter failed: ${JSON.stringify(threadsRes.data?.threads.map((t) => t.thread.id))}`);
+    }
+  } finally {
+    if (hadWindow) (globalThis as any).window = originalWindow;
+    else delete (globalThis as any).window;
+  }
+
+  return problems.length ? problems.join('; ') : null;
+}
+
 const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-01 ReDoS screen bypass', srch01RedosScreenBypass],
   ['REV-DSC-01 bounded-quantifier ReDoS', revDsc01BoundedQuantifierRedos],
@@ -599,6 +699,8 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['SRCH-09 fractional limit', srch09FractionalLimit],
   ['SRCH-10 rate-limit retries', srch10RateLimitRetries],
   ['SRCH-12 search cache unbounded', srch12SearchCacheUnbounded],
+  ['REST-01 unified discordGet abort, fallback, and 429 cap', rest01DiscordGetBehavior],
+  ['CTX-02 listChannelPins and listThreads coverage', ctx02PinsAndThreadsCoverage],
 ];
 
 /** Collapses the 1.2 s search throttle and retry sleeps; restored in finally. */

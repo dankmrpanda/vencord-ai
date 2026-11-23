@@ -6,8 +6,8 @@
 
 import { DiscordMessage } from '../types';
 import { compileSafeRegex } from '../storage/regex';
-import { abortableSleep, MAX_RETRY_AFTER_SECONDS, parseRetryAfterSeconds, throwIfAborted } from './search';
-import { getAuthToken, getHTTP, getLoadedMessages } from './stores';
+import { discordGet } from './rest';
+import { getLoadedMessages } from './stores';
 
 const MAX_PATTERN_TEXT_LENGTH = 4000;
 
@@ -374,7 +374,7 @@ export function filterMessagesLocally(
 }
 
 /**
- * Helper to fetch messages from Discord API using RestAPI with fetch fallback
+ * Helper to fetch messages from Discord API using RestAPI with fetch fallback.
  */
 export async function fetchDiscordMessagesApi(
   channelId: string,
@@ -382,62 +382,18 @@ export async function fetchDiscordMessagesApi(
   retriesRemaining = 3,
   signal?: AbortSignal,
 ): Promise<DiscordMessage[]> {
-  const relativeEndpoint = `/channels/${channelId}/messages`;
-  const http = getHTTP();
-  throwIfAborted(signal);
-
-  if (http && typeof http.get === 'function') {
-    try {
-      const res = await http.get({ url: relativeEndpoint, query: queryObj });
-      const body = res?.body ?? res;
-      if (Array.isArray(body)) return body;
-    } catch (httpErr: any) {
-      const status = httpErr?.status ?? httpErr?.statusCode;
-      const retryVal = httpErr?.headers?.get?.('Retry-After') ?? httpErr?.body?.retry_after ?? httpErr?.retry_after;
-      const retrySec = retryVal ? parseRetryAfterSeconds(retryVal) : status === 429 ? 2 : null;
-      if (retrySec !== null && retrySec > MAX_RETRY_AFTER_SECONDS) {
-        // A raw fetch would land in the same rate-limited bucket; let the caller fall back.
-        console.warn(`[VencordAI] Discord 429 on ${relativeEndpoint}, retry_after ${retrySec}s exceeds the cap`);
-        return [];
-      }
-      if (retrySec !== null && retriesRemaining > 0) {
-        console.warn(`[VencordAI] Discord 429 on ${relativeEndpoint}, retrying after ${retrySec}s...`);
-        await abortableSleep(retrySec * 1000 + 300, signal);
-        return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1, signal);
-      }
-      console.warn('[VencordAI] RestAPI.get failed, falling back to fetch:', httpErr);
-    }
-  }
-
   try {
-    const token = getAuthToken();
-    const qs = new URLSearchParams(queryObj).toString();
-    const fullUrl = `https://discord.com/api/v9${relativeEndpoint}?${qs}`;
-    const response = await fetch(fullUrl, {
-      headers: {
-        Authorization: token || '',
-        'Content-Type': 'application/json',
-      },
+    const data = await discordGet<DiscordMessage[]>(`/channels/${channelId}/messages`, queryObj, {
       signal,
+      retries: retriesRemaining,
+      fallbackToFetchOnHttpError: true,
     });
-    if (response.status === 429 && retriesRemaining > 0) {
-      const retryHeader = response.headers.get('Retry-After');
-      const retrySec = retryHeader ? parseRetryAfterSeconds(retryHeader) : 2;
-      if (retrySec > MAX_RETRY_AFTER_SECONDS) return [];
-      console.warn(`[VencordAI] Discord 429 on fetch ${relativeEndpoint}, retrying after ${retrySec}s...`);
-      await abortableSleep(retrySec * 1000 + 300, signal);
-      return fetchDiscordMessagesApi(channelId, queryObj, retriesRemaining - 1, signal);
-    }
-    if (response.ok) {
-      const data = await response.json();
-      if (Array.isArray(data)) return data;
-    }
+    return Array.isArray(data) ? data : [];
   } catch (err) {
     if (signal?.aborted) throw err;
     console.error(`[VencordAI] Failed to fetch messages for channel ${channelId}:`, err);
+    return [];
   }
-
-  return [];
 }
 
 /** Whole-number request limit in [1, max]; non-finite values use the fallback. */

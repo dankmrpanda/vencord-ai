@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { fetchOneMessage, getMessageDetails, listChannelPins, listThreads } from '../discord/contextTools';
+import { getMessageDetails, listChannelPins, listThreads } from '../discord/contextTools';
 import { extractMessageSearchText, fetchRecentMessages, fetchSurroundingMessages } from '../discord/messages';
+import { fetchOneMessage, SNOWFLAKE_PATTERN } from '../discord/rest';
 import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES, slimMessage } from '../discord/searchContext';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { isChannelAllowedInScope } from '../discord/scope';
@@ -59,7 +60,6 @@ function ok<T>(code: string, summary: string, data: T): ToolExecutionResult<T> {
   return { ok: true, code, summary, data };
 }
 
-const SNOWFLAKE_RE = /^\d{1,22}$/;
 const DISCORD_IMAGE_CDN_RE = /^https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\//i;
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|avif)(?:[?#].*)?$/i;
 
@@ -67,7 +67,7 @@ function resolveChannelArg(raw: unknown, scope: CurrentScopeContext): string | u
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  if (SNOWFLAKE_RE.test(trimmed)) return trimmed;
+  if (SNOWFLAKE_PATTERN.test(trimmed)) return trimmed;
   const normalized = trimmed.replace(/^#/, '').toLowerCase();
   if (!normalized) return trimmed;
 
@@ -97,7 +97,7 @@ function resolveUserArg(raw: unknown, scope: CurrentScopeContext): string | unde
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
-  if (SNOWFLAKE_RE.test(trimmed)) return trimmed;
+  if (SNOWFLAKE_PATTERN.test(trimmed)) return trimmed;
   const resolved = resolveInScopeUserByName(trimmed, scope, scope.guildId);
   return resolved?.id || trimmed;
 }

@@ -12,6 +12,7 @@ import {
   DiscordUser,
 } from '../types';
 import { VIEW_CHANNEL_PERMISSION } from './guardrails';
+import { DISCORD_EPOCH } from './rest';
 import { getCurrentScopeContext, getPermittedChannelIdsForScope } from './scope';
 import {
   getChannel,
@@ -202,7 +203,7 @@ function resolveMessageTimestampMs(msg: any, fallbackIndex: number): number {
   }
   if (msgTime === 0 && msg?.id) {
     try {
-      const snowflakeTime = Number((BigInt(msg.id) >> 22n) + 1420070400000n);
+      const snowflakeTime = Number((BigInt(msg.id) >> 22n) + DISCORD_EPOCH);
       if (!isNaN(snowflakeTime) && snowflakeTime > 0) msgTime = snowflakeTime;
     } catch {}
   }

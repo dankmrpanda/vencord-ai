@@ -4,74 +4,9 @@
  */
 
 import { CurrentScopeContext, DiscordChannel, DiscordMessage, ToolExecutionResult } from '../types';
+import { discordGet, fetchOneMessage, isSnowflake, throwIfAborted } from './rest';
 import { isChannelAllowedInScope } from './scope';
-import { abortableSleep, MAX_RETRY_AFTER_SECONDS, throwIfAborted } from './search';
-import { getAuthToken, getChannel, getHTTP } from './stores';
-
-/** Discord snowflakes are decimal; anything else must never be interpolated into a REST path. */
-const SNOWFLAKE_PATTERN = /^\d{1,20}$/;
-
-function isSnowflake(value: unknown): value is string {
-  return typeof value === 'string' && SNOWFLAKE_PATTERN.test(value);
-}
-
-function extractRetrySec(target: any): number | null {
-  if (!target) return null;
-  const status = target.status ?? target.statusCode;
-  const retryVal = target.headers?.get?.('Retry-After') ?? target.body?.retry_after ?? target.retry_after;
-  if (retryVal) {
-    const sec = Number(retryVal);
-    return isNaN(sec) ? 2 : Math.max(sec, 1);
-  }
-  if (status === 429) return 2;
-  return null;
-}
-
-/**
- * GET with bounded 429 handling: waits end when the run is stopped, and a retry_after above the cap fails the
- * call at once instead of retrying in the background after the tool has timed out.
- */
-async function discordGet(path: string, query: Record<string, string> = {}, signal?: AbortSignal, retriesRemaining = 3): Promise<any> {
-  throwIfAborted(signal);
-  const http = getHTTP();
-  if (http?.get) {
-    try {
-      const response = await http.get({ url: path, query });
-      return response?.body ?? response;
-    } catch (err: any) {
-      const retrySec = extractRetrySec(err);
-      if (retrySec !== null && retrySec <= MAX_RETRY_AFTER_SECONDS && retriesRemaining > 0) {
-        console.warn(`[VencordAI] Discord 429 rate limit on ${path}, retrying after ${retrySec}s...`);
-        await abortableSleep(retrySec * 1000 + 300, signal);
-        return discordGet(path, query, signal, retriesRemaining - 1);
-      }
-      throw err;
-    }
-  }
-  const suffix = new URLSearchParams(query).toString();
-  const response = await fetch(`https://discord.com/api/v9${path}${suffix ? `?${suffix}` : ''}`, {
-    headers: { Authorization: getAuthToken() || '', 'Content-Type': 'application/json' },
-    signal,
-  });
-  if (response.status === 429) {
-    const retrySec = extractRetrySec(response) || 2;
-    if (retrySec > MAX_RETRY_AFTER_SECONDS || retriesRemaining <= 0) throw new Error('Discord read rate-limited (429).');
-    console.warn(`[VencordAI] Discord 429 rate limit on ${path}, retrying after ${retrySec}s...`);
-    await abortableSleep(retrySec * 1000 + 300, signal);
-    return discordGet(path, query, signal, retriesRemaining - 1);
-  }
-  if (!response.ok) throw new Error(`Discord read failed (${response.status}).`);
-  return response.json();
-}
-
-/**
- * Reads one message the way a user account can. `GET /channels/{c}/messages/{id}` is bot-only (user accounts get
- * 403), so this asks for the single message around the ID and keeps it only when the ID matches.
- */
-export async function fetchOneMessage(channelId: string, messageId: string, signal?: AbortSignal): Promise<DiscordMessage | undefined> {
-  const page = await discordGet(`/channels/${channelId}/messages`, { around: messageId, limit: '1' }, signal);
-  return Array.isArray(page) ? page.find((message: DiscordMessage | undefined) => message?.id === messageId) : undefined;
-}
+import { getChannel } from './stores';
 
 export async function getMessageDetails(
   scope: CurrentScopeContext,
@@ -130,9 +65,10 @@ export async function listChannelPins(
     body = await discordGet(`/channels/${channelId}/messages/pins`, {
       limit: String(limit),
       ...(before ? { before } : {}),
-    }, signal);
-  } catch {
-    body = await discordGet(`/channels/${channelId}/pins`, {}, signal);
+    }, { signal });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    body = await discordGet(`/channels/${channelId}/pins`, {}, { signal });
   }
   const items = Array.isArray(body) ? body.map((message) => ({ message })) : body?.items || [];
   const messages = items
@@ -170,9 +106,9 @@ export async function listThreads(
   const target = getChannel(targetChannelId);
   const parentId = target?.isThread?.() ? target.parent_id || targetChannelId : targetChannelId;
   if (!scope.guildId) return { ok: false, code: 'unavailable', summary: 'Discord threads are only available in guild scope.' };
-  const payloads = [await discordGet(`/guilds/${scope.guildId}/threads/active`, {}, signal)];
+  const payloads = [await discordGet(`/guilds/${scope.guildId}/threads/active`, {}, { signal })];
   if (includeArchived) {
-    payloads.push(await discordGet(`/channels/${parentId}/threads/archived/public`, { limit: String(limit) }, signal));
+    payloads.push(await discordGet(`/channels/${parentId}/threads/archived/public`, { limit: String(limit) }, { signal }));
   }
   const threads = payloads.flatMap((payload) => payload?.threads || []) as DiscordChannel[];
   const permitted = threads.filter((thread) => {

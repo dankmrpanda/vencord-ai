@@ -4,14 +4,13 @@
  */
 
 import { CurrentScopeContext, DiscordAttachment, DiscordMessage, ToolExecutionResult } from '../types';
-import { fetchOneMessage } from './contextTools';
+import { fetchOneMessage, isSnowflake } from './rest';
 import { isChannelAllowedInScope } from './scope';
 
 /** Discord's message flag for voice messages (IS_VOICE_MESSAGE). */
 export const VOICE_MESSAGE_FLAG = 1 << 13;
 /** Same limit the VoiceTranscribe service enforces. */
 const MAX_VOICE_BYTES = 25 * 1024 * 1024;
-const SNOWFLAKE = /^\d{1,22}$/;
 const DISCORD_CDN = /^https:\/\/(?:cdn|media)\.discord(?:app)?\.(?:com|net)\/attachments\//i;
 
 /**
@@ -86,7 +85,7 @@ export async function transcribeVoiceMessage(
   if (!isChannelAllowedInScope(channelId, scope)) {
     return { ok: false, code: 'scope_denied', summary: 'The requested message channel is outside the permitted scope.' };
   }
-  if (!SNOWFLAKE.test(messageId)) {
+  if (!isSnowflake(messageId)) {
     return { ok: false, code: 'invalid_arguments', summary: 'message_id must be a numeric Discord message ID.' };
   }
   const language = (options.language || '').trim().toLowerCase();

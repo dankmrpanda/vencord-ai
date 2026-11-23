@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { isSnowflake } from '../discord/rest';
+
 /** What a model-emitted markdown link may do when rendered. Model output is untrusted. */
 export type LinkTarget =
   | { kind: 'jump'; href: string; channelId: string; messageId?: string; guildId?: string }
@@ -10,7 +12,6 @@ export type LinkTarget =
   | { kind: 'blocked' };
 
 const DISCORD_HOSTS = ['discord.com', 'discordapp.com'];
-const SNOWFLAKE = /^\d{1,20}$/;
 
 function isDiscordHost(hostname: string): boolean {
   return DISCORD_HOSTS.some((host) => hostname === host || hostname.endsWith(`.${host}`));
@@ -18,9 +19,9 @@ function isDiscordHost(hostname: string): boolean {
 
 /** `[guild|@me, channel, message?]` -> jump target, or null when the IDs are not Discord IDs. */
 function jumpTarget(guild: string | undefined, channelId: string | undefined, messageId: string | undefined, extra: number): LinkTarget | null {
-  if (extra > 0 || !channelId || !SNOWFLAKE.test(channelId)) return null;
-  if (messageId !== undefined && !SNOWFLAKE.test(messageId)) return null;
-  if (guild !== undefined && guild !== '@me' && !SNOWFLAKE.test(guild)) return null;
+  if (extra > 0 || !channelId || !isSnowflake(channelId)) return null;
+  if (messageId !== undefined && !isSnowflake(messageId)) return null;
+  if (guild !== undefined && guild !== '@me' && !isSnowflake(guild)) return null;
   const guildId = guild && guild !== '@me' ? guild : undefined;
   const href = `https://discord.com/channels/${guildId ?? '@me'}/${channelId}${messageId ? `/${messageId}` : ''}`;
   return { kind: 'jump', href, channelId, messageId, guildId };

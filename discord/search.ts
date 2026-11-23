@@ -5,9 +5,15 @@
  */
 
 import { DiscordMessage } from '../types';
-import { getAuthToken, getChannel, getHTTP } from './stores';
-
-const DISCORD_EPOCH = 1420070400000n;
+import {
+  abortableSleep,
+  DISCORD_EPOCH,
+  discordGetOnce,
+  extractRetryAfterSeconds,
+  MAX_RETRY_AFTER_SECONDS,
+  throwIfAborted,
+} from './rest';
+import { getChannel } from './stores';
 
 /**
  * Converts a Date, timestamp, or date string into a Discord Snowflake ID
@@ -367,38 +373,6 @@ let lastRequestTime = 0;
 let searchStartQueue: Promise<void> = Promise.resolve();
 const MIN_REQUEST_INTERVAL_MS = 1200;
 
-/** Longest retry_after honoured; longer rate limits fail so callers fall back instead of stalling. */
-export const MAX_RETRY_AFTER_SECONDS = 5;
-
-function abortError(signal: AbortSignal): unknown {
-  return signal.reason ?? Object.assign(new Error('The search was aborted.'), { name: 'AbortError' });
-}
-
-export function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw abortError(signal);
-}
-
-export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.reject(abortError(signal));
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortError(signal!));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-/** Parses a Retry-After/retry_after value in seconds; unparseable values fall back to 2 s. */
-export function parseRetryAfterSeconds(value: unknown): number {
-  const sec = Number(value);
-  return Number.isFinite(sec) ? Math.max(sec, 1) : 2;
-}
-
 async function throttle(signal?: AbortSignal): Promise<void> {
   const scheduled = searchStartQueue.then(async () => {
     // Re-check after each wait: a 429 elsewhere may push the start time forward meanwhile.
@@ -469,17 +443,6 @@ export function resolveDateSnowflakeBounds(options: SearchOptions): { minId?: st
     minId: minId && minId !== '0' ? minId : undefined,
     maxId: maxId && maxId !== '0' ? maxId : undefined,
   };
-}
-
-function extractRetryAfterSeconds(target: any): number | null {
-  if (!target) return null;
-  const status = target.status ?? target.statusCode;
-  const retryVal = target.headers?.get?.('Retry-After') ?? target.body?.retry_after ?? target.retry_after;
-  if (retryVal) return parseRetryAfterSeconds(retryVal);
-  if (status === 429 || status === 202) {
-    return 2;
-  }
-  return null;
 }
 
 /**
@@ -555,42 +518,17 @@ export async function searchDiscordMessages(
     return { totalResults: 0, messages: [] };
   }
 
-  const http = getHTTP();
   let rawData: any = null;
 
   try {
-    if (http && typeof http.get === 'function') {
-      const res = await http.get({ url: relativeEndpoint, query: queryObj });
-      rawData = res?.body ?? res;
-    } else {
-      const token = getAuthToken();
-      const queryString = new URLSearchParams(queryObj).toString();
-      const fullFetchUrl = `https://discord.com/api/v9${relativeEndpoint}${queryString ? `?${queryString}` : ''}`;
-      const response = await fetch(fullFetchUrl, {
-        headers: {
-          Authorization: token || '',
-          'Content-Type': 'application/json',
-        },
-        signal,
-      });
+    rawData = await discordGetOnce(relativeEndpoint, queryObj, { signal });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        const err: any = new Error(`Discord search failed with status ${response.status}: ${errorText}`);
-        err.status = response.status;
-        err.headers = response.headers;
-        throw err;
-      }
-
-      rawData = await response.json();
-    }
-
-    const retrySec = extractRetryAfterSeconds(rawData);
+    const retrySec = extractRetryAfterSeconds(rawData, true);
     if (retrySec !== null && retriesRemaining > 0) {
       return retryAfterRateLimit(retrySec, undefined);
     }
   } catch (err: any) {
-    const retrySec = signal?.aborted ? null : extractRetryAfterSeconds(err);
+    const retrySec = signal?.aborted ? null : extractRetryAfterSeconds(err, true);
     if (retrySec !== null && retriesRemaining > 0) {
       return retryAfterRateLimit(retrySec, err);
     }

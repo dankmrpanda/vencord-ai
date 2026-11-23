@@ -174,20 +174,6 @@ export function assertReadOnlyOperation(method: string, endpoint: string): void 
       `Forbidden HTTP method '${normalizedMethod}' for endpoint '${endpoint}'. Only read-only operations are permitted.`,
     );
   }
-
-  // Block mutation paths
-  const blockedPatterns = [
-    /\/messages\/?$/i,           // POST message
-    /\/reactions\//i,             // PUT reaction
-    /\/pins\//i,                  // PUT/DELETE pin
-    /\/channels\/?$/i,            // POST channel
-    /\/permissions\//i,           // PUT permission
-    /\/typing\/?$/i,              // POST typing
-  ];
-
-  if (normalizedMethod !== 'GET' && normalizedMethod !== 'HEAD' && blockedPatterns.some((pattern) => pattern.test(endpoint))) {
-    throw new MutationSecurityError(`Endpoint '${endpoint}' is a mutating Discord API route and is blocked.`);
-  }
 }
 
 /**
