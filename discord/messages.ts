@@ -131,6 +131,19 @@ function escapeRegExpToken(token: string): string {
   return token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function messageMentionsUser(msg: DiscordMessage, targetUserId: string): boolean {
+  if (Array.isArray(msg.mentions)) {
+    for (const entry of msg.mentions as Array<string | { id?: string }>) {
+      if (typeof entry === 'string' && entry === targetUserId) return true;
+      if (entry && typeof entry === 'object' && entry.id === targetUserId) return true;
+    }
+  }
+  if (msg.content) {
+    if (new RegExp(`<@!?${escapeRegExpToken(targetUserId)}>`).test(msg.content)) return true;
+  }
+  return false;
+}
+
 /**
  * Checks if a specific token or range matches text (e.g. "3-5" matches "3-5", "3 - 5", "3 to 5", or "3" and "5")
  */
@@ -253,7 +266,7 @@ export function filterMessagesLocally(
     }
 
     if (filter.pinned !== undefined && Boolean(msg.pinned) !== filter.pinned) continue;
-    if (filter.mentions && !msg.mentions?.some((user) => user.id === filter.mentions)) continue;
+    if (filter.mentions && !messageMentionsUser(msg, filter.mentions)) continue;
     if (filter.afterDate) {
       const afterTime = dateTime(filter.afterDate);
       const msgTime = new Date(msg.timestamp).getTime();

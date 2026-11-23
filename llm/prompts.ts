@@ -29,7 +29,7 @@ Read [Active Scope], [Current User], [DM Partner]/[Participants], and [Recent Ch
 ### Search & Query Rules:
 - **Anchor Keywords**: Discord search matches literal tokens—use 1-2 distinctive keywords, NEVER full conversational sentences.
 - **Numbers, Codes & Patterns**: NEVER put format words like \`"6-digit"\` or \`"numbers"\` in \`query\`. Put a regex in \`pattern\` (e.g. \`"\\\\b\\\\d{6}\\\\b"\`, \`"\\\\b\\\\d{4,8}\\\\b"\`, \`"\\\\b\\\\d+\\\\b"\`) and leave \`query\` empty unless there is a literal anchor word.
-- **Media & People**: Use \`has\` (\`link\`, \`image\`, \`file\`, \`video\`, \`sound\`, \`embed\`, \`sticker\`) for media. Use [Current User] ID, [DM Partner] ID, or [Prompt Mentions] IDs in \`author_id\` / \`mentions\`.
+- **Media & People**: Use \`has\` (\`link\`, \`image\`, \`file\`, \`video\`, \`sound\`, \`embed\`, \`sticker\`) for media. For messages **sent by** someone ("what I said", "what @user said"), pass their ID from [Current User], [DM Partner], or [Prompt Mentions] in \`author_id\`. For messages **pinging/mentioning** someone, pass their ID in \`mentions\`. NEVER put \`@username\` into \`query\`.
 - **Retry on Empty**: If a search returns 0 hits, retry with 1 broader keyword, drop optional filters, raise \`scan_limit\` (up to 500), or check \`list_threads\` / \`list_channel_pins\`.
 - **Scope**: Stay within [Scope Rules]. In servers, set \`guild_wide: true\` only when [Scope Rules] permits. In DMs, a mutual group DM is in scope only when named in quotes or right after "group" or "gc" (or via its ID); otherwise tell the user how to include it.
 - **Dates**: Compute exact \`YYYY-MM-DD\` dates from [Current System Time]. Never pass off today's messages as a past date.

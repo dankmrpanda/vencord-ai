@@ -77,8 +77,9 @@ export function resolveReadableContent(
   scope?: CurrentScopeContext,
 ): string {
   if (!content) return '';
+  const messageMentions = Array.isArray(message?.mentions) ? message!.mentions : [];
   let resolved = content.replace(/<@!?(\d{1,22})>/g, (raw, id: string) => {
-    const mentioned = (message?.mentions || []).find((u) => u?.id === id);
+    const mentioned = messageMentions.find((u: any) => u && typeof u === 'object' && u.id === id);
     const user = mentioned || getUser(id);
     if (!user) return raw;
     const name = (user as any).global_name || user.globalName || user.username;

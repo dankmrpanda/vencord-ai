@@ -104,6 +104,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const panelRef = React.useRef<HTMLDivElement | null>(null);
   const lastChannelIdRef = React.useRef<string | null>(null);
+  const currentScopeRef = React.useRef<CurrentScopeContext | null>(currentScope);
+  currentScopeRef.current = currentScope;
   // index.tsx passes a new arrow on every render; a ref keeps the channel listener effect from re-running.
   const onLaunchConsumedRef = React.useRef(onLaunchConsumed);
   onLaunchConsumedRef.current = onLaunchConsumed;
@@ -155,13 +157,16 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
       const checkChannelChange = () => {
         try {
           const currentChId = getCurrentChannelId();
-          if (currentChId && currentChId !== lastChannelIdRef.current) {
-            onLaunchConsumedRef.current?.();
-            lastChannelIdRef.current = currentChId;
-            setViewedChannelId(currentChId);
-            setPendingImages([]);
+          if (currentChId && (currentChId !== lastChannelIdRef.current || !currentScopeRef.current)) {
+            if (currentChId !== lastChannelIdRef.current) {
+              onLaunchConsumedRef.current?.();
+              lastChannelIdRef.current = currentChId;
+              setViewedChannelId(currentChId);
+              setPendingImages([]);
+              setMentionSuggestions([]);
+              refreshSessions(currentChId);
+            }
             setCurrentScope((prev) => scopeForChannel(prev, currentChId));
-            refreshSessions(currentChId);
           }
         } catch {}
       };
@@ -337,9 +342,16 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const textBeforeCursor = text.slice(0, cursorPosition);
     const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
     if (match) {
-      const channelId = currentScope?.channelId || getCurrentChannelId() || undefined;
-      const guildId = currentScope?.guildId || undefined;
-      const results = searchMentionableUsers(match[1], currentScope || channelId, guildId);
+      let scopeForLookup = currentScope;
+      if (!scopeForLookup) {
+        try {
+          scopeForLookup = getCurrentScopeContext();
+          if (scopeForLookup) setCurrentScope(scopeForLookup);
+        } catch {}
+      }
+      const channelId = scopeForLookup?.channelId || getCurrentChannelId() || undefined;
+      const guildId = scopeForLookup?.guildId || undefined;
+      const results = searchMentionableUsers(match[1], scopeForLookup || channelId, guildId);
       if (results.length > 0) {
         setMentionSuggestions(results);
         setMentionSelectedIndex(0);
@@ -355,8 +367,8 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const textAfterCursor = inputText.slice(cursorPosition);
     const match = textBeforeCursor.match(/(?:^|\s)@([^\s@]*)$/);
     if (match) {
-      const hasLeadingSpace = match[0].startsWith(' ');
-      const prefix = textBeforeCursor.slice(0, match.index! + (hasLeadingSpace ? 1 : 0));
+      const hasLeadingWhitespace = /^\s/.test(match[0]);
+      const prefix = textBeforeCursor.slice(0, match.index! + (hasLeadingWhitespace ? 1 : 0));
       const mentionTag = `@${user.username} `;
       const newText = prefix + mentionTag + textAfterCursor;
       setInputText(newText);
@@ -405,7 +417,19 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInputText(val);
-    checkMentionTrigger(val, e.target.selectionStart || val.length);
+    checkMentionTrigger(val, e.target.selectionStart ?? val.length);
+  };
+
+  const handleTextareaCursor = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    checkMentionTrigger(el.value, el.selectionStart ?? el.value.length);
+  };
+
+  const handleTextareaKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionSuggestions.length > 0 && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Tab' || e.key === 'Escape')) {
+      return;
+    }
+    handleTextareaCursor(e);
   };
 
   // The send handler reads current state, so rows memoised for streaming always retry through the latest one.
@@ -712,7 +736,9 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             aria-label="Message the AI assistant"
             value={inputText}
             onChange={handleTextareaInput}
+            onClick={handleTextareaCursor}
             onKeyDown={handleKeyDown}
+            onKeyUp={handleTextareaKeyUp}
             onPaste={handlePaste}
             rows={1}
           />

@@ -9,7 +9,7 @@ import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES, sli
 import { runMessageSearch } from '../discord/searchPipeline';
 import { isChannelAllowedInScope } from '../discord/scope';
 import { getVoiceTranscriber, transcribeVoiceMessage } from '../discord/voiceMessages';
-import { getCurrentUser, searchMentionableUsers } from '../discord/stores';
+import { getCurrentUser, resolveInScopeUserByName } from '../discord/stores';
 import { compileSafeRegex } from '../storage/regex';
 import {
   CurrentScopeContext,
@@ -97,31 +97,36 @@ function resolveUserArg(raw: unknown, scope: CurrentScopeContext): string | unde
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   if (SNOWFLAKE_RE.test(trimmed)) return trimmed;
-  const normalized = trimmed.replace(/^@/, '').toLowerCase();
-  if (!normalized) return trimmed;
+  const resolved = resolveInScopeUserByName(trimmed, scope, scope.guildId);
+  return resolved?.id || trimmed;
+}
 
-  const pool = new Map<string, { id: string; username: string; globalName?: string | null }>();
-  const current = scope.currentUser || getCurrentUser();
-  if (current?.id) pool.set(current.id, current);
-  if (scope.otherUser?.id) pool.set(scope.otherUser.id, scope.otherUser);
-  for (const r of scope.groupDMRecipients || []) {
-    if (r?.id) pool.set(r.id, r);
-  }
-  for (const u of searchMentionableUsers(normalized, scope, scope.guildId)) {
-    if (u?.id) pool.set(u.id, u);
-  }
-
-  const exactMatches = Array.from(pool.values()).filter(
-    (u) => u.username.toLowerCase() === normalized || u.globalName?.toLowerCase() === normalized,
-  );
-  if (exactMatches.length === 1) return exactMatches[0].id;
-  if (exactMatches.length === 0) {
-    const prefixMatches = Array.from(pool.values()).filter(
-      (u) => u.username.toLowerCase().startsWith(normalized) || u.globalName?.toLowerCase().startsWith(normalized),
-    );
-    if (prefixMatches.length === 1) return prefixMatches[0].id;
-  }
-  return trimmed;
+/**
+ * If the model accidentally passes an `@username` inside `search_messages.query`, resolves it in scope:
+ * promotes it to `author_id` when no user filter is set, or strips the redundant `@username` if it
+ * matches the active `author_id`/`mentions` filter. Leaves email addresses untouched.
+ */
+function rescueAtHandleInQuery(
+  rawQuery: string | undefined,
+  authorId: string | undefined,
+  mentionsId: string | undefined,
+  scope: CurrentScopeContext,
+): { query: string | undefined; authorId: string | undefined } {
+  if (!rawQuery || !rawQuery.includes('@')) return { query: rawQuery, authorId };
+  let nextAuthorId = authorId;
+  const stripped = rawQuery.replace(/(^|\s)@([\p{L}\p{N}_.-]+)/gu, (full, prefix: string, handle: string) => {
+    const resolved = resolveInScopeUserByName(handle, scope, scope.guildId);
+    if (!resolved) return full;
+    if (!nextAuthorId && !mentionsId) {
+      nextAuthorId = resolved.id;
+      return prefix;
+    }
+    if (nextAuthorId === resolved.id || mentionsId === resolved.id) {
+      return prefix;
+    }
+    return full;
+  }).replace(/\s+/g, ' ').trim();
+  return { query: stripped || undefined, authorId: nextAuthorId };
 }
 
 function scopeDeniedSummary(scope: CurrentScopeContext): string {
@@ -186,15 +191,16 @@ const listAvailableChannels = registered('list_available_channels', 'local', asy
 const searchMessages = registered('search_messages', 'discord', async (args, context) => {
   const limit = intArg(args.limit, context.settings.searchLimitPerQuery || 25, 1, 50);
   const resolvedChannelId = resolveChannelArg(args.channel_id, context.scope);
-  const resolvedAuthorId = resolveUserArg(args.author_id, context.scope);
+  const initialAuthorId = resolveUserArg(args.author_id, context.scope);
   const resolvedMentions = resolveUserArg(args.mentions, context.scope);
+  const rescued = rescueAtHandleInQuery(args.query as string | undefined, initialAuthorId, resolvedMentions, context.scope);
 
   const result = await runMessageSearch({
-    query: args.query as string | undefined,
+    query: rescued.query,
     pattern: args.pattern as string | undefined,
     channelId: resolvedChannelId,
     guildWide: args.guild_wide as boolean | undefined,
-    authorId: resolvedAuthorId,
+    authorId: rescued.authorId,
     has: args.has as any,
     date: args.date as string | undefined,
     afterDate: args.after_date as string | undefined,

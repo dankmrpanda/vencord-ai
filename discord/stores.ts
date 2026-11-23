@@ -152,74 +152,98 @@ export function getUser(userId: string): DiscordUser | null {
   }
 }
 
+interface GatheredParticipants {
+  users: DiscordUser[];
+  latestTime: Map<string, number>;
+  nicks: Map<string, string>;
+}
+
+function resolveMessageTimestampMs(msg: any, fallbackIndex: number): number {
+  let msgTime = 0;
+  if (msg?.timestamp) {
+    const parsed = typeof msg.timestamp === 'number' ? msg.timestamp : new Date(msg.timestamp).getTime();
+    if (!isNaN(parsed) && parsed > 0) msgTime = parsed;
+  }
+  if (msgTime === 0 && msg?.id) {
+    try {
+      const snowflakeTime = Number((BigInt(msg.id) >> 22n) + 1420070400000n);
+      if (!isNaN(snowflakeTime) && snowflakeTime > 0) msgTime = snowflakeTime;
+    } catch {}
+  }
+  return msgTime === 0 ? fallbackIndex + 1 : msgTime;
+}
+
 /**
- * Searches for mentionable users participating within the active conversation scope,
- * ordered by recent message recency (most recent message author first).
+ * Gathers all in-scope conversation participants without any 8-user truncation.
+ * Strictly isolated to permitted channels — never enumerates non-participating GuildMemberStore
+ * or RelationshipStore entries.
  */
-export function searchMentionableUsers(
-  query: string,
+function gatherScopeParticipants(
   scopeOrChannelId?: CurrentScopeContext | string | null,
   guildId?: string,
-): DiscordUser[] {
-  const queryLower = query.trim().replace(/^@/, '').toLowerCase();
+): GatheredParticipants {
   const userMap = new Map<string, DiscordUser>();
-  const userLatestMessageTime = new Map<string, number>();
+  const latestTime = new Map<string, number>();
+  const nicks = new Map<string, string>();
+  let effectiveGuildId = guildId;
 
   const addUser = (u: any, nick?: string | null, messageTimestamp?: number) => {
     if (!u) return;
-    const id = u.id || u.userId;
+    const id = typeof u === 'string' ? u : (u.id || u.userId);
     if (!id) return;
 
+    const rawUser = typeof u === 'string' ? (getUser(u) || { id }) : u;
     const existing = userMap.get(id);
     const resolvedUsername =
-      (u.username && u.username !== 'Member' && u.username !== 'User' ? u.username : undefined) ??
+      (rawUser.username && rawUser.username !== 'Member' && rawUser.username !== 'User' ? rawUser.username : undefined) ??
       existing?.username ??
       (nick && nick !== 'Member' ? nick : undefined) ??
-      `user_${id.slice(-4)}`;
+      `user_${String(id).slice(-4)}`;
 
     const resolvedGlobalName =
-      u.globalName ??
-      u.global_name ??
+      rawUser.globalName ??
+      rawUser.global_name ??
       (nick && nick !== resolvedUsername ? nick : null) ??
       existing?.globalName ??
       null;
+
+    if (nick && nick !== 'Member' && !nicks.has(id)) {
+      nicks.set(id, nick);
+    }
 
     const userObj: DiscordUser = {
       id,
       username: resolvedUsername,
       globalName: resolvedGlobalName,
-      avatar: u.avatar ?? existing?.avatar ?? null,
-      bot: Boolean(u.bot ?? existing?.bot),
+      avatar: rawUser.avatar ?? existing?.avatar ?? null,
+      bot: Boolean(rawUser.bot ?? existing?.bot),
     };
     userMap.set(id, userObj);
 
     if (typeof messageTimestamp === 'number' && !isNaN(messageTimestamp)) {
-      const prev = userLatestMessageTime.get(id) ?? 0;
-      if (messageTimestamp > prev) {
-        userLatestMessageTime.set(id, messageTimestamp);
-      }
-    } else if (!userLatestMessageTime.has(id)) {
-      userLatestMessageTime.set(id, 0);
+      const prev = latestTime.get(id) ?? 0;
+      if (messageTimestamp > prev) latestTime.set(id, messageTimestamp);
+    } else if (!latestTime.has(id)) {
+      latestTime.set(id, 0);
     }
   };
 
   try {
-    // 1. Resolve scope context and permitted channels
     let scopeContext: CurrentScopeContext | null = null;
     if (scopeOrChannelId && typeof scopeOrChannelId === 'object' && 'channelId' in scopeOrChannelId) {
       scopeContext = scopeOrChannelId as CurrentScopeContext;
     } else if (typeof scopeOrChannelId === 'string' && scopeOrChannelId) {
       try {
         const current = getCurrentScopeContext();
-        if (current && current.channelId === scopeOrChannelId) {
-          scopeContext = current;
-        }
+        if (current && current.channelId === scopeOrChannelId) scopeContext = current;
       } catch {}
     } else {
       try {
         scopeContext = getCurrentScopeContext();
       } catch {}
     }
+
+    effectiveGuildId ||= scopeContext?.guildId;
 
     let permittedChannelIds: string[];
     if (scopeContext) {
@@ -231,104 +255,184 @@ export function searchMentionableUsers(
       permittedChannelIds = currentCh ? [currentCh] : [];
     }
 
-    // 2. Extract conversation participants and messages strictly within permitted scope channels
     for (const chId of permittedChannelIds) {
       if (!chId || chId === '__FORBIDDEN_SCOPE_BLOCKED__') continue;
 
       const ch = getChannel(chId);
+      if (!effectiveGuildId && ch?.guild_id) effectiveGuildId = ch.guild_id;
 
-      // DM or Group DM participants are intrinsically in scope for that channel
       if (ch?.rawRecipients && Array.isArray(ch.rawRecipients)) {
-        for (const r of ch.rawRecipients) {
-          addUser(r);
-        }
+        for (const r of ch.rawRecipients) addUser(r);
       }
       if (ch?.recipients && Array.isArray(ch.recipients)) {
         for (const rId of ch.recipients) {
           const u = getUser(rId);
-          if (u) addUser(u);
-          else addUser({ id: rId });
+          addUser(u || { id: rId });
         }
       }
 
-      // Add loaded messages from this channel
       const loaded = getLoadedMessages(chId);
       if (Array.isArray(loaded)) {
         for (let idx = 0; idx < loaded.length; idx++) {
           const msg = loaded[idx];
-          if (!msg || !msg.author) continue;
+          if (!msg) continue;
+          const msgTime = resolveMessageTimestampMs(msg, idx);
 
-          let msgTime = 0;
-          if (msg.timestamp) {
-            const parsed = typeof msg.timestamp === 'number' ? msg.timestamp : new Date(msg.timestamp).getTime();
-            if (!isNaN(parsed) && parsed > 0) {
-              msgTime = parsed;
+          if (msg.author) {
+            const nick = (msg as any).nick ?? (msg.author as any)?.nick ?? null;
+            addUser(msg.author, nick, msgTime);
+          }
+          if (msg.referenced_message?.author) {
+            const refNick = (msg.referenced_message as any).nick ?? (msg.referenced_message.author as any)?.nick ?? null;
+            addUser(msg.referenced_message.author, refNick);
+          }
+          if (Array.isArray(msg.mentions)) {
+            for (const m of msg.mentions) {
+              if (typeof m === 'string') {
+                const u = getUser(m);
+                if (u) addUser(u);
+              } else if (m && (m.id || (m as any).userId)) {
+                addUser(m);
+              }
             }
           }
-          if (msgTime === 0 && msg.id) {
-            try {
-              const snowflakeTime = Number((BigInt(msg.id) >> 22n) + 1420070400000n);
-              if (!isNaN(snowflakeTime) && snowflakeTime > 0) {
-                msgTime = snowflakeTime;
-              }
-            } catch {}
-          }
-          // If no timestamp or snowflake, treat later array position as more recent
-          if (msgTime === 0) {
-            msgTime = idx + 1;
-          }
-
-          const nick = (msg as any).nick ?? (msg.author as any)?.nick ?? null;
-          addUser(msg.author, nick, msgTime);
         }
       }
     }
 
-    // Include explicit otherUser from scope context if in DM
     if (scopeContext?.isDM && scopeContext.otherUser) {
       addUser(scopeContext.otherUser);
+    }
+    if (scopeContext?.groupDMRecipients?.length) {
+      for (const r of scopeContext.groupDMRecipients) addUser(r);
+    }
+    if (scopeContext?.currentUser) {
+      addUser(scopeContext.currentUser);
+    }
+
+    // Per-user guild nickname enrichment for already-discovered in-scope participants only.
+    if (effectiveGuildId) {
+      const memberStore = getGuildMemberStore();
+      if (typeof memberStore?.getMember === 'function') {
+        for (const user of userMap.values()) {
+          try {
+            const member = memberStore.getMember(effectiveGuildId, user.id);
+            const nick = member?.nick;
+            if (typeof nick === 'string' && nick.trim() && nick !== 'Member') {
+              nicks.set(user.id, nick.trim());
+              if (!user.globalName) user.globalName = nick.trim();
+            }
+          } catch {}
+        }
+      }
     }
   } catch (err) {
     console.warn('[VencordAI] Error gathering mentionable users in scope:', err);
   }
 
-  // Filter matching users
-  const users = Array.from(userMap.values());
+  return { users: Array.from(userMap.values()), latestTime, nicks };
+}
+
+function sortGatheredUsers(
+  users: DiscordUser[],
+  latestTime: Map<string, number>,
+  nicks: Map<string, string>,
+  queryLower: string,
+): DiscordUser[] {
+  return [...users].sort((a, b) => {
+    const timeA = latestTime.get(a.id) ?? 0;
+    const timeB = latestTime.get(b.id) ?? 0;
+    if (timeB !== timeA) return timeB - timeA;
+
+    if (queryLower) {
+      const aNick = nicks.get(a.id)?.toLowerCase();
+      const bNick = nicks.get(b.id)?.toLowerCase();
+      const aStarts =
+        a.username.toLowerCase().startsWith(queryLower) ||
+        Boolean(a.globalName?.toLowerCase().startsWith(queryLower)) ||
+        Boolean(aNick?.startsWith(queryLower));
+      const bStarts =
+        b.username.toLowerCase().startsWith(queryLower) ||
+        Boolean(b.globalName?.toLowerCase().startsWith(queryLower)) ||
+        Boolean(bNick?.startsWith(queryLower));
+      if (aStarts && !bStarts) return -1;
+      if (!aStarts && bStarts) return 1;
+    }
+
+    return a.username.localeCompare(b.username);
+  });
+}
+
+/**
+ * Searches for mentionable users participating within the active conversation scope,
+ * ordered by recent message recency (most recent message author first).
+ */
+export function searchMentionableUsers(
+  query: string,
+  scopeOrChannelId?: CurrentScopeContext | string | null,
+  guildId?: string,
+): DiscordUser[] {
+  const queryLower = query.trim().replace(/^@/, '').toLowerCase();
+  const { users, latestTime, nicks } = gatherScopeParticipants(scopeOrChannelId, guildId);
+
   const filtered = queryLower
     ? users.filter((u) => {
         const matchUsername = u.username.toLowerCase().includes(queryLower);
         const matchGlobal = Boolean(u.globalName?.toLowerCase().includes(queryLower));
+        const matchNick = Boolean(nicks.get(u.id)?.toLowerCase().includes(queryLower));
         const matchId = u.id === queryLower;
-        return matchUsername || matchGlobal || matchId;
+        return matchUsername || matchGlobal || matchNick || matchId;
       })
     : users;
 
-  // Order in terms of recent message (newest first)
-  return filtered
-    .sort((a, b) => {
-      const timeA = userLatestMessageTime.get(a.id) ?? 0;
-      const timeB = userLatestMessageTime.get(b.id) ?? 0;
+  return sortGatheredUsers(filtered, latestTime, nicks, queryLower).slice(0, 8);
+}
 
-      // Primary sort: Most recent message author first
-      if (timeB !== timeA) {
-        return timeB - timeA;
-      }
+/**
+ * Resolves a single user name, display name, nickname, or @handle strictly within the active scope,
+ * searching all in-scope participants without the 8-item autocomplete cap.
+ */
+export function resolveInScopeUserByName(
+  nameQuery: string,
+  scopeOrChannelId?: CurrentScopeContext | string | null,
+  guildId?: string,
+): DiscordUser | null {
+  const normalized = nameQuery.trim().replace(/^@/, '').toLowerCase();
+  if (!normalized) return null;
+  const { users, latestTime, nicks } = gatherScopeParticipants(scopeOrChannelId, guildId);
+  const sorted = sortGatheredUsers(users, latestTime, nicks, normalized);
 
-      // Tiebreakers: Prefix match on username or globalName
-      if (queryLower) {
-        const aStarts =
-          a.username.toLowerCase().startsWith(queryLower) ||
-          Boolean(a.globalName?.toLowerCase().startsWith(queryLower));
-        const bStarts =
-          b.username.toLowerCase().startsWith(queryLower) ||
-          Boolean(b.globalName?.toLowerCase().startsWith(queryLower));
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-      }
+  const exact = sorted.filter(
+    (u) =>
+      u.id === normalized ||
+      u.username.toLowerCase() === normalized ||
+      u.globalName?.toLowerCase() === normalized ||
+      nicks.get(u.id)?.toLowerCase() === normalized,
+  );
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) {
+    // Prefer exact username match if display names collided
+    const exactUsername = exact.filter((u) => u.username.toLowerCase() === normalized);
+    if (exactUsername.length === 1) return exactUsername[0];
+    return exact[0];
+  }
 
-      return a.username.localeCompare(b.username);
-    })
-    .slice(0, 8);
+  const prefix = sorted.filter(
+    (u) =>
+      u.username.toLowerCase().startsWith(normalized) ||
+      u.globalName?.toLowerCase().startsWith(normalized) ||
+      nicks.get(u.id)?.toLowerCase().startsWith(normalized),
+  );
+  if (prefix.length === 1) return prefix[0];
+
+  const partial = sorted.filter(
+    (u) =>
+      u.username.toLowerCase().includes(normalized) ||
+      u.globalName?.toLowerCase().includes(normalized) ||
+      nicks.get(u.id)?.toLowerCase().includes(normalized),
+  );
+  if (partial.length === 1) return partial[0];
+  return null;
 }
 
 const BARE_NAME_STOPWORDS = new Set([
@@ -357,6 +461,8 @@ export function resolvePromptMentions(
 
   const mentionedUsers: DiscordUser[] = [];
   const seenIds = new Set<string>();
+  const { users, latestTime, nicks } = gatherScopeParticipants(scopeOrChannelId, guildId);
+  const sortedUsers = sortGatheredUsers(users, latestTime, nicks, '');
 
   // 1. Match Discord snowflake mentions: <@1234567890> or <@!1234567890>
   const idMatches = prompt.matchAll(/<@!?(\d+)>/g);
@@ -364,47 +470,47 @@ export function resolvePromptMentions(
     const id = match[1];
     if (!seenIds.has(id)) {
       seenIds.add(id);
-      const user = getUser(id) || { id, username: `user_${id}` };
+      const user = sortedUsers.find((u) => u.id === id) || getUser(id) || { id, username: `user_${id}` };
       mentionedUsers.push(user);
     }
   }
 
-  // 2. Match text mentions: @username or @display_name
-  const nameMatches = prompt.matchAll(/@([a-zA-Z0-9_.-]+)/g);
-  for (const match of nameMatches) {
+  // 2. Match @username, @display_name, or multi-word @Display Name (ignoring emails like a@b.com)
+  const sortedLabels = sortedUsers
+    .flatMap((u) => [u.globalName, nicks.get(u.id), u.username].filter((v): v is string => Boolean(v && v.trim())))
+    .sort((a, b) => b.length - a.length);
+  const atMatches = prompt.matchAll(/(?:^|[\s([{"'.,!?;:])@([\p{L}\p{N}_.-]+)/gu);
+  for (const match of atMatches) {
+    const matchStart = (match.index ?? 0) + match[0].indexOf('@');
+    const afterAt = prompt.slice(matchStart + 1);
     const nameQuery = match[1].toLowerCase();
     // Ignore special discord tags like @everyone or @here
     if (nameQuery === 'everyone' || nameQuery === 'here') continue;
 
-    const matchedUsers = searchMentionableUsers(nameQuery, scopeOrChannelId, guildId);
-    const exactMatch =
-      matchedUsers.find(
-        (u) =>
-          u.username.toLowerCase() === nameQuery ||
-          u.globalName?.toLowerCase() === nameQuery,
-      ) || matchedUsers[0];
+    // Try longest multi-word display name/nick directly after @ first, then single-token resolution
+    let resolved: DiscordUser | null = null;
+    const afterAtLower = afterAt.toLowerCase();
+    for (const label of sortedLabels) {
+      const labelLower = label.trim().toLowerCase();
+      if (labelLower.length < 2 || !afterAtLower.startsWith(labelLower)) continue;
+      const boundaryChar = afterAt[labelLower.length];
+      if (!boundaryChar || !/[\p{L}\p{N}_]/u.test(boundaryChar)) {
+        resolved = resolveInScopeUserByName(labelLower, scopeOrChannelId, guildId);
+        if (resolved) break;
+      }
+    }
+    if (!resolved) {
+      resolved = resolveInScopeUserByName(nameQuery, scopeOrChannelId, guildId);
+    }
 
-    if (exactMatch && !seenIds.has(exactMatch.id)) {
-      seenIds.add(exactMatch.id);
-      mentionedUsers.push(exactMatch);
+    if (resolved && !seenIds.has(resolved.id)) {
+      seenIds.add(resolved.id);
+      mentionedUsers.push(resolved);
     }
   }
 
   // 3. Match bare (un-@-prefixed) participant names strictly within active scope when unambiguous
-  const candidateMap = new Map<string, DiscordUser>();
-  for (const u of searchMentionableUsers('', scopeOrChannelId, guildId)) {
-    if (u?.id) candidateMap.set(u.id, u);
-  }
-  if (scopeOrChannelId && typeof scopeOrChannelId === 'object') {
-    if (scopeOrChannelId.otherUser?.id) candidateMap.set(scopeOrChannelId.otherUser.id, scopeOrChannelId.otherUser);
-    for (const rec of scopeOrChannelId.groupDMRecipients || []) {
-      if (rec?.id && !candidateMap.has(rec.id)) {
-        candidateMap.set(rec.id, { id: rec.id, username: rec.username, globalName: rec.globalName });
-      }
-    }
-  }
-
-  if (candidateMap.size > 0) {
+  if (sortedUsers.length > 0) {
     const nameToIds = new Map<string, Set<string>>();
     const nameToUser = new Map<string, DiscordUser>();
     const registerLabel = (label: string | null | undefined, user: DiscordUser) => {
@@ -415,16 +521,17 @@ export function resolvePromptMentions(
       nameToUser.set(normalized, user);
     };
 
-    for (const user of candidateMap.values()) {
+    for (const user of sortedUsers) {
       registerLabel(user.username, user);
       registerLabel(user.globalName, user);
+      registerLabel(nicks.get(user.id), user);
     }
 
     for (const [label, ids] of nameToIds.entries()) {
       if (ids.size !== 1) continue;
       const user = nameToUser.get(label)!;
       if (seenIds.has(user.id)) continue;
-      const wholeWord = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(label)}(?![\\p{L}\\p{N}_])`, 'iu');
+      const wholeWord = new RegExp(`(?<![\\p{L}\\p{N}_@])${escapeRegExp(label)}(?![\\p{L}\\p{N}_@])`, 'iu');
       if (wholeWord.test(prompt)) {
         seenIds.add(user.id);
         mentionedUsers.push(user);

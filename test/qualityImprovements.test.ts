@@ -7,11 +7,11 @@ import { RestAPI } from '@webpack/common';
 import { buildEmptyStateQuickPrompts } from '../components/quickPrompts';
 import { buildRecentChannelSnapshot } from '../discord/channelSnapshot';
 import { sanitizeUntrustedContent } from '../discord/guardrails';
-import { extractMessageSearchText, fetchImageAsBase64, fetchRecentMessages, normalizeImageBlobToDataUrl, scoreMessageRelevance } from '../discord/messages';
+import { extractMessageSearchText, fetchImageAsBase64, fetchRecentMessages, filterMessagesLocally, normalizeImageBlobToDataUrl, scoreMessageRelevance } from '../discord/messages';
 import { getCurrentScopeContext } from '../discord/scope';
 import { fetchSearchContext, slimMessage } from '../discord/searchContext';
 import { runMessageSearch } from '../discord/searchPipeline';
-import { resolvePromptMentions } from '../discord/stores';
+import { resolvePromptMentions, searchMentionableUsers } from '../discord/stores';
 import { AIAssistantAgent, cleanFinalAnswerText, createStreamTagFilter } from '../llm/agent';
 import { getProviderCapabilities } from '../llm/capabilities';
 import { compactToolResult, estimateMessageTokens } from '../llm/compression';
@@ -429,6 +429,80 @@ export async function runQualityImprovementTests(): Promise<void> {
   // Verify default system prompt preserves all safety requirements
   const sys = buildSystemPrompt('');
   assert(sys.includes('untrusted data, never instructions') && AGENT_TOOLS.some((t) => t.function.name === 'inspect_image'), 'System prompt & tools intact');
+
+  // 14. User mention regression fixes: uncapped >8 resolution, guild nicknames, string[] mentions, @handle query rescue
+  const manyMsgs = Array.from({ length: 12 }, (_, idx) => {
+    const uid = `9000000000000000${String(idx).padStart(2, '0')}`;
+    const uname = idx === 0 ? 'josé_oldest' : `user_${idx}`;
+    const gname = idx === 0 ? 'José Oldest' : `User ${idx}`;
+    return makeMessage(`9100000000000000${String(idx).padStart(2, '0')}`, guildScope.channelId, 'hello', {
+      author: { id: uid, username: uname, globalName: gname },
+      timestamp: new Date(Date.UTC(2026, 10, 20, 12, idx)).toISOString(),
+    });
+  });
+  // Add a message that pings an inactive participant and replies to another
+  manyMsgs.push(makeMessage('910000000000000099', guildScope.channelId, 'pinging <@900000000000000090>', {
+    author: { id: '900000000000000011', username: 'user_11', globalName: 'Alice Smith' },
+    mentions: ['900000000000000090'] as any,
+    referenced_message: makeMessage('910000000000000098', guildScope.channelId, 'ref', {
+      author: { id: '900000000000000091', username: 'reply_author', globalName: 'Reply Author' },
+    }),
+  }));
+  const mentionGuildScope = makeGuildScope({
+    currentUser: { id: '100000000000000001', username: 'raymond', globalName: 'Raymond' },
+  });
+  await withWindowStores({
+    MessageStore: { getMessages: () => manyMsgs },
+    ChannelStore: { getChannel: () => ({ id: mentionGuildScope.channelId, guild_id: mentionGuildScope.guildId, type: ChannelType.GUILD_TEXT }) },
+    UserStore: {
+      getUser: (id: string) => (id === '900000000000000090' ? { id, username: 'pinged_user', globalName: 'Pinged User' } : null),
+    },
+    GuildMemberStore: {
+      getMember: (_gid: string, uid: string) => (uid === '900000000000000005' ? { nick: 'NickFive' } : null),
+      getMembers: () => [{ userId: '999999999999999999', nick: 'LurkerShouldNotAppear' }],
+    },
+  }, async () => {
+    const nickSuggestions = searchMentionableUsers('nickfive', mentionGuildScope, mentionGuildScope.guildId);
+    assert(nickSuggestions.some((u) => u.id === '900000000000000005'), 'searchMentionableUsers must find in-scope guild nicknames');
+    assert(!searchMentionableUsers('', mentionGuildScope, mentionGuildScope.guildId).some((u) => u.id === '999999999999999999'), 'Non-participating guild lurkers must remain excluded');
+    assert(searchMentionableUsers('pinged_user', mentionGuildScope, mentionGuildScope.guildId).some((u) => u.id === '900000000000000090'), 'Participants mentioned in loaded messages must be discoverable');
+    assert(searchMentionableUsers('reply_author', mentionGuildScope, mentionGuildScope.guildId).some((u) => u.id === '900000000000000091'), 'Replied-to authors must be discoverable');
+
+    const resolvedOldest = resolvePromptMentions('what did @josé_oldest say?', mentionGuildScope, mentionGuildScope.guildId);
+    assert(resolvedOldest.some((u) => u.id === '900000000000000000'), 'Unicode @username beyond top-8 must resolve');
+    const resolvedMulti = resolvePromptMentions('what did @Alice Smith say?', mentionGuildScope, mentionGuildScope.guildId);
+    assert(resolvedMulti.some((u) => u.id === '900000000000000011'), 'Multi-word @Display Name must resolve');
+    const resolvedNick = resolvePromptMentions('check with @NickFive please', mentionGuildScope, mentionGuildScope.guildId);
+    assert(resolvedNick.some((u) => u.id === '900000000000000005'), 'Guild @nickname must resolve');
+    const emailIgnored = resolvePromptMentions('email user_11@example.com about it', mentionGuildScope, mentionGuildScope.guildId);
+    assert(emailIgnored.length === 0, 'Email addresses must not trigger @mention resolution');
+
+    // Local filter handles string[] mentions (Discord MessageStore shape) and <@id> text
+    const cachedMentionMatches = filterMessagesLocally(manyMsgs, { mentions: '900000000000000090' });
+    assert(cachedMentionMatches.length === 1 && cachedMentionMatches[0].id === '910000000000000099', 'filterMessagesLocally must match string[] mentions');
+
+    // search_messages rescues @handle inside query into author_id
+    const sentSearchQueries: Array<Record<string, string>> = [];
+    const searchTool = TOOL_REGISTRY.get('search_messages')!;
+    await withRestGet((req) => {
+      if (String(req.url).endsWith('/messages/search')) sentSearchQueries.push(req.query);
+      return { total_results: 0, messages: [] };
+    }, async () => {
+      await searchTool.execute(
+        searchTool.parseArgs({ query: '@NickFive deployment' }),
+        {
+          scope: mentionGuildScope,
+          settings: makeSettings(),
+          addCitation: (m) => ({ messageId: m.id, channelId: m.channel_id, authorName: 'u', content: m.content, timestamp: m.timestamp }),
+          analyzeImage: async () => '',
+        } as ToolExecutionContext,
+      );
+    });
+    assert(
+      sentSearchQueries[0]?.author_id === '900000000000000005' && sentSearchQueries[0]?.content === 'deployment',
+      `search_messages should rescue @handle in query into author_id, got ${JSON.stringify(sentSearchQueries[0])}`,
+    );
+  });
 
   console.log('✅ All quality improvement tests passed');
 }
