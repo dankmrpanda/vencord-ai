@@ -7,6 +7,7 @@
 import { React } from '@webpack/common';
 import { CurrentScopeContext } from '../types';
 import { AtIcon, ChevronDownIcon, HashIcon, ServerIcon, UsersIcon } from './icons';
+import { isEscapeForPanel, isUnhandledEscape } from './sidebarActions';
 
 interface ScopeIndicatorProps {
   context: CurrentScopeContext | null;
@@ -65,9 +66,9 @@ export const ScopeIndicator: React.FC<ScopeIndicatorProps> = ({ context, onScope
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      const panel = rootRef.current?.closest('#vencord-ai-sidebar-root');
-      if (e.target !== document.body && !panel?.contains(e.target as Node)) return;
+      if (!isUnhandledEscape(e)) return;
+      const panel = rootRef.current?.closest('#vencord-ai-sidebar-root') ?? null;
+      if (!isEscapeForPanel(e.target, panel, document.body)) return;
       e.preventDefault();
       setOpen(false);
     };

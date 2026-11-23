@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-export interface DiagnosticLogEntry {
-  time: string;
-  level: 'info' | 'warn' | 'error';
-  message: string;
-}
+import { PluginLogEntry } from './types';
+
+export type DiagnosticLogEntry = PluginLogEntry;
 
 function safeString(value: unknown): string {
   try {

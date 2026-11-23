@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import * as webpackCommon from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from '../assistantLaunch';
 import { clickableProps, shortcutLabel } from '../components/a11y';
-import { classifyChatError } from '../components/chatErrors';
+import { classifyChatError, classifyErrorMessage } from '../components/chatErrors';
 import { classifyLink } from '../components/chatLinks';
 import { ChatMessage, isEmptyFinishedReply } from '../components/ChatMessage';
 import { displayBaseUrl } from '../components/DebugDrawer';
@@ -37,6 +37,13 @@ import {
   streamScrollKey,
   syncSessionToChannel,
 } from '../components/sidebarActions';
+import {
+  clampSidebarWidth,
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_DISCORD_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+} from '../components/sidebarLayout';
 import { DEFAULT_SETTINGS, validateBaseUrlInput } from '../settings';
 import { getSessionById, getSessionsForChannel } from '../storage/chatHistory';
 import { AssistantChatMessage, CurrentScopeContext } from '../types';
@@ -570,6 +577,44 @@ async function uiQ11AttachmentChips(): Promise<void> {
     'UI-Q11 image thumbnail plus file chip');
 }
 
+/** UI layout clamping, structured errorKind classification, and ScopeIndicator IME-safe Escape. */
+async function uiLayoutAndStructuredErrors(): Promise<void> {
+  assert(clampSidebarWidth(NaN, 1440) === DEFAULT_SIDEBAR_WIDTH, 'NaN width uses default');
+  assert(clampSidebarWidth(120, 1440) === MIN_SIDEBAR_WIDTH, 'Clamps below min width');
+  assert(clampSidebarWidth(900, 1440) === MAX_SIDEBAR_WIDTH, 'Clamps above max width');
+  assert(clampSidebarWidth(700, 1000) === 1000 - MIN_DISCORD_WIDTH, 'Leaves Discord MIN_DISCORD_WIDTH room');
+
+  assert(classifyErrorMessage('LLM completion failed (401).') === 'auth', '401 classifies as auth');
+  const structuredMsg: AssistantChatMessage = {
+    ...assistantMessage('Custom provider rejection'),
+    isError: true,
+    errorKind: 'auth',
+  };
+  const rendered = renderWithRealReact(() => RealReact.createElement(ChatMessage, { message: structuredMsg, onOpenSettings: () => undefined }));
+  assert(rendered.includes('data-error-kind="auth"') && rendered.includes('Open settings'),
+    'ChatMessage uses structured errorKind directly');
+
+  const originalAcquire = modelLifecycle.acquire;
+  const originalRun = AIAssistantAgent.prototype.run;
+  await withMemoryLocalStorage(async () => {
+    try {
+      modelLifecycle.acquire = async () => () => undefined;
+      AIAssistantAgent.prototype.run = async () => { throw new Error('LLM completion failed (401).'); };
+      const service = new ChatService({ ...DEFAULT_SETTINGS });
+      await service.initSession('ui_err_chan');
+      await service.sendMessage('hi');
+      const reply = service.getActiveSession()!.messages.at(-1)!;
+      assert(reply.isError && reply.errorKind === 'auth', `ChatService did not set structured errorKind: ${JSON.stringify(reply)}`);
+    } finally {
+      modelLifecycle.acquire = originalAcquire;
+      AIAssistantAgent.prototype.run = originalRun;
+    }
+  });
+
+  const scopeSrc = readFileSync(new URL('../components/ScopeIndicator.tsx', import.meta.url), 'utf8');
+  assert(scopeSrc.includes('isUnhandledEscape(e)'), 'ScopeIndicator Escape listener must ignore IME composition');
+}
+
 const CASES: Array<[string, () => Promise<void>]> = [
   ['SEC-10 classifyLink allowlist', sec10ClassifyLink],
   ['SEC-10 javascript: href rendered', sec10ScriptSchemeHref],
@@ -594,6 +639,7 @@ const CASES: Array<[string, () => Promise<void>]> = [
   ['UI-Q08 delete needs confirmation', uiQ08DeleteConfirm],
   ['UI-Q07 accessibility basics', uiQ07Accessibility],
   ['UI-Q11 attachment file chips', uiQ11AttachmentChips],
+  ['UI layout clamp, structured errorKind, and ScopeIndicator IME Escape', uiLayoutAndStructuredErrors],
 ];
 
 export async function runHuntUiTests(): Promise<void> {

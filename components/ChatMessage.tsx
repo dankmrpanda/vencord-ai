@@ -7,7 +7,7 @@
 import { React } from '@webpack/common';
 import { jumpToMessage } from '../discord/stores';
 import { AssistantChatMessage } from '../types';
-import { classifyChatError } from './chatErrors';
+import { classifyChatError, errorHintForKind } from './chatErrors';
 import { classifyLink } from './chatLinks';
 import { CheckIcon, ChevronDownIcon, CopyIcon, RetryIcon, SparkleIcon, WarningIcon } from './icons';
 import { MessagePreview, SourceFaces } from './MessagePreview';
@@ -220,7 +220,9 @@ const Sources: React.FC<{ message: AssistantChatMessage }> = ({ message }) => {
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSettings, onRetry }) => {
   const isUser = message.role === 'user';
   // Only a reply chatService marked as an error: model output can imitate the error prefix.
-  const errorHint = isUser || !message.isError ? null : classifyChatError(message.content);
+  const errorHint = isUser || !message.isError
+    ? null
+    : (message.errorKind ? errorHintForKind(message.errorKind) : classifyChatError(message.content));
   const [copied, setCopied] = React.useState(false);
 
   if (isUser) {

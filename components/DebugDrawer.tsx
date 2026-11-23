@@ -4,7 +4,7 @@
  */
 
 import { React } from '@webpack/common';
-import { CurrentScopeContext, PluginSettings } from '../types';
+import { CurrentScopeContext, PluginLogEntry, PluginSettings } from '../types';
 import { CloseIcon } from './icons';
 
 /** UI-11: shows only origin + path, so userinfo or a query-string token never appears on screen. */
@@ -19,7 +19,7 @@ export function displayBaseUrl(raw: string | undefined): string {
 
 interface DebugDrawerProps {
   isOpen: boolean;
-  logs: Array<{ time: string; level: string; message: string }>;
+  logs: PluginLogEntry[];
   currentScope: CurrentScopeContext | null;
   settings: PluginSettings;
   onClose: () => void;

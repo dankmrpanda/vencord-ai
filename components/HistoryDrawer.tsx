@@ -5,6 +5,7 @@
 
 import { React } from '@webpack/common';
 import { ChatSession } from '../types';
+import { isActivationKey } from './a11y';
 import { CloseIcon, TrashIcon } from './icons';
 
 interface HistoryDrawerProps {
@@ -88,7 +89,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                 aria-disabled={disabled}
                 onClick={() => { if (!disabled) onSelectSession(s); }}
                 onKeyDown={(e) => {
-                  if (disabled || e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                  if (disabled || e.target !== e.currentTarget || !isActivationKey(e.key)) return;
                   e.preventDefault();
                   onSelectSession(s);
                 }}

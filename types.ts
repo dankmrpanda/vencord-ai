@@ -260,6 +260,14 @@ export interface UserImageAttachment {
   dataUrl: string;
 }
 
+export type ChatErrorKind = 'unreachable' | 'auth' | 'model' | 'baseUrl';
+
+export interface PluginLogEntry {
+  time: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+}
+
 export interface AssistantChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -271,6 +279,7 @@ export interface AssistantChatMessage {
   isStreaming?: boolean;
   /** Set by chatService when it writes a failure into the reply; model text can never set it. */
   isError?: boolean;
+  errorKind?: ChatErrorKind;
 }
 
 export interface ChatSession {

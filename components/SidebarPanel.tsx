@@ -17,6 +17,7 @@ import {
   ChatSession,
   CurrentScopeContext,
   DiscordUser,
+  PluginLogEntry,
   PluginSettings,
   UserImageAttachment,
 } from '../types';
@@ -68,7 +69,7 @@ interface SidebarPanelProps {
   settings: PluginSettings;
   onClose: () => void;
   onOpenSettings?: () => void;
-  logs?: Array<{ time: string; level: 'info' | 'warn' | 'error'; message: string }>;
+  logs?: PluginLogEntry[];
   launchRequest?: AssistantLaunchRequest | null;
   onLaunchConsumed?: () => void;
 }
@@ -313,30 +314,35 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   };
 
   const lastSendRef = React.useRef<LastSend | null>(null);
+  const sendingRef = React.useRef(false);
   const handleSend = async (customPrompt?: string, retryRequest?: AssistantLaunchRequest | null) => {
     const imagesToSend = !customPrompt && pendingImages.length ? pendingImages : undefined;
     const promptToSend = customPrompt || inputText.trim() || (imagesToSend ? 'Describe this image.' : '');
-    if (!promptToSend || isGenerating) return;
+    if (!promptToSend || isGenerating || sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      isUserScrolledUpRef.current = false;
+      if (!customPrompt) {
+        // Quick prompts and Retry leave a half-typed question in the box alone.
+        setInputText('');
+        setPendingImages([]);
+      }
 
-    isUserScrolledUpRef.current = false;
-    if (!customPrompt) {
-      // Quick prompts and Retry leave a half-typed question in the box alone.
-      setInputText('');
-      setPendingImages([]);
+      // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
+      const req = retryRequest || launchRequestForSend(launchRequest, customPrompt);
+      if (req && !retryRequest) onLaunchConsumed?.();
+
+      // SEC-09: the channel listener can lag; never send into another channel's session.
+      await syncSessionToChannel(chatService, getCurrentChannelId).catch(() => false);
+      // UI-01: keep the chosen scope, unless the channel changed before the listener noticed.
+      const sendScope = scopeForChannel(currentScope, getCurrentChannelId());
+      if (sendScope !== currentScope) setCurrentScope(sendScope);
+      lastSendRef.current = { sessionId: chatService.getActiveSession()?.id, prompt: promptToSend, request: req };
+      await chatService.sendMessage(promptToSend, req, sendScope || undefined, imagesToSend);
+      refreshSessions(getCurrentChannelId());
+    } finally {
+      sendingRef.current = false;
     }
-
-    // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
-    const req = retryRequest || launchRequestForSend(launchRequest, customPrompt);
-    if (req && !retryRequest) onLaunchConsumed?.();
-
-    // SEC-09: the channel listener can lag; never send into another channel's session.
-    await syncSessionToChannel(chatService, getCurrentChannelId).catch(() => false);
-    // UI-01: keep the chosen scope, unless the channel changed before the listener noticed.
-    const sendScope = scopeForChannel(currentScope, getCurrentChannelId());
-    if (sendScope !== currentScope) setCurrentScope(sendScope);
-    lastSendRef.current = { sessionId: chatService.getActiveSession()?.id, prompt: promptToSend, request: req };
-    await chatService.sendMessage(promptToSend, req, sendScope || undefined, imagesToSend);
-    refreshSessions(getCurrentChannelId());
   };
 
   const checkMentionTrigger = (text: string, cursorPosition: number) => {
@@ -447,20 +453,27 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
 
   // Drag the left edge to resize; the width is clamped so Discord keeps a usable chat column.
   const [resizing, setResizing] = React.useState(false);
+  const resizeCleanupRef = React.useRef<(() => void) | null>(null);
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
+    resizeCleanupRef.current?.();
     setResizing(true);
     const startX = e.clientX;
     const startWidth = getSidebarWidth();
     const onMove = (ev: MouseEvent) => setSidebarWidth(startWidth + (startX - ev.clientX));
-    const onUp = (ev: MouseEvent) => {
-      setSidebarWidth(startWidth + (startX - ev.clientX), true);
+    const cleanup = () => {
       setResizing(false);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.style.removeProperty('cursor');
       document.body.style.removeProperty('user-select');
+      if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
     };
+    const onUp = (ev: MouseEvent) => {
+      setSidebarWidth(startWidth + (startX - ev.clientX), true);
+      cleanup();
+    };
+    resizeCleanupRef.current = cleanup;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     window.addEventListener('mousemove', onMove);
@@ -474,7 +487,10 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   React.useEffect(() => {
     const onWindowResize = () => setSidebarWidth(getSidebarWidth());
     window.addEventListener('resize', onWindowResize);
-    return () => window.removeEventListener('resize', onWindowResize);
+    return () => {
+      window.removeEventListener('resize', onWindowResize);
+      resizeCleanupRef.current?.();
+    };
   }, []);
 
   const renderQuickIcon = (kind: QuickPromptIconKind): React.ReactNode => {

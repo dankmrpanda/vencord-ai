@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { classifyErrorMessage } from '../components/chatErrors';
 import { getCurrentScopeContext } from '../discord/scope';
 import { AIAssistantAgent } from '../llm/agent';
 import { modelLifecycle } from '../llm/modelLifecycle';
@@ -246,8 +247,10 @@ export class ChatService {
     } catch (err: any) {
       if (assistantMessage) {
         if (!controller.signal.aborted && !String(err?.message || '').includes('Agent execution cancelled')) {
-          assistantMessage.content = `⚠️ **Error**: ${err.message || String(err)}`;
+          const rawMessage = err?.message || String(err);
+          assistantMessage.content = `⚠️ **Error**: ${rawMessage}`;
           assistantMessage.isError = true;
+          assistantMessage.errorKind = classifyErrorMessage(rawMessage) ?? undefined;
         }
       } else if (!controller.signal.aborted) {
         throw err;

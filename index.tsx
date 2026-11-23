@@ -8,13 +8,13 @@ import { NavContextMenuPatchCallback } from '@api/ContextMenu';
 import definePlugin from '@utils/types';
 import { createRoot as vcCreateRoot, Menu, React } from '@webpack/common';
 import { clearAssistantLaunchRequest, getAssistantLaunchRequest, setAssistantLaunchRequest } from './assistantLaunch';
-import { shortcutLabel } from './components/a11y';
+import { isActivationKey, shortcutLabel } from './components/a11y';
 import { getPluginErrorBoundary } from './components/PluginErrorBoundary';
 import { SidebarPanel } from './components/SidebarPanel';
 import { isEscapeForPanel, isUnhandledEscape } from './components/sidebarActions';
 import { SIDEBAR_CSS } from './components/sidebarCss';
 import { setSidebarDocked } from './components/sidebarLayout';
-import { DiagnosticLogEntry, renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
+import { renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
 import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
 import { findByCode, findByProps } from './discord/stores';
 import { getChatService } from './services/chatService';
@@ -25,7 +25,7 @@ import {
   settings,
   SettingsPanel,
 } from './settings';
-import { AssistantLaunchRequest, ChannelType, DiscordChannel, DiscordMessage, PluginSettings } from './types';
+import { AssistantLaunchRequest, ChannelType, DiscordChannel, DiscordMessage, PluginLogEntry, PluginSettings } from './types';
 
 let rootContainer: HTMLDivElement | null = null;
 let reactRoot: any = null;
@@ -107,7 +107,7 @@ function injectPluginStyles() {
   stylesheetInjected = true;
 }
 
-const pluginLogs: DiagnosticLogEntry[] = [];
+const pluginLogs: PluginLogEntry[] = [];
 
 export function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...args: any[]) {
   const time = new Date().toLocaleTimeString();
@@ -279,11 +279,18 @@ function renderSidebar() {
 }
 
 // UI-Q02: Vencord exposes openPluginModal on its global; without it the settings buttons stay hidden.
+const openPluginSettings = () => {
+  const vencord = typeof window !== 'undefined' ? (window as any).Vencord : undefined;
+  const open = vencord?.Components?.openPluginModal;
+  const plugin = vencord?.Plugins?.plugins?.AIAssistant;
+  if (typeof open === 'function' && plugin) open(plugin);
+};
+
 function getPluginSettingsOpener(): (() => void) | undefined {
   const vencord = typeof window !== 'undefined' ? (window as any).Vencord : undefined;
   const open = vencord?.Components?.openPluginModal;
   const plugin = vencord?.Plugins?.plugins?.AIAssistant;
-  return typeof open === 'function' && plugin ? () => open(plugin) : undefined;
+  return typeof open === 'function' && plugin ? openPluginSettings : undefined;
 }
 
 // UI-13: an unsent launch request ends with the panel, so it cannot attach to a later, unrelated question.
@@ -389,7 +396,7 @@ function injectHeaderButton() {
     btn.addEventListener('click', handleClick);
     btn.addEventListener('mousedown', (e) => e.stopPropagation());
     btn.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
+      if (isActivationKey(e.key)) {
         e.preventDefault();
         toggleAIAssistant();
       }

@@ -152,26 +152,6 @@ export async function getSessionById(id: string): Promise<ChatSession | null> {
   return session;
 }
 
-export async function getLatestSession(): Promise<ChatSession | null> {
-  try {
-    const db = await openDB();
-    const session = await new Promise<ChatSession | null>((resolve) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const index = store.index('updatedAt');
-      const req = index.openCursor(null, 'prev');
-      req.onsuccess = () => {
-        const cursor = req.result;
-        resolve(cursor ? (cursor.value as ChatSession) : null);
-      };
-      req.onerror = () => resolve(null);
-    });
-    if (session) return session;
-  } catch {}
-
-  return null;
-}
-
 const ACTIVE_SESSION_KEY = 'vencord_ai_active_session_id';
 let inMemoryActiveSessionId: string | null = null;
 

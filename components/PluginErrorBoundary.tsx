@@ -4,12 +4,9 @@
  */
 
 import { React } from '@webpack/common';
+import { PluginLogEntry } from '../types';
 
-export interface PluginLogEntry {
-  time: string;
-  level: 'info' | 'warn' | 'error';
-  message: string;
-}
+export type { PluginLogEntry };
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;

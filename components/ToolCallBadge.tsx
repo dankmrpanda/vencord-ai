@@ -17,7 +17,7 @@ function quoted(value: unknown, max = 48): string {
 }
 
 /** A readable, human description of one tool step, in the past tense once it has finished. */
-export function describeStep(step: Pick<AgentStep, 'toolName' | 'toolArgs' | 'content'>, done: boolean): string {
+function describeStep(step: Pick<AgentStep, 'toolName' | 'toolArgs' | 'content'>, done: boolean): string {
   const args = step.toolArgs || {};
   const verb = (running: string, finished: string) => (done ? finished : running);
   switch (step.toolName) {
@@ -84,12 +84,12 @@ export const ToolCallBadge: React.FC<ToolCallBadgeProps> = ({ step }) => {
 };
 
 /** Steps that represent tool use (the final 'answer' step is the reply itself). */
-export function toolStepsOf(steps: AgentStep[] | undefined): AgentStep[] {
+function toolStepsOf(steps: AgentStep[] | undefined): AgentStep[] {
   return (steps || []).filter((s) => s.type === 'tool_call' || s.type === 'tool_result' || s.type === 'error');
 }
 
 /** The collapsed one-line summary of a finished run's tool use, e.g. "Used 3 tools (1 failed)". */
-export function activitySummary(steps: AgentStep[]): string {
+function activitySummary(steps: AgentStep[]): string {
   const failed = steps.filter((s) => s.type === 'error' || s.toolResult?.ok === false).length;
   const base = `Used ${steps.length} tool${steps.length === 1 ? '' : 's'}`;
   return failed ? `${base} (${failed} failed)` : base;
