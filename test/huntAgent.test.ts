@@ -364,8 +364,12 @@ async function live02ToolErrorStatusAndTextToolCall(): Promise<void> {
 
   const call = '<tool_call>\n{"name": "get_message_details", "arguments": {"channel_id": "1", "message_id": "2"}}\n</tool_call>';
   for (const [finalText, expected] of [[call, null], [`The image shows a ticket.\n${call}`, 'The image shows a ticket.'], [`Partial ${'<tool_call>'}{"name": "x"`, 'Partial']] as Array<[string, string | null]>) {
-    const result = await quiet(() => withScriptedLLM((_body, index) => ({ content: index === 0 ? 'thinking' : finalText }), async () =>
-      new AIAssistantAgent(settings()).run('explain', [], undefined, undefined, undefined, dmScope())));
+    const result = await quiet(() => withScriptedLLM((_body, index) => (
+      index === 0
+        ? { toolCalls: [{ name: 'get_current_context', args: {} }] }
+        : { content: finalText }
+    ), async () =>
+      new AIAssistantAgent(settings({ maxSearchIterations: 1 })).run('explain', [], undefined, undefined, undefined, dmScope())));
     assert(!/tool_call/.test(result.content), `LIVE-02 text tool call shown as the answer: ${JSON.stringify(result.content)}`);
     if (expected) assert(result.content === expected, `LIVE-02 answer text around the tool call was lost: ${JSON.stringify(result.content)}`);
   }
@@ -1240,12 +1244,12 @@ async function revLlm01FinalizationIdleTimer(): Promise<void> {
     let calls = 0;
     (globalThis as any).fetch = async (_url: string, init: any) => {
       calls++;
-      if (calls === 1) return new Response(sseBody({ content: 'thinking' }, 'call_1'), { status: 200 });
+      if (calls === 1) return new Response(sseBody({ toolCalls: [{ name: 'get_current_context', args: {} }] }, 'call_1'), { status: 200 });
       return new Response(slowStream(init.signal, 30, 20, stallAfter), { status: 200 });
     };
     let streamed = '';
     const startedAt = Date.now();
-    const result = await quiet(() => new AIAssistantAgent(settings()).run('what is a closure?', [], { onToken: (token) => { streamed += token; } }, undefined, undefined, dmScope()));
+    const result = await quiet(() => new AIAssistantAgent(settings({ maxSearchIterations: 1 })).run('what is a closure?', [], { onToken: (token) => { streamed += token; } }, undefined, undefined, dmScope()));
     return { content: result.content, streamed, ms: Date.now() - startedAt };
   };
   try {

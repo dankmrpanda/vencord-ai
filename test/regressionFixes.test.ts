@@ -77,7 +77,7 @@ export async function runRegressionFixTests(): Promise<void> {
       if (step.type === 'tool_call' && step.id.startsWith('tool_rejected_')) throw new Error('Fixture callback failure');
     },
   }, undefined, undefined, scope);
-  assert(result.content === 'Final answer.', 'Agent must finalize after a rejected parallel tool execution');
+  assert(result.content === 'Evidence gathered.', 'Agent must answer after a rejected parallel tool execution');
   assert(toolMessages.length === 2, 'Every declared tool call must receive a tool response');
   const rejected = toolMessages.find((message) => message.tool_call_id === 'rejected');
   assert(String(rejected?.content).includes('tool_error'), 'Rejected executions must become structured tool errors');

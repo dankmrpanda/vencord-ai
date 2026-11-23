@@ -5,8 +5,10 @@
  */
 
 import { React } from '@webpack/common';
+import { normalizeImageBlobToDataUrl } from '../discord/messages';
 import { getCurrentScopeContext } from '../discord/scope';
-import { getCurrentChannelId, getSelectedChannelStore, searchMentionableUsers } from '../discord/stores';
+import { getCurrentChannelId, getLoadedMessages, getSelectedChannelStore, searchMentionableUsers } from '../discord/stores';
+import { getVoiceTranscriber } from '../discord/voiceMessages';
 import { getChatService } from '../services/chatService';
 import { getSessionsForChannel } from '../storage/chatHistory';
 import {
@@ -15,6 +17,7 @@ import {
   CurrentScopeContext,
   DiscordUser,
   PluginSettings,
+  UserImageAttachment,
 } from '../types';
 import { getMemoChatMessage, messageVersion } from './ChatMessage';
 import { DebugDrawer } from './DebugDrawer';
@@ -27,13 +30,18 @@ import {
   ImageIcon,
   LinkIcon,
   MessagesIcon,
+  MicIcon,
   NewChatIcon,
+  PinIcon,
   SearchIcon,
   SendIcon,
   SettingsIcon,
   SparkleIcon,
   StopIcon,
+  ThreadIcon,
+  UsersIcon,
 } from './icons';
+import { buildEmptyStateQuickPrompts, QuickPromptIconKind } from './quickPrompts';
 import { ScopeIndicator, scopeChipLabel } from './ScopeIndicator';
 import {
   deleteHistorySession,
@@ -83,6 +91,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const [showHistory, setShowHistory] = React.useState(false);
   const [showDebug, setShowDebug] = React.useState(false);
   const [inputText, setInputText] = React.useState('');
+  const [pendingImages, setPendingImages] = React.useState<UserImageAttachment[]>([]);
   const [mentionSuggestions, setMentionSuggestions] = React.useState<DiscordUser[]>([]);
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const [viewedChannelId, setViewedChannelId] = React.useState<string | null>(() => getCurrentChannelId());
@@ -92,6 +101,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
   const isUserScrolledUpRef = React.useRef(false);
   const [showJumpToLatest, setShowJumpToLatest] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const panelRef = React.useRef<HTMLDivElement | null>(null);
   const lastChannelIdRef = React.useRef<string | null>(null);
   // index.tsx passes a new arrow on every render; a ref keeps the channel listener effect from re-running.
@@ -149,6 +159,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             onLaunchConsumedRef.current?.();
             lastChannelIdRef.current = currentChId;
             setViewedChannelId(currentChId);
+            setPendingImages([]);
             setCurrentScope((prev) => scopeForChannel(prev, currentChId));
             refreshSessions(currentChId);
           }
@@ -269,15 +280,43 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     refreshSessions(getCurrentChannelId());
   };
 
+  const addImageFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files).filter((f) => f && f.type.startsWith('image/'));
+    if (!list.length) return;
+    const additions: UserImageAttachment[] = [];
+    for (const file of list.slice(0, 3)) {
+      try {
+        const dataUrl = await normalizeImageBlobToDataUrl(file);
+        additions.push({ name: file.name || 'image.png', dataUrl });
+      } catch {}
+    }
+    if (!additions.length) return;
+    setPendingImages((prev) => [...prev, ...additions].slice(0, 3));
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageFiles = items
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    if (imageFiles.length) {
+      e.preventDefault();
+      void addImageFiles(imageFiles);
+    }
+  };
+
   const lastSendRef = React.useRef<LastSend | null>(null);
   const handleSend = async (customPrompt?: string, retryRequest?: AssistantLaunchRequest | null) => {
-    const promptToSend = customPrompt || inputText.trim();
+    const imagesToSend = !customPrompt && pendingImages.length ? pendingImages : undefined;
+    const promptToSend = customPrompt || inputText.trim() || (imagesToSend ? 'Describe this image.' : '');
     if (!promptToSend || isGenerating) return;
 
     isUserScrolledUpRef.current = false;
     if (!customPrompt) {
       // Quick prompts and Retry leave a half-typed question in the box alone.
       setInputText('');
+      setPendingImages([]);
     }
 
     // UI-13: quick prompts are unrelated questions; only the prefilled input box carries the launch target.
@@ -290,7 +329,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     const sendScope = scopeForChannel(currentScope, getCurrentChannelId());
     if (sendScope !== currentScope) setCurrentScope(sendScope);
     lastSendRef.current = { sessionId: chatService.getActiveSession()?.id, prompt: promptToSend, request: req };
-    await chatService.sendMessage(promptToSend, req, sendScope || undefined);
+    await chatService.sendMessage(promptToSend, req, sendScope || undefined, imagesToSend);
     refreshSessions(getCurrentChannelId());
   };
 
@@ -413,16 +452,34 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     return () => window.removeEventListener('resize', onWindowResize);
   }, []);
 
-  const where = currentScope?.isDM || currentScope?.isGroupDM ? 'in this DM' : 'here';
-  const suggestions: Array<{ icon: React.ReactNode; label: string; prompt: string }> = [
-    { icon: <MessagesIcon size={16} />, label: 'Summarize the recent conversation', prompt: `Summarize the recent conversation ${where}.` },
-    { icon: <SearchIcon size={16} />, label: 'What were the main topics today?', prompt: `What were the main topics discussed ${where} today?` },
-    { icon: <LinkIcon size={16} />, label: 'Find links and files shared', prompt: `Find the links and files shared ${where} recently.` },
-    { icon: <ImageIcon size={16} />, label: 'Find the latest image', prompt: `Find the latest image shared ${where}.` },
-  ];
+  const renderQuickIcon = (kind: QuickPromptIconKind): React.ReactNode => {
+    switch (kind) {
+      case 'messages': return <MessagesIcon size={16} />;
+      case 'link': return <LinkIcon size={16} />;
+      case 'search': return <SearchIcon size={16} />;
+      case 'image': return <ImageIcon size={16} />;
+      case 'pin': return <PinIcon size={16} />;
+      case 'thread': return <ThreadIcon size={16} />;
+      case 'mic': return <MicIcon size={16} />;
+      case 'users': return <UsersIcon size={16} />;
+      default: return <SparkleIcon size={16} />;
+    }
+  };
   const scopeLabel = scopeChipLabel(currentScope);
+  const loadedRecent = React.useMemo(
+    () => (currentScope?.channelId ? getLoadedMessages(currentScope.channelId) : []),
+    [currentScope?.channelId, viewedChannelId],
+  );
+  const { general: generalPrompts, tailored: tailoredPrompts } = React.useMemo(
+    () => buildEmptyStateQuickPrompts(currentScope, {
+      recentMessages: loadedRecent,
+      enableVision: settings.enableVision,
+      hasVoiceTranscribe: getVoiceTranscriber() !== null,
+    }),
+    [currentScope, loadedRecent, settings.enableVision],
+  );
   const hasMessages = Boolean(session?.messages?.length);
-  const canSend = Boolean(inputText.trim()) && !isGenerating;
+  const canSend = Boolean(inputText.trim() || pendingImages.length) && !isGenerating;
   const MemoChatMessage = getMemoChatMessage();
   const lastAssistantIndex = session ? session.messages.map((m) => m.role).lastIndexOf('assistant') : -1;
 
@@ -521,12 +578,24 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
               answer questions. I only read: I never post, react or change anything.
             </p>
             <div className="vai-suggestions">
-              {suggestions.map((s) => (
-                <button key={s.label} className="vai-suggestion" onClick={() => handleSend(s.prompt)}>
-                  {s.icon}
-                  <span>{s.label}</span>
-                </button>
-              ))}
+              <div className="vai-suggestion-group">
+                <div className="vai-suggestion-heading">General</div>
+                {generalPrompts.map((s) => (
+                  <button key={s.id} className="vai-suggestion" onClick={() => handleSend(s.prompt)}>
+                    {renderQuickIcon(s.icon)}
+                    <span>{s.label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="vai-suggestion-group">
+                <div className="vai-suggestion-heading">For {scopeLabel}</div>
+                {tailoredPrompts.map((s) => (
+                  <button key={s.id} className="vai-suggestion" onClick={() => handleSend(s.prompt)}>
+                    {renderQuickIcon(s.icon)}
+                    <span>{s.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         ) : (
@@ -608,6 +677,34 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
               </button>
             </div>
           )}
+          {pendingImages.length > 0 && (
+            <div className="vai-composer-images">
+              {pendingImages.map((img, idx) => (
+                <div key={idx} className="vai-composer-thumb">
+                  <img src={img.dataUrl} alt={img.name} title={img.name} />
+                  <button
+                    type="button"
+                    onClick={() => setPendingImages((prev) => prev.filter((_, i) => i !== idx))}
+                    title="Remove image"
+                    aria-label="Remove image"
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files?.length) void addImageFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
           <textarea
             ref={textareaRef}
             className="vai-textarea"
@@ -616,10 +713,21 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
             value={inputText}
             onChange={handleTextareaInput}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             rows={1}
           />
           <div className="vai-composer-foot">
             <ScopeIndicator context={currentScope} onScopeChange={setCurrentScope} />
+            <button
+              type="button"
+              className="vai-icon-btn vai-small"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isGenerating || pendingImages.length >= 3}
+              title={pendingImages.length >= 3 ? 'Up to 3 images per message' : 'Attach image (or paste)'}
+              aria-label="Attach image"
+            >
+              <ImageIcon size={15} />
+            </button>
             {isGenerating ? (
               <button
                 className="vai-send vai-stop"

@@ -91,11 +91,15 @@ body.vai-docked #app-mount {
 .vai-empty { margin: auto 0; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 24px 8px; }
 .vai-empty-mark { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--vai-brand); color: #fff; margin-bottom: 12px; }
 .vai-empty h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; color: var(--vai-text-strong); line-height: 1.25; }
-.vai-empty p { margin: 0 0 20px; font-size: 14px; color: var(--vai-text-muted); max-width: 300px; }
-.vai-suggestions { display: grid; gap: 8px; width: 100%; max-width: 340px; }
-.vai-suggestion { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--vai-border); border-radius: 8px; background: var(--vai-bg-raised); color: var(--vai-text); font-size: 14px; text-align: left; cursor: pointer; transition: background-color 0.1s ease, border-color 0.1s ease; }
+.vai-empty p { margin: 0 0 16px; font-size: 14px; color: var(--vai-text-muted); max-width: 300px; }
+.vai-suggestions { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; }
+.vai-suggestion-group { display: grid; gap: 6px; width: 100%; }
+.vai-suggestion-heading { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--vai-text-muted); text-align: left; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vai-suggestion { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; border: 1px solid var(--vai-border); border-radius: 8px; background: var(--vai-bg-raised); color: var(--vai-text); font-size: 13px; text-align: left; cursor: pointer; transition: background-color 0.1s ease, border-color 0.1s ease; }
 .vai-suggestion:hover { background: var(--vai-bg-hover); border-color: transparent; }
 .vai-suggestion svg { color: var(--vai-icon); flex-shrink: 0; }
+.vai-user-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.vai-user-images img { max-width: 140px; max-height: 110px; border-radius: 6px; object-fit: cover; border: 1px solid var(--vai-border); }
 
 /* Messages */
 .vai-msg { position: relative; display: flex; flex-direction: column; min-width: 0; }
@@ -195,6 +199,11 @@ body.vai-docked #app-mount {
 .vai-attached { display: flex; align-items: center; gap: 6px; margin: 8px 8px 0; padding: 4px 4px 4px 8px; border-radius: 6px; background: var(--vai-bg-floating); font-size: 12px; color: var(--vai-text-muted); }
 .vai-attached span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vai-attached strong { color: var(--vai-text); font-weight: 600; }
+.vai-composer-images { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 10px 2px; }
+.vai-composer-thumb { position: relative; width: 56px; height: 56px; border-radius: 6px; overflow: hidden; border: 1px solid var(--vai-border); background: var(--vai-bg-floating); }
+.vai-composer-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vai-composer-thumb button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.72); color: #fff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.vai-composer-thumb button:hover { background: var(--vai-danger); }
 .vai-textarea { display: block; width: 100%; min-height: 44px; max-height: 200px; padding: 11px 12px 4px; border: 0; background: transparent; color: var(--vai-text); font: inherit; font-size: 14px; line-height: 1.375; resize: none; outline: none; }
 .vai-textarea::placeholder { color: var(--text-placeholder, var(--vai-text-muted)); }
 .vai-composer-foot { display: flex; align-items: center; gap: 8px; padding: 4px 6px 6px 8px; }

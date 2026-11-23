@@ -35,6 +35,7 @@ import { runHuntIndexTests } from './huntIndex.test';
 import { runHuntAgentTests } from './huntAgent.test';
 import { runHuntSearchTests } from './huntSearch.test';
 import { runHuntUiTests } from './huntUi.test';
+import { runQualityImprovementTests } from './qualityImprovements.test';
 
 // Run synchronous unit and property tests
 runGuardrailsTests();
@@ -61,6 +62,7 @@ async function runAsyncFixtures(): Promise<void> {
   await runHuntAgentTests();
   await runHuntSearchTests();
   await runHuntUiTests();
+  await runQualityImprovementTests();
   await runAdversarialReviewChallengerTests();
   await runIndexStorageTests();
   await runMilestone1ChallengerTests();

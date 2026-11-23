@@ -70,7 +70,7 @@ export async function runMessageLaunchTests(): Promise<void> {
       mode: 'message',
       initialPrompt: 'Explain this message and its surrounding context.',
     }, scope);
-    assert(modelCalls === 2, 'Launch must work when the model answers directly and then finalizes');
+    assert(modelCalls === 1, 'Launch must work when the model answers directly on the first turn without a redundant second call');
     assert(requests.length === 2, 'Launch must fetch bounded message details and surrounding context');
     assert(result.citations.some((citation) => citation.messageId === target.id), 'Selected message must be cited');
     assert(result.citations.some((citation) => citation.messageId === neighbor.id), 'Surrounding messages must be cited');

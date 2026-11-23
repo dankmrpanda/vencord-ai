@@ -226,7 +226,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, onOpenSetting
   if (isUser) {
     return (
       <div className="vai-msg vai-msg-user" title={formatTime(message.timestamp)}>
-        <div className="vai-bubble">{message.content}</div>
+        <div className="vai-bubble">
+          {message.images && message.images.length > 0 && (
+            <div className="vai-user-images">
+              {message.images.map((img, idx) => (
+                <img key={idx} src={img.dataUrl} alt={img.name || 'Attached image'} title={img.name || 'Attached image'} />
+              ))}
+            </div>
+          )}
+          {message.content}
+        </div>
       </div>
     );
   }
@@ -298,6 +307,7 @@ export function messageVersion(m: AssistantChatMessage): string {
   return [
     m.content.length,
     m.content.slice(-24),
+    m.images?.length ?? 0,
     m.isStreaming ? 1 : 0,
     m.isError ? 1 : 0,
     m.citations?.length ?? 0,

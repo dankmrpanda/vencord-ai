@@ -532,23 +532,8 @@ export async function runMilestone3Challenger2Tests(): Promise<{
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           );
-        } else if (turnCount === 2) {
-          // Model says ready without tool calls
-          return new Response(
-            JSON.stringify({
-              choices: [
-                {
-                  message: {
-                    content: 'I have gathered the database error context.',
-                  },
-                  finish_reason: 'stop',
-                },
-              ],
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
         } else {
-          // Turn 3: Finalization call!
+          // Turn 2: Model answers directly without further tool calls (Option A skips redundant 3rd call)
           return new Response(
             JSON.stringify({
               choices: [
@@ -571,22 +556,9 @@ export async function runMilestone3Challenger2Tests(): Promise<{
         onToken: (tok) => streamedTokens.push(tok),
       });
 
-      assert(runResult.content.includes('connection pool timeout'), 'Agent must return the finalized answer');
+      assert(runResult.content.includes('connection pool timeout'), 'Agent must return the direct answer');
       assert(runResult.steps.some((s) => s.type === 'answer'), 'Answer step must be emitted');
-      assert(requestLog.length === 3, `Expected exactly 3 HTTP requests (turn 1 tool, turn 2 ready, turn 3 finalization), got ${requestLog.length}`);
-
-      // Inspect Finalization Request (Turn 3)
-      const finalizationRequest = requestLog[2];
-      assert(!finalizationRequest.body.tools, 'Finalization request MUST NOT include tools in payload');
-      assert(finalizationRequest.body.tool_choice === undefined, 'Finalization request MUST NOT send tool_choice');
-      const finalizationMessages: any[] = finalizationRequest.body.messages;
-      const lastSystemMessage = finalizationMessages.find((m) =>
-        m.role === 'system' && String(m.content).includes('Tools are now disabled'),
-      );
-      assert(
-        Boolean(lastSystemMessage),
-        'Finalization request must include system instruction stating "Tools are now disabled. Give the best concise final answer using only the gathered evidence."',
-      );
+      assert(requestLog.length === 2, `Expected exactly 2 HTTP requests (turn 1 tool, turn 2 direct answer), got ${requestLog.length}`);
 
       // -----------------------------------------------------------------------
       // Test 5.2: Infinite Tool Loop Prevention & Turn Limit Enforcement
@@ -642,6 +614,15 @@ export async function runMilestone3Challenger2Tests(): Promise<{
       assert(requestLog.length === 5, `Expected 5 HTTP calls (4 loop turns + 1 finalization), got ${requestLog.length}`);
       const lastCall = requestLog[requestLog.length - 1];
       assert(!lastCall.body.tools, 'Finalization call after loop limit must have tools disabled');
+      assert(lastCall.body.tool_choice === undefined, 'Finalization request MUST NOT send tool_choice');
+      const finalizationMessages: any[] = lastCall.body.messages;
+      const lastSystemMessage = finalizationMessages.find((m) =>
+        m.role === 'system' && String(m.content).includes('Tools are now disabled'),
+      );
+      assert(
+        Boolean(lastSystemMessage),
+        'Finalization request must include system instruction stating "Tools are now disabled. Give the best concise final answer using only the gathered evidence."',
+      );
 
       // -----------------------------------------------------------------------
       // Test 5.3: Prompt Injection Containment & Safety in Discord Data
@@ -679,13 +660,6 @@ export async function runMilestone3Challenger2Tests(): Promise<{
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           );
-        } else if (turnCount === 2) {
-          return new Response(
-            JSON.stringify({
-              choices: [{ message: { content: 'Examined untrusted records.' }, finish_reason: 'stop' }],
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
         } else {
           return new Response(
             JSON.stringify({
@@ -719,13 +693,19 @@ export async function runMilestone3Challenger2Tests(): Promise<{
         }
         return new Response(
           JSON.stringify({
-            choices: [{ message: { content: 'Ready.' }, finish_reason: 'stop' }],
+            choices: [{
+              message: {
+                content: '',
+                tool_calls: [{ id: `call_fail_${turnCount}`, type: 'function', function: { name: 'get_current_context', arguments: '{}' } }],
+              },
+              finish_reason: 'tool_calls',
+            }],
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }) as typeof fetch;
 
-      const failAgent = new AIAssistantAgent(baseSettings);
+      const failAgent = new AIAssistantAgent({ ...baseSettings, maxSearchIterations: 1 });
       const failResult = await failAgent.run('Test failure', []);
       assert(
         failResult.content.includes('tools-disabled finalization call failed'),
