@@ -5,10 +5,10 @@
  */
 
 import { DiscordMessage } from '../types';
-import { compileSafeRegex } from '../storage/regex';
 import { isImageAttachment } from './media';
 import { extractMessageSearchText } from './messageFormat';
 import { discordGet } from './rest';
+import { compileSafeRegex, escapeRegExp } from './safeRegex';
 import { parseLocalSearchDate } from './search';
 import { getLoadedMessages } from './stores';
 
@@ -17,7 +17,6 @@ const MAX_PATTERN_TEXT_LENGTH = 4000;
 export interface LocalMessageFilter {
   query?: string;
   pattern?: string | RegExp;
-  extractPattern?: boolean;
   has?: 'image' | 'sound' | 'video' | 'file' | 'link' | 'embed' | 'sticker';
   authorId?: string;
   beforeDate?: string | Date;
@@ -28,43 +27,9 @@ export interface LocalMessageFilter {
 }
 
 /**
- * Compiles a string or RegExp pattern safely with global flag
- */
-export function compileRegexSafely(pattern?: string | RegExp): RegExp | null {
-  return pattern ? compileSafeRegex(pattern).regex : null;
-}
-
-/**
- * Safely extracts all matching occurrences of a regex pattern from text
- */
-export function extractPatternMatches(text: string, pattern: string | RegExp): string[] {
-  if (!text || !pattern) return [];
-  const regex = compileRegexSafely(pattern);
-  if (!regex) return [];
-
-  try {
-    const matches: string[] = [];
-    let matchResult: RegExpExecArray | null;
-    let guard = 0;
-    while ((matchResult = regex.exec(text)) !== null && guard++ < 200) {
-      if (matchResult[0]) {
-        matches.push(matchResult[0]);
-      } else {
-        regex.lastIndex++;
-      }
-    }
-    // Return unique values preserving order
-    return Array.from(new Set(matches));
-  } catch (err) {
-    console.warn('[VencordAI] Failed to extract pattern matches:', err);
-    return [];
-  }
-}
-
-/**
  * Tokenizes and normalizes a search query into clean search tokens (Unicode-aware).
  */
-export function extractSearchTokens(query: string): string[] {
+function extractSearchTokens(query: string): string[] {
   if (!query || typeof query !== 'string') return [];
   // Split on whitespace, quotes, and punctuation except hyphens/dots in words
   return query
@@ -81,10 +46,6 @@ const RELEVANCE_STOPWORDS = new Set([
   'what', 'when', 'where', 'who', 'why', 'how', 'did', 'do', 'does', 'find', 'show',
 ]);
 
-function escapeRegExpToken(token: string): string {
-  return token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function messageMentionsUser(msg: DiscordMessage, targetUserId: string): boolean {
   if (Array.isArray(msg.mentions)) {
     for (const entry of msg.mentions as Array<string | { id?: string }>) {
@@ -93,7 +54,7 @@ function messageMentionsUser(msg: DiscordMessage, targetUserId: string): boolean
     }
   }
   if (msg.content) {
-    if (new RegExp(`<@!?${escapeRegExpToken(targetUserId)}>`).test(msg.content)) return true;
+    if (new RegExp(`<@!?${escapeRegExp(targetUserId)}>`).test(msg.content)) return true;
   }
   return false;
 }
@@ -154,7 +115,7 @@ export function scoreMessageRelevance(msg: DiscordMessage, query: string): numbe
     if (tokenMatchesText(token, fullTextLower)) {
       matchedTokens++;
       try {
-        const boundaryRe = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExpToken(token)}(?![\\p{L}\\p{N}_])`, 'u');
+        const boundaryRe = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(token)}(?![\\p{L}\\p{N}_])`, 'u');
         if (boundaryRe.test(fullTextLower)) wholeWordMatches++;
       } catch {}
     }
@@ -191,7 +152,7 @@ export function filterMessagesLocally(
   const rawQuery = filter.query?.trim();
 
   // Prepare pattern regex if present
-  const patternRegex = compileRegexSafely(filter.pattern);
+  const patternRegex = filter.pattern ? compileSafeRegex(filter.pattern).regex : null;
   if (filter.pattern && !patternRegex) return [];
   const dateTime = (value: string | Date): number => parseLocalSearchDate(value)?.getTime() ?? NaN;
   const scoredList: { msg: DiscordMessage; score: number }[] = [];

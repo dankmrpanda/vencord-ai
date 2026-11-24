@@ -2,14 +2,11 @@
   "name": "vencord-ai-assistant",
   "version": "1.0.0",
   "description": "Client-side AI assistant plugin for Vencord to search and query Discord message history using local and cloud LLMs.",
-  "main": "dist/index.js",
   "scripts": {
     "build": "tsc --project tsconfig.dev.json --noEmit",
     "typecheck": "tsc --project tsconfig.dev.json --noEmit",
     "test": "tsx --tsconfig tsconfig.dev.json test/run.ts",
-    "test:benchmark": "tsx --tsconfig tsconfig.dev.json test/retrievalBenchmark.ts",
-    "test:benchmark:index": "NODE_OPTIONS=--expose-gc tsx --tsconfig tsconfig.dev.json test/productionIndexBenchmark.ts",
-    "sync": "rsync -av --exclude=node_modules --exclude=.git --exclude=graphify-out --exclude=AGENTS.md ./ /Users/raymond/Documents/Vencord/src/userplugins/vencord-ai/",
+    "sync": "rsync -av --exclude=node_modules --exclude=.git --exclude=graphify-out --exclude=.agents --exclude=test --exclude='*.md' --exclude=tsconfig.dev.json --exclude=package.json --exclude=package-lock.json --exclude=pnpm-lock.yaml --exclude=skills-lock.json ./ /Users/raymond/Documents/Vencord/src/userplugins/vencord-ai/",
     "build:vencord": "pnpm run sync && pnpm --dir /Users/raymond/Documents/Vencord build",
     "inject": "pnpm run sync && pnpm --dir /Users/raymond/Documents/Vencord build && pnpm --dir /Users/raymond/Documents/Vencord inject"
   },

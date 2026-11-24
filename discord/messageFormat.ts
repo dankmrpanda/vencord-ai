@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { CurrentScopeContext, DiscordMessage } from '../types';
+import { CitationItem, CurrentScopeContext, DiscordMessage } from '../types';
 import { isChannelAllowedInScope } from './scope';
 import { getChannel, getUser } from './stores';
 
@@ -97,15 +97,36 @@ export function extractMessageSearchText(msg: DiscordMessage): string {
   return parts.join(' ');
 }
 
-function authorDisplayName(author: any): string {
-  return String(author?.global_name || author?.globalName || author?.username || 'unknown');
+export function getUserDisplayName(user: any, fallback = 'unknown'): string {
+  return String(user?.global_name || user?.globalName || user?.username || fallback);
+}
+
+export function buildCitation(
+  message: DiscordMessage,
+  scope: Pick<CurrentScopeContext, 'guildId' | 'channelName'>,
+  channelName?: string,
+): CitationItem {
+  const channel = getChannel(message.channel_id);
+  return {
+    messageId: message.id,
+    channelId: message.channel_id,
+    guildId: message.guild_id || channel?.guild_id || scope.guildId,
+    authorName: getUserDisplayName(message.author, 'User'),
+    authorAvatar: message.author?.avatar
+      ? `https://cdn.discordapp.com/avatars/${message.author.id}/${message.author.avatar}.png`
+      : undefined,
+    content: message.content || message.attachments?.[0]?.filename || '',
+    timestamp: message.timestamp,
+    channelName: channelName || channel?.name || scope.channelName,
+    attachmentUrls: message.attachments?.map((attachment) => attachment.url),
+  };
 }
 
 /**
  * Replaces raw Discord user mentions (<@123>) with @DisplayName and in-scope channel mentions (<#123>)
  * with #channelName. Out-of-scope channel IDs are left untouched (fail-closed).
  */
-export function resolveReadableContent(
+function resolveReadableContent(
   content: string,
   message?: Partial<DiscordMessage>,
   scope?: CurrentScopeContext,
@@ -163,7 +184,7 @@ export function slimMessage(
   const slim: SlimMessage = {
     id: message.id,
     channel_id: message.channel_id,
-    author: authorDisplayName(author),
+    author: getUserDisplayName(author),
     content: resolveReadableContent(String(message.content || ''), message, scope).slice(0, maxContent),
     // Keep timestamp verbatim so Date / moment objects preserve JSON.stringify toJSON semantics.
     timestamp: message.timestamp,
@@ -231,7 +252,7 @@ export function slimMessage(
     if (!scope || isChannelAllowedInScope(refChannel, scope)) {
       slim.reply_preview = {
         id: ref.id,
-        author: authorDisplayName(ref.author),
+        author: getUserDisplayName(ref.author),
         snippet: resolveReadableContent(String(ref.content || ''), ref, scope).slice(0, 140),
       };
     }

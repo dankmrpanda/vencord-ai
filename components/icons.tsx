@@ -4,6 +4,7 @@
  */
 
 import { React } from '@webpack/common';
+import type { QuickPromptIconKind } from './quickPrompts';
 
 /** Inline 24-unit SVG icons drawn in currentColor, sized like Discord's own toolbar icons. */
 type IconProps = { size?: number; className?: string };
@@ -63,11 +64,11 @@ export const FileIcon = (p: IconProps) => svg(<><path d="M14 2H6a2 2 0 0 0-2 2v1
 export const LinkIcon = (p: IconProps) => svg(<><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>, p);
 export const PinIcon = (p: IconProps) => svg(<><path d="M12 17v5" /><path d="M9 10.8V4h6v6.8l3 3.2v1H6v-1Z" /></>, p);
 export const ThreadIcon = (p: IconProps) => svg(<><path d="M4 6h16M4 12h10M4 18h7" /></>, p);
-export const CompassIcon = (p: IconProps) => svg(<><circle cx="12" cy="12" r="10" /><path d="m16 8-2 6-6 2 2-6Z" /></>, p);
+const CompassIcon = (p: IconProps) => svg(<><circle cx="12" cy="12" r="10" /><path d="m16 8-2 6-6 2 2-6Z" /></>, p);
 export const WarningIcon = (p: IconProps) => svg(<><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></>, p);
 export const JumpIcon = (p: IconProps) => svg(<><path d="M7 17 17 7" /><path d="M7 7h10v10" /></>, p);
 export const MicIcon = (p: IconProps) => svg(<><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v4" /></>, p);
-export const ToolIcon = (p: IconProps) => svg(<path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8Z" />, p);
+const ToolIcon = (p: IconProps) => svg(<path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L4 12l8-8Z" />, p);
 
 /** The icon a tool step is drawn with. */
 export function toolIcon(toolName: string | undefined): React.ReactNode {
@@ -83,5 +84,19 @@ export function toolIcon(toolName: string | undefined): React.ReactNode {
     case 'list_available_channels':
     case 'get_current_context': return <CompassIcon size={14} />;
     default: return <ToolIcon size={14} />;
+  }
+}
+
+export function quickPromptIcon(kind: QuickPromptIconKind): React.ReactNode {
+  switch (kind) {
+    case 'messages': return <MessagesIcon size={16} />;
+    case 'link': return <LinkIcon size={16} />;
+    case 'search': return <SearchIcon size={16} />;
+    case 'image': return <ImageIcon size={16} />;
+    case 'pin': return <PinIcon size={16} />;
+    case 'thread': return <ThreadIcon size={16} />;
+    case 'mic': return <MicIcon size={16} />;
+    case 'users': return <UsersIcon size={16} />;
+    default: return <SparkleIcon size={16} />;
   }
 }

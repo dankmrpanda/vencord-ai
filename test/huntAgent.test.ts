@@ -18,7 +18,7 @@ import {
 } from '../llm/provider';
 import { AGENT_TOOLS, availableToolDefinitions, executeRegisteredTool, TOOL_REGISTRY } from '../llm/toolRegistry';
 import { DEFAULT_SETTINGS } from '../settings';
-import { parseToolArguments, ToolArgumentError } from '../llm/validation';
+import { parseToolArguments, ToolArgumentError, validateToolArguments } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
 import { assert } from './assert';
 
@@ -184,13 +184,13 @@ async function llm02RecentMessagesIgnorePattern(): Promise<void> {
     message('300000000000000011', 'your login code is 582910'),
     message('300000000000000012', 'see you at lunch'),
     message('300000000000000013', 'ok'),
-  ], () => tool.execute(tool.parseArgs({ pattern: '\\b\\d{6}\\b', limit: 3 }), context));
+  ], () => tool.execute(validateToolArguments(tool.definition, { pattern: '\\b\\d{6}\\b', limit: 3 }), context));
   const contents = ((result.data as any)?.messages || []).map((entry: DiscordMessage) => entry.content);
   assert(contents.length === 1 && contents[0].includes('582910'),
     `LLM-02 fetch_recent_messages ignored pattern \\b\\d{6}\\b and returned ${contents.length} messages: ${JSON.stringify(contents)}`);
   let fetched = false;
   const unsafe = await withRestGet(() => { fetched = true; return []; },
-    () => tool.execute(tool.parseArgs({ pattern: '(a+)+$' }), context));
+    () => tool.execute(validateToolArguments(tool.definition, { pattern: '(a+)+$' }), context));
   assert(!unsafe.ok && unsafe.code === 'invalid_pattern' && !fetched,
     `LLM-02 an unsafe pattern was not rejected before fetching: ${unsafe.code} fetched=${fetched}`);
 }
@@ -339,10 +339,10 @@ async function llm15NumericLimitsClamped(): Promise<void> {
   const surrounding = TOOL_REGISTRY.get('fetch_surrounding_messages')!;
   const recent = TOOL_REGISTRY.get('fetch_recent_messages')!;
   await withRestGet((request) => { limits.push(String(request?.query?.limit)); return []; }, async () => {
-    await surrounding.execute(surrounding.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000041', limit: -5 }), context);
-    await surrounding.execute(surrounding.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000041', limit: 2.5 }), context);
-    await recent.execute(recent.parseArgs({ limit: -3 }), context);
-    await recent.execute(recent.parseArgs({ limit: 3.7 }), context);
+    await surrounding.execute(validateToolArguments(surrounding.definition, { channel_id: ACTIVE_DM, message_id: '300000000000000041', limit: -5 }), context);
+    await surrounding.execute(validateToolArguments(surrounding.definition, { channel_id: ACTIVE_DM, message_id: '300000000000000041', limit: 2.5 }), context);
+    await recent.execute(validateToolArguments(recent.definition, { limit: -3 }), context);
+    await recent.execute(validateToolArguments(recent.definition, { limit: 3.7 }), context);
   });
   const bad = limits.filter((limit) => !/^[1-9]\d*$/.test(limit));
   assert(bad.length === 0, `LLM-15 non-positive or fractional limits reached Discord: ${JSON.stringify(limits)}`);
@@ -375,19 +375,19 @@ async function reg01RegistryDispatchAndImagePrefetch(): Promise<void> {
   };
   const detailsTool = TOOL_REGISTRY.get('get_message_details')!;
   const zeroDepth = await withRestGet(() => { detailGets++; return [targetWithRef]; },
-    () => executeRegisteredTool(detailsTool, detailsTool.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000051', reply_depth: 0 }), context));
+    () => executeRegisteredTool(detailsTool, validateToolArguments(detailsTool.definition, { channel_id: ACTIVE_DM, message_id: '300000000000000051', reply_depth: 0 }), context));
   assert(zeroDepth.ok && detailGets === 1 && (zeroDepth.data as any)?.replyChain?.length === 0,
     `REG-01 reply_depth: 0 fell back to default (gets=${detailGets})`);
 
   // 2. get_message_details channel-mismatch spoofing summary must not be clobbered by channel-mode scope hint
   const spoofed = await withRestGet(() => [{ ...message('300000000000000052', 'spoof'), channel_id: '200000000000000002' }],
-    () => executeRegisteredTool(detailsTool, detailsTool.parseArgs({ channel_id: ACTIVE_DM, message_id: '300000000000000052' }), context));
+    () => executeRegisteredTool(detailsTool, validateToolArguments(detailsTool.definition, { channel_id: ACTIVE_DM, message_id: '300000000000000052' }), context));
   assert(!spoofed.ok && /does not belong to the requested channel/i.test(spoofed.summary),
     `REG-01 channel-mismatch summary was clobbered: ${spoofed.summary}`);
 
   // 3. transcribe_voice_message out-of-scope receives channel-only hint
   const voiceTool = TOOL_REGISTRY.get('transcribe_voice_message')!;
-  const voiceDenied = await executeRegisteredTool(voiceTool, voiceTool.parseArgs({ channel_id: '200000000000000002', message_id: '300000000000000053' }), context);
+  const voiceDenied = await executeRegisteredTool(voiceTool, validateToolArguments(voiceTool.definition, { channel_id: '200000000000000002', message_id: '300000000000000053' }), context);
   assert(!voiceDenied.ok && voiceDenied.code === 'scope_denied' && /limited to this channel only/i.test(voiceDenied.summary),
     `REG-01 voice scope_denied lacked channel-mode hint: ${voiceDenied.summary}`);
 

@@ -20,6 +20,15 @@ export function isSnowflake(value: unknown): value is string {
   return typeof value === 'string' && SNOWFLAKE_PATTERN.test(value);
 }
 
+export function snowflakeToTimestampMs(snowflake: string): number | null {
+  try {
+    const ms = Number((BigInt(snowflake) >> 22n) + DISCORD_EPOCH);
+    return Number.isFinite(ms) ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
 function abortError(signal: AbortSignal): unknown {
   return signal.reason ?? Object.assign(new Error('Discord request aborted.'), { name: 'AbortError' });
 }
@@ -44,7 +53,7 @@ export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> 
 }
 
 /** Parses a Retry-After/retry_after value in seconds; unparseable values fall back to 2 s. */
-export function parseRetryAfterSeconds(value: unknown): number {
+function parseRetryAfterSeconds(value: unknown): number {
   const sec = Number(value);
   return Number.isFinite(sec) ? Math.max(sec, 1) : 2;
 }

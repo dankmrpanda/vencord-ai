@@ -4,27 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { DiscordMessage } from '../types';
-
-/**
- * Standard structured pattern definitions.
- */
-export const STRUCTURED_PATTERNS = {
-  OTP: /\b\d{4,8}\b/g,
-  PIN: /\b\d{4,6}\b/g,
-  EMAIL: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
-  IPV4: /(?<![0-9a-zA-Z])(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![0-9a-zA-Z])/g,
-  IPV6: /\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:|:(?::[0-9a-fA-F]{1,4}){1,7}\b/g,
-  HEX_HASH: /\b0x[0-9a-fA-F]{40}\b|\b[0-9a-fA-F]{64}\b|\b[0-9a-fA-F]{32}\b|\b[0-9a-fA-F]{7,40}\b/g,
-  HEX_COLOR: /#[0-9a-fA-F]{3,8}\b/g,
-  DATE_ISO: /\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?\b/g,
-  DATE_SLASH: /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g,
-  DISCORD_INVITE: /\b(?:https?:\/\/)?discord(?:\.gg|\.com\/invite)\/[a-zA-Z0-9-]+\b/g,
-  DISCORD_CHANNEL_LINK: /\bhttps?:\/\/discord\.com\/channels\/\d+\/\d+(?:\/\d+)?\b/g,
-  SNOWFLAKE_ID: /\b\d{17,20}\b/g,
-} as const;
-
-export type StructuredPatternKey = keyof typeof STRUCTURED_PATTERNS;
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Result of safe regex compilation.
@@ -35,9 +17,6 @@ export interface SafeRegexResult {
   error?: string;
 }
 
-/**
- * Pre-screens a regex string to detect catastrophic backtracking / ReDoS vulnerabilities.
- */
 interface Quantifier {
   min: number;
   max: number;
@@ -602,100 +581,4 @@ export function compileSafeRegex(
   } catch (err) {
     return { regex: null, isSafe: false, error: err instanceof Error ? err.message : String(err) };
   }
-}
-
-/**
- * Extracts pattern matches from text with execution timeout and iteration bounds.
- */
-export function extractMatchesFromText(
-  text: string,
-  pattern: string | RegExp,
-  maxMatches = 50,
-  timeLimitMs = 15,
-): string[] {
-  if (!text || !pattern) return [];
-
-  const safe = compileSafeRegex(pattern);
-  if (!safe.isSafe || !safe.regex) return [];
-  return extractMatchesWithRegex(text, safe.regex, maxMatches, timeLimitMs);
-}
-
-/**
- * Same as extractMatchesFromText for a regex already returned by compileSafeRegex, so a caller scanning many
- * records screens and compiles the pattern once (REV4-01). Only pass a regex that compileSafeRegex accepted.
- */
-export function extractMatchesWithRegex(
-  text: string,
-  regex: RegExp,
-  maxMatches = 50,
-  timeLimitMs = 15,
-): string[] {
-  if (!text) return [];
-  regex.lastIndex = 0;
-  const matches: string[] = [];
-  const boundedText = text.slice(0, 10_000); // 10k character limit per scan
-  const startTime = Date.now();
-
-  try {
-    let match: RegExpExecArray | null;
-    let guard = 0;
-
-    while ((match = regex.exec(boundedText)) !== null && guard++ < maxMatches) {
-      if (Date.now() - startTime > timeLimitMs) {
-        break; // Guard against execution stall
-      }
-
-      if (match[0]) {
-        matches.push(match[0]);
-      } else {
-        regex.lastIndex++;
-      }
-    }
-  } catch {
-    return [];
-  }
-
-  return Array.from(new Set(matches));
-}
-
-/**
- * Extracts structured pattern matches across all Discord message fields (content, attachments, embeds).
- */
-export function extractMessagePatternMatches(
-  message: DiscordMessage,
-  pattern: string | RegExp,
-  maxMatches = 50,
-): string[] {
-  if (!message) return [];
-
-  const parts: string[] = [];
-  if (message.content) parts.push(message.content);
-  if (message.attachments) {
-    for (const a of message.attachments) {
-      if (a.filename) parts.push(a.filename);
-      if (a.description) parts.push(a.description);
-    }
-  }
-  if (message.embeds) {
-    for (const e of message.embeds) {
-      if (e.title) parts.push(e.title);
-      if (e.description) parts.push(e.description);
-    }
-  }
-
-  const combined = parts.join(' ');
-  return extractMatchesFromText(combined, pattern, maxMatches);
-}
-
-/**
- * Detects whether a text contains specific known entities and returns them in a structured record.
- */
-export function extractAllStructuredEntities(text: string): Record<StructuredPatternKey, string[]> {
-  const result: Partial<Record<StructuredPatternKey, string[]>> = {};
-
-  for (const [key, pattern] of Object.entries(STRUCTURED_PATTERNS) as Array<[StructuredPatternKey, RegExp]>) {
-    result[key] = extractMatchesFromText(text, pattern, 20);
-  }
-
-  return result as Record<StructuredPatternKey, string[]>;
 }

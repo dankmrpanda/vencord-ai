@@ -8,20 +8,17 @@ import {
   detectPatternFromQuery,
   generateRelaxedQueries,
   parseLocalSearchDate,
-  resolveDateSnowflakeBounds,
   searchDiscordMessages,
-  snowflakeToDate,
+  SearchOptions,
 } from './search';
 import {
-  compileRegexSafely,
   fetchRecentMessages,
   filterMessagesLocally,
   scoreMessageRelevance,
 } from './messages';
-import { filterIndexQueryToScope, filterMessagesToScope, getPermittedChannelIdsForScope, isChannelAllowedInScope } from './scope';
+import { compileSafeRegex } from './safeRegex';
+import { filterMessagesToScope, getPermittedChannelIdsForScope, isChannelAllowedInScope } from './scope';
 import { getChannel } from './stores';
-import { retrievalEngine } from '../storage/retrieval';
-import { MESSAGE_FLAGS, StoredMessageRecord } from '../storage/index/types';
 
 export interface MessageSearchRequest {
   query?: string;
@@ -46,7 +43,7 @@ export interface MessageSearchRequest {
 export interface MessageSearchData {
   messages: DiscordMessage[];
   variants: string[];
-  fallbackUsed?: 'local_index' | 'local_scan' | 'none';
+  fallbackUsed?: 'local_scan' | 'none';
   embeddedContext?: Record<string, DiscordMessage[]>;
 }
 
@@ -67,42 +64,33 @@ function collectEmbeddedContext(groups: DiscordMessage[][], target: Record<strin
   }
 }
 
-/** Messages rebuilt from a local-index record: no embeds, mentions or attachment URLs. */
-const indexStubs = new WeakSet<DiscordMessage>();
-
-export function indexStubMessage(record: StoredMessageRecord): DiscordMessage {
-  const message: DiscordMessage = {
-    id: record.id,
-    channel_id: record.channelId,
-    guild_id: record.guildId,
-    author: { id: record.authorId, username: record.authorName },
-    content: record.content,
-    timestamp: new Date(record.timestamp).toISOString(),
-    pinned: Boolean(record.flags & MESSAGE_FLAGS.IS_PINNED),
-    attachments: (record.attachmentNames || []).map((fn) => ({
-      id: '0',
-      filename: fn,
-      size: 0,
-      url: '',
-      proxy_url: '',
-    })),
-    embeds: [],
-    mentions: [],
-    hit: true,
-  };
-  indexStubs.add(message);
-  return message;
-}
-
-/** SRCH-03: the later copy of a message wins, except that an index stub never replaces a full copy. */
 export function deduplicate(messages: DiscordMessage[]): DiscordMessage[] {
   const byId = new Map<string, DiscordMessage>();
   for (const message of messages) {
-    const kept = byId.get(message.id);
-    if (kept && indexStubs.has(message) && !indexStubs.has(kept)) continue;
     byId.set(message.id, message);
   }
   return Array.from(byId.values());
+}
+
+function buildRemoteSearchOptions(
+  request: MessageSearchRequest,
+  pattern: string | undefined,
+  overrides: Partial<SearchOptions>,
+): SearchOptions {
+  return {
+    pattern,
+    authorId: request.authorId,
+    has: request.has,
+    duringDate: request.date,
+    afterDate: request.afterDate,
+    beforeDate: request.beforeDate,
+    sortBy: request.sortBy,
+    sortOrder: request.sortOrder,
+    pinned: request.pinned,
+    mentions: request.mentions,
+    skipPatternDetection: true,
+    ...overrides,
+  };
 }
 
 /** Date-only values must name a real calendar day; other values must parse to a finite time. */
@@ -147,7 +135,7 @@ export async function runMessageSearch(
     pattern ||= detected.pattern || undefined;
     query = detected.cleanedQuery || (detected.pattern ? undefined : query);
   }
-  if (pattern && !compileRegexSafely(pattern)) {
+  if (pattern && !compileSafeRegex(pattern).regex) {
     return {
       ok: false,
       code: 'invalid_pattern',
@@ -170,7 +158,7 @@ export async function runMessageSearch(
     : [];
   const candidates: DiscordMessage[] = [];
   const embeddedContext: Record<string, DiscordMessage[]> = {};
-  let fallbackUsed: 'local_index' | 'local_scan' | 'none' = 'none';
+  let fallbackUsed: 'local_scan' | 'none' = 'none';
   let remoteSearchFailed = false;
   const offset = request.offset || 0;
   // The offset cursor belongs to the primary remote variant; other sources do not share it.
@@ -193,24 +181,13 @@ export async function runMessageSearch(
       const variant = variants[0];
       if (!hasRemoteSearchCriteria(variant)) break;
       try {
-        const response = await searchDiscordMessages({
+        const response = await searchDiscordMessages(buildRemoteSearchOptions(request, pattern, {
           query: variant,
-          pattern,
           channelId: customChId,
           guildId: scope.guildId,
           guildWide: false,
-          authorId: request.authorId,
-          has: request.has,
-          duringDate: request.date,
-          afterDate: request.afterDate,
-          beforeDate: request.beforeDate,
-          sortBy: request.sortBy,
-          sortOrder: request.sortOrder,
           offset: 0,
-          pinned: request.pinned,
-          mentions: request.mentions,
-          skipPatternDetection: true,
-        }, 3, signal);
+        }), 3, signal);
         collectEmbeddedContext(response.messages, embeddedContext);
         candidates.push(...hitMessages(response.messages));
         if (candidates.length >= request.limit * 2) break;
@@ -228,24 +205,13 @@ export async function runMessageSearch(
       }
 
       try {
-        const response = await searchDiscordMessages({
+        const response = await searchDiscordMessages(buildRemoteSearchOptions(request, pattern, {
           query: variant,
-          pattern,
           channelId,
           guildId: scope.isGuild ? scope.guildId : getChannel(channelId || scope.channelId)?.guild_id,
           guildWide,
-          authorId: request.authorId,
-          has: request.has,
-          duringDate: request.date,
-          afterDate: request.afterDate,
-          beforeDate: request.beforeDate,
-          sortBy: request.sortBy,
-          sortOrder: request.sortOrder,
           offset: request.offset,
-          pinned: request.pinned,
-          mentions: request.mentions,
-          skipPatternDetection: true,
-        }, 3, signal);
+        }), 3, signal);
         collectEmbeddedContext(response.messages, embeddedContext);
         const hits = hitMessages(response.messages);
         if (variant === variants[0]) primary = { hits, totalResults: response.totalResults };
@@ -256,7 +222,7 @@ export async function runMessageSearch(
       } catch (remoteErr) {
         // A cancelled run must stop, not fall back to local sources.
         if (signal?.aborted) throw remoteErr;
-        console.warn('[VencordAI] Remote Discord search failed, falling back to local index:', remoteErr);
+        console.warn('[VencordAI] Remote Discord search failed, falling back to local scan:', remoteErr);
         remoteSearchFailed = true;
         break;
       }
@@ -273,46 +239,7 @@ export async function runMessageSearch(
     };
   }
 
-  // 4. Seamless Hybrid Search Fallback (Local Inverted Index)
-  if (offset === 0 && (remoteSearchFailed || candidates.length < request.limit)) {
-    // Compact index records do not retain mention identities or full media metadata.
-    // Use Discord/recent-message results when those filters cannot be verified.
-    if (!request.has && !request.mentions && (query || pattern || request.authorId || request.date || request.afterDate || request.beforeDate || request.pinned !== undefined)) {
-      try {
-        const bounds = resolveDateSnowflakeBounds({
-          duringDate: request.date,
-          afterDate: request.afterDate,
-          beforeDate: request.beforeDate,
-        });
-        const indexQuery = filterIndexQueryToScope(
-          {
-            query,
-            pattern,
-            channelIds: channelId ? [channelId] : undefined,
-            authorId: request.authorId,
-            date: request.date,
-            minTimestamp: bounds.minId ? snowflakeToDate(bounds.minId).getTime() : undefined,
-            maxTimestamp: bounds.maxId ? snowflakeToDate(bounds.maxId).getTime() : undefined,
-            flagsRequired: request.pinned === true ? MESSAGE_FLAGS.IS_PINNED : undefined,
-            flagsExcluded: request.pinned === false ? MESSAGE_FLAGS.IS_PINNED : undefined,
-            limit: request.limit * 2,
-          },
-          scope,
-        );
-
-        const localIndexResult = await retrievalEngine.search(indexQuery, scope);
-        if (localIndexResult.hits.length > 0) {
-          const localMessages = localIndexResult.hits.map((h) => indexStubMessage(h.record));
-          candidates.push(...localMessages);
-          fallbackUsed = 'local_index';
-        }
-      } catch (indexErr) {
-        console.warn('[VencordAI] Local index search error:', indexErr);
-      }
-    }
-  }
-
-  // 5. Local Channel MessageStore Recent Scan Fallback
+  // 4. Local Channel MessageStore Recent Scan Fallback
   let localNextBeforeMessageId: string | undefined;
   const scanChannelIds = channelId
     ? [channelId]
@@ -355,7 +282,7 @@ export async function runMessageSearch(
     }
   }
 
-  // 6. Deduplication, Ranking & Fail-Closed Post-Filtering
+  // 5. Deduplication, Ranking & Fail-Closed Post-Filtering
   const scoped = filterMessagesToScope(filterMessagesLocally(deduplicate(candidates), {
     pattern,
     authorId: request.authorId,

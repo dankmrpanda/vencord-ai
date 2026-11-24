@@ -6,14 +6,12 @@
 
 import { RestAPI } from '@webpack/common';
 import { listChannelPins, listThreads } from '../discord/contextTools';
-import { compileRegexSafely, fetchDiscordMessagesApi, fetchRecentMessages, fetchSurroundingMessages, filterMessagesLocally } from '../discord/messages';
+import { fetchDiscordMessagesApi, fetchRecentMessages, fetchSurroundingMessages, filterMessagesLocally } from '../discord/messages';
 import { discordGet } from '../discord/rest';
+import { compileSafeRegex } from '../discord/safeRegex';
 import { detectPatternFromQuery, searchDiscordMessages } from '../discord/search';
-import * as searchPipeline from '../discord/searchPipeline';
 import { runMessageSearch } from '../discord/searchPipeline';
-import { STRUCTURED_PATTERNS } from '../storage/regex';
-import { HybridRetrievalEngine } from '../storage/retrieval';
-import { StoredMessageRecord } from '../storage/index/types';
+import { validateToolArguments } from '../llm/validation';
 import { ChannelType, CurrentScopeContext, DiscordMessage } from '../types';
 import { assert } from './assert';
 
@@ -93,8 +91,14 @@ async function srch01RedosScreenBypass(): Promise<string | null> {
     '[α-ω]+[α-χ]*[α-ω]+!',
   ];
   const detectorQueries = ['6-digit', '4 to 8 digits', 'at least 5 digits', 'up to 6 digits', '2fa code', '4-digit pin', 'phone numbers', 'emails', 'hex colors', 'ip address', 'numbers'];
-  const mustPass = [
-    ...Object.values(STRUCTURED_PATTERNS),
+  const mustPass: Array<string | RegExp> = [
+    /\b\d{4,8}\b/g,
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    /(?<![0-9a-zA-Z])(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?![0-9a-zA-Z])/g,
+    /#[0-9a-fA-F]{3,8}\b/g,
+    /\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?\b/g,
+    /\b(?:https?:\/\/)?discord(?:\.gg|\.com\/invite)\/[a-zA-Z0-9-]+\b/g,
+    /\b\d{17,20}\b/g,
     ...detectorQueries.map((query) => detectPatternFromQuery(query).pattern as string),
     '\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b',
     'https?://\\S+',
@@ -106,8 +110,8 @@ async function srch01RedosScreenBypass(): Promise<string | null> {
     '.*invoice.*',
     '/hello/i',
   ];
-  const accepted = catastrophic.filter((p) => compileRegexSafely(p) !== null);
-  const rejected = mustPass.filter((p) => compileRegexSafely(p) === null).map(String);
+  const accepted = catastrophic.filter((p) => compileSafeRegex(p).regex !== null);
+  const rejected = mustPass.filter((p) => compileSafeRegex(p).regex === null).map(String);
   const long = 'a'.repeat(20_000);
   const capped = filterMessagesLocally([msg('100000000000000099', DM, `${long} tailneedle`, new Date().toISOString())], { pattern: 'tailneedle' });
   const problems: string[] = [];
@@ -172,7 +176,7 @@ const REDOS_CORPUS: Array<{ id: string; pattern: string; expect: 'reject' | 'pas
 
 function redosCorpusProblems(id: string): string | null {
   const wrong = REDOS_CORPUS
-    .filter((entry) => entry.id === id && (compileRegexSafely(entry.pattern) !== null) !== (entry.expect === 'pass'))
+    .filter((entry) => entry.id === id && (compileSafeRegex(entry.pattern).regex !== null) !== (entry.expect === 'pass'))
     .map((entry) => `${entry.expect === 'reject' ? 'accepted' : 'rejected'} ${entry.pattern}`);
   return wrong.length ? wrong.join('  ') : null;
 }
@@ -231,72 +235,6 @@ async function srch02StickerFilterPassesEverything(): Promise<string | null> {
   return problems.length ? problems.join('; ') : null;
 }
 
-/** SEC-08: an emptied channel allowlist reached the index as [] and was read as "no channel filter". */
-async function sec08IndexAllowlistEmptiedFailsOpen(): Promise<string | null> {
-  const record = (id: string, channelId: string): StoredMessageRecord => ({
-    docId: Number(id.slice(-3)) as any, id, channelId, guildId: GUILD, authorId: '700000000000000007', authorName: 'fixture',
-    timestamp: Date.UTC(2025, 0, 1), content: 'allowneedle', tokenLength: 1, flags: 0,
-  });
-  const THREAD = '610000000000000061';
-  const OTHER = '620000000000000062';
-  const docs = [record('180000000000000001', THREAD), record('180000000000000002', GUILD_CH), record('180000000000000003', OTHER)];
-  const sent: Array<string[] | undefined> = [];
-  // Models the index before its own fix: an empty or missing channelIds list applies no channel filter.
-  const bridge: any = {
-    search: async (q: { channelIds?: string[] }) => {
-      sent.push(q.channelIds);
-      const rows = q.channelIds?.length ? docs.filter((d) => q.channelIds!.includes(d.channelId)) : docs;
-      return { hits: rows.map((d, i) => ({ docId: d.docId, messageId: d.id, score: 1 - i * 0.1, bm25Score: 1 - i * 0.1, exactBonus: 0, recencyBonus: 0 })), records: rows };
-    },
-    createSnapshot: async () => ({ documents: docs }),
-  };
-  const engine = new HybridRetrievalEngine(bridge);
-  const scope = (mode: 'channel' | 'server' | 'custom', selected?: string[]): CurrentScopeContext => ({
-    ...guildScope(), channelId: THREAD, scopeMode: mode, selectedChannelIds: selected,
-  } as CurrentScopeContext);
-  const problems: string[] = [];
-  const check = async (label: string, run: () => Promise<{ hits: Array<{ channelId?: string; record?: StoredMessageRecord }> }>, allowed: string[]) => {
-    sent.length = 0;
-    const res = await run();
-    const channels = res.hits.map((h: any) => h.record?.channelId ?? h.channelId);
-    const leaked = channels.filter((c) => !allowed.includes(c));
-    if (leaked.length) problems.push(`${label}: returned hits from ${JSON.stringify(leaked)}`);
-    if (sent.some((ids) => ids !== undefined && ids.length === 0)) problems.push(`${label}: index received channelIds=[]`);
-  };
-  await check('server mode, unpermitted channelIds', () => engine.search({ query: 'allowneedle', channelIds: [OTHER] }, scope('server')), []);
-  await check('server mode, sentinel channelIds', () => engine.search({ query: 'allowneedle', channelIds: ['__FORBIDDEN_SCOPE_BLOCKED__'] }, scope('server')), []);
-  await check('server mode, active thread only', () => engine.search({ query: 'allowneedle', channelIds: [THREAD] }, scope('server')), [THREAD]);
-  await check('custom mode, unpermitted channelIds', () => engine.search({ query: 'allowneedle', channelIds: [OTHER] }, scope('custom', [GUILD_CH])), []);
-  await check('channel mode, no channelIds', () => engine.search({ query: 'allowneedle' }, scope('channel')), [THREAD]);
-  await check('no scope, empty channelIds, pattern-only snapshot', () => engine.search({ pattern: 'allowneedle', channelIds: [] }), []);
-  return problems.length ? problems.join('; ') : null;
-}
-
-/** SRCH-03: dedupe kept the last copy, so a stripped local-index stub replaced the full remote message. */
-async function srch03DedupKeepsFullCopy(): Promise<string | null> {
-  if (typeof (searchPipeline as any).deduplicate !== 'function') return 'deduplicate is not exported for testing';
-  const pipeline: any = searchPipeline;
-  const full: any = {
-    id: '190000000000000001', channel_id: GUILD_CH, author: { id: '700000000000000007', username: 'fixture', global_name: 'Fixture' },
-    content: 'see attached', timestamp: new Date(Date.UTC(2025, 0, 1)).toISOString(),
-    attachments: [{ id: '777', filename: 'a.png', size: 10, url: 'https://cdn.discordapp.com/a.png', proxy_url: '' }],
-    embeds: [{ title: 'e' }], mentions: [{ id: '700000000000000008', username: 'm' }],
-  };
-  const stub: any = pipeline.indexStubMessage({
-    id: full.id, channelId: GUILD_CH, guildId: GUILD, authorId: full.author.id, authorName: 'fixture',
-    timestamp: Date.UTC(2025, 0, 1), content: 'see attached', flags: 0, attachmentNames: ['a.png'],
-  } as any);
-  const later: any = { ...full, content: 'see attached (edited)' };
-  const problems: string[] = [];
-  const keptAfterStub = pipeline.deduplicate([full, stub]);
-  if (keptAfterStub.length !== 1 || keptAfterStub[0] !== full) problems.push(`remote then stub kept ${keptAfterStub[0]?.attachments?.[0]?.id === '0' ? 'the stub' : 'something else'}`);
-  const keptStubFirst = pipeline.deduplicate([stub, full]);
-  if (keptStubFirst.length !== 1 || keptStubFirst[0] !== full) problems.push('stub then full copy kept the stub');
-  const twoFull = pipeline.deduplicate([full, later]);
-  if (twoFull.length !== 1 || twoFull[0] !== later) problems.push('two full copies no longer keep the later one');
-  return problems.length ? problems.join('; ') : null;
-}
-
 /**
  * CTX-01 (user request): a search hit alone is often meaningless ("same", "trust"), so search_messages also returns
  * the conversation around its top hits in data.context. Windows stay in scope, do not repeat messages, and are dropped
@@ -326,7 +264,7 @@ async function ctx01SearchHitsComeWithContext(): Promise<string | null> {
     }
     return [];
   }, async () => {
-    const result: any = await tool.execute(tool.parseArgs({ query: 'nvidia', sort_by: 'relevance' }), context as any);
+    const result: any = await tool.execute(validateToolArguments(tool.definition, { query: 'nvidia', sort_by: 'relevance' }), context as any);
     const windows = result.data?.context || [];
     if (!windows.length) { problems.push(`no data.context: ${result.summary}`); return; }
     const first = windows.find((w: any) => w.hit_id === convo[6].id);
@@ -344,7 +282,7 @@ async function ctx01SearchHitsComeWithContext(): Promise<string | null> {
     if (!/surrounding conversation for \d+ hit/.test(result.summary)) problems.push(`summary does not mention context: ${result.summary}`);
 
     arounds.length = 0;
-    const none: any = await tool.execute(tool.parseArgs({ query: 'nvidia', context_messages: 0 }), context as any);
+    const none: any = await tool.execute(validateToolArguments(tool.definition, { query: 'nvidia', context_messages: 0 }), context as any);
     if (arounds.length || none.data?.context) problems.push('context_messages: 0 still fetched context');
 
     // Too large for the budget: context windows go first, hits stay.
@@ -688,8 +626,6 @@ const CASES: Array<[string, () => Promise<string | null>]> = [
   ['RPT6-2d sample-character overlap', rpt6SampleCharOverlap],
   ['REV3-01..03 ReDoS screen gaps', rev3RedosScreenGaps],
   ['SRCH-02 has=sticker local filter', srch02StickerFilterPassesEverything],
-  ['SEC-08 index allowlist emptied fails open', sec08IndexAllowlistEmptiedFailsOpen],
-  ['SRCH-03 dedup keeps the full copy over an index stub', srch03DedupKeepsFullCopy],
   ['CTX-01 search hits come with their surrounding conversation', ctx01SearchHitsComeWithContext],
   ['SRCH-04 offset pagination', srch04OffsetPagination],
   ['REV-DSC-03 failed later page is not empty', revDsc03FailedLaterPage],

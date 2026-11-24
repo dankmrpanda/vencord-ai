@@ -5,7 +5,8 @@
 
 import { stripInvisibleAndBidi } from '../discord/guardrails';
 import { isImageAttachment } from '../discord/media';
-import { VOICE_MESSAGE_FLAG } from '../discord/voiceMessages';
+import { isThreadChannel } from '../discord/scope';
+import { isVoiceMessage } from '../discord/voiceMessages';
 import { ChannelType, CurrentScopeContext, DiscordMessage } from '../types';
 
 export type QuickPromptIconKind =
@@ -42,11 +43,11 @@ function detectLiveSignalPrompts(
   hasVoiceTranscribe: boolean,
 ): QuickPromptItem[] {
   if (!recentMessages.length) return [];
-  const window = recentMessages.slice(-20);
+  const newestFirst = [...recentMessages.slice(-20)].reverse();
   const boosts: QuickPromptItem[] = [];
 
   if (hasVoiceTranscribe) {
-    const voice = [...window].reverse().find((m) => Boolean((m.flags ?? 0) & VOICE_MESSAGE_FLAG));
+    const voice = newestFirst.find((m) => isVoiceMessage(m));
     if (voice) {
       boosts.push({
         id: 'live-voice',
@@ -59,7 +60,7 @@ function detectLiveSignalPrompts(
   }
 
   if (enableVision) {
-    const withImage = [...window].reverse().find((m) =>
+    const withImage = newestFirst.find((m) =>
       m.attachments?.some((a) => isImageAttachment(a)) ||
       m.embeds?.some((e) => Boolean(e.image?.url)),
     );
@@ -74,7 +75,7 @@ function detectLiveSignalPrompts(
     }
   }
 
-  const poll = [...window].reverse().find((m) => Boolean(m.poll?.question?.text));
+  const poll = newestFirst.find((m) => Boolean(m.poll?.question?.text));
   if (poll) {
     boosts.push({
       id: 'live-poll',
@@ -85,7 +86,7 @@ function detectLiveSignalPrompts(
     });
   }
 
-  const codeMsg = [...window].reverse().find((m) => /```[\s\S]+```/.test(m.content || ''));
+  const codeMsg = newestFirst.find((m) => /```[\s\S]+```/.test(m.content || ''));
   if (codeMsg) {
     boosts.push({
       id: 'live-code',
@@ -97,7 +98,7 @@ function detectLiveSignalPrompts(
   }
 
   const currentUserId = scope?.currentUser?.id;
-  const questionFromOther = [...window].reverse().find(
+  const questionFromOther = newestFirst.find(
     (m) => m.author?.id !== currentUserId && /\?\s*$/.test((m.content || '').trim()) && (m.content || '').length >= 12,
   );
   if (questionFromOther) {
@@ -221,11 +222,7 @@ function defaultTailoredForScope(scope: CurrentScopeContext | null): QuickPrompt
     ];
   }
 
-  const isThread =
-    scope.channelType === ChannelType.PUBLIC_THREAD ||
-    scope.channelType === ChannelType.PRIVATE_THREAD ||
-    scope.channelType === ChannelType.ANNOUNCEMENT_THREAD;
-  if (isThread) {
+  if (isThreadChannel(scope.channelType)) {
     return [
       {
         id: 'thread-summary',

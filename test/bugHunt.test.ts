@@ -5,9 +5,9 @@
 
 import { RestAPI } from '@webpack/common';
 import { runMessageSearch } from '../discord/searchPipeline';
-import { compileRegexSafely, filterMessagesLocally } from '../discord/messages';
+import { filterMessagesLocally } from '../discord/messages';
+import { compileSafeRegex } from '../discord/safeRegex';
 import { consumeChatCompletionStream, OpenAICompatibleClient } from '../llm/provider';
-import { indexBridge } from '../storage/index/workerBridge';
 import { ChannelType, CurrentScopeContext, DiscordMessage, PluginSettings } from '../types';
 import { assert } from './assert';
 
@@ -32,9 +32,9 @@ const message = (id: string, content: string, timestamp: string, pinned = false)
 });
 
 export async function runRegexSafetyRegressions(): Promise<void> {
-  assert(compileRegexSafely('(a+)+$') === null, 'Recent-message regex compilation must apply the existing ReDoS safety screen');
-  assert(compileRegexSafely(/(a+)+$/) === null, 'RegExp inputs must receive the same ReDoS screening');
-  const safe = compileRegexSafely('/hello/i');
+  assert(compileSafeRegex('(a+)+$').regex === null, 'Recent-message regex compilation must apply the existing ReDoS safety screen');
+  assert(compileSafeRegex(/(a+)+$/).regex === null, 'RegExp inputs must receive the same ReDoS screening');
+  const safe = compileSafeRegex('/hello/i').regex;
   assert(Boolean(safe?.global && safe.ignoreCase && safe.test('HELLO')), 'Safe regex literals must retain their flags');
   const messages = [message('regex-fixture', 'ordinary text', new Date().toISOString())];
   assert(filterMessagesLocally(messages, { pattern: '[' }).length === 0, 'An invalid regex must fail closed rather than become an unfiltered search');
@@ -52,30 +52,6 @@ export async function runRegexSafetyRegressions(): Promise<void> {
 export async function runSearchFallbackRegressions(): Promise<void> {
   const originalGet = RestAPI.get;
   try {
-    await indexBridge.clear();
-    await indexBridge.ingestBatch([
-      message('filter-old', 'fallbackneedle 111111', new Date(2026, 0, 1, 12).toISOString()),
-      message('filter-new', 'fallbackneedle 222222', new Date(2026, 0, 2, 12).toISOString(), true),
-    ]);
-    RestAPI.get = async () => ({ body: { total_results: 0, messages: [] } });
-    const base = { query: 'fallbackneedle', limit: 10, scanLimit: 10 };
-    const dated = await runMessageSearch({ ...base, date: '2026-01-02' }, scope);
-    assert(dated.data?.messages.length === 1 && dated.data.messages[0].id === 'filter-new', 'Index fallback must enforce the exact requested day');
-    const after = await runMessageSearch({ ...base, afterDate: '2026-01-02' }, scope);
-    assert(after.data?.messages.length === 1 && after.data.messages[0].id === 'filter-new', 'Index fallback must enforce after-date bounds');
-    const before = await runMessageSearch({ ...base, beforeDate: '2026-01-02' }, scope);
-    assert(before.data?.messages.length === 1 && before.data.messages[0].id === 'filter-old', 'Index fallback must enforce before-date bounds');
-    const pinned = await runMessageSearch({ ...base, pinned: true }, scope);
-    assert(pinned.data?.messages.length === 1 && pinned.data.messages[0].id === 'filter-new', 'Index fallback must preserve pin filters and metadata');
-    const unpinned = await runMessageSearch({ ...base, pinned: false }, scope);
-    assert(unpinned.data?.messages.length === 1 && unpinned.data.messages[0].id === 'filter-old', 'Index fallback must enforce pinned=false');
-    const pattern = await runMessageSearch({ ...base, pattern: '222222' }, scope);
-    assert(pattern.data?.messages.length === 1 && pattern.data.messages[0].id === 'filter-new', 'Index fallback must require a pattern match even when lexical hits exist');
-    const mentioned = await runMessageSearch({ ...base, mentions: 'absent-user' }, scope);
-    assert(mentioned.data?.messages.length === 0, 'Index fallback must not invent a mention match from records without mention identities');
-    const media = await runMessageSearch({ ...base, has: 'image' }, scope);
-    assert(media.data?.messages.length === 0, 'Index fallback must not return text-only records for an image query');
-
     const older = message('sort-old', 'sortneedle', new Date(2026, 0, 1, 12).toISOString());
     const newer = message('sort-new', 'sortneedle sortneedle', new Date(2026, 0, 2, 12).toISOString());
     RestAPI.get = async () => ({ body: { total_results: 2, messages: [[newer], [older]] } });
@@ -85,7 +61,6 @@ export async function runSearchFallbackRegressions(): Promise<void> {
     assert(descending.data?.messages[0]?.id === 'sort-new', 'Descending chronological ordering must survive combined search ranking');
   } finally {
     RestAPI.get = originalGet;
-    await indexBridge.clear();
   }
 }
 

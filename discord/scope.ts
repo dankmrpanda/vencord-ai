@@ -24,7 +24,7 @@ import {
  * Discord Permissions Bitfield: VIEW_CHANNEL (1 << 10 = 1024n)
  */
 export const VIEW_CHANNEL_PERMISSION = 1024n;
-export const VIEW_CHANNEL_PERMISSION_NUM = 1024;
+const VIEW_CHANNEL_PERMISSION_NUM = 1024;
 
 /**
  * Set of channel types that are valid readable text channels.
@@ -41,15 +41,24 @@ export const PERMITTED_TEXT_CHANNEL_TYPES = new Set<ChannelType>([
   ChannelType.GROUP_DM,
 ]);
 
-/**
- * Disallowed channel types (voice, stage, directory, category).
- */
-export const BLOCKED_CHANNEL_TYPES = new Set<ChannelType>([
-  ChannelType.GUILD_VOICE,
-  ChannelType.GUILD_STAGE_VOICE,
-  ChannelType.GUILD_CATEGORY,
-  ChannelType.GUILD_DIRECTORY,
-]);
+export function isThreadChannel(
+  channelOrType: Pick<DiscordChannel, 'type' | 'isThread'> | ChannelType | null | undefined,
+): boolean {
+  if (channelOrType === null || channelOrType === undefined) return false;
+  if (typeof channelOrType === 'number') {
+    return (
+      channelOrType === ChannelType.PUBLIC_THREAD ||
+      channelOrType === ChannelType.PRIVATE_THREAD ||
+      channelOrType === ChannelType.ANNOUNCEMENT_THREAD
+    );
+  }
+  return (
+    Boolean(channelOrType.isThread?.()) ||
+    channelOrType.type === ChannelType.PUBLIC_THREAD ||
+    channelOrType.type === ChannelType.PRIVATE_THREAD ||
+    channelOrType.type === ChannelType.ANNOUNCEMENT_THREAD
+  );
+}
 
 /**
  * Result of a scope boundary validation check.
@@ -84,12 +93,7 @@ export function validateChannelPermission(
     return true;
   }
 
-  // Non-text / blocked channel types fail immediately
-  if (BLOCKED_CHANNEL_TYPES.has(channel.type)) {
-    return false;
-  }
-
-  // Must be a permitted text channel type
+  // Must be a permitted text channel type (rejects voice, stage, category, directory, and unknown types fail-closed)
   if (!PERMITTED_TEXT_CHANNEL_TYPES.has(channel.type)) {
     return false;
   }
@@ -173,7 +177,7 @@ export function validateScopeBoundary(
 /**
  * Finds all mutual Group DMs shared between current user and target user
  */
-export function getMutualGroupDMs(otherUserId: string): DiscordChannel[] {
+function getMutualGroupDMs(otherUserId: string): DiscordChannel[] {
   const current = getCurrentUser();
   if (!current || !otherUserId) return [];
 
@@ -198,12 +202,6 @@ export function getMutualGroupDMs(otherUserId: string): DiscordChannel[] {
 }
 
 /**
- * Re-exported fail-closed permission check delegating to guardrails.
- */
-export const canReadChannel = (permissionStore: any, channel: DiscordChannel): boolean =>
-  validateChannelPermission(channel, permissionStore);
-
-/**
  * Gets accessible text channels for a guild
  */
 export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
@@ -224,7 +222,7 @@ export function getAccessibleGuildChannels(guildId: string): DiscordChannel[] {
       .map((entry) => entry?.channel ?? entry)
       .filter((ch: DiscordChannel): ch is DiscordChannel => {
         if (!ch?.id || !PERMITTED_TEXT_CHANNEL_TYPES.has(ch.type)) return false;
-        return canReadChannel(permStore, ch);
+        return validateChannelPermission(ch, permStore);
       });
   } catch (err) {
     console.error(`[VencordAI] Error getting channels for guild ${guildId}:`, err);
@@ -272,34 +270,6 @@ export function getPermittedChannelIdsForScope(context: CurrentScopeContext): st
     return [context.channelId, ...explicitGroupDMs];
   }
   return [context.channelId];
-}
-
-/**
- * Pre-filters an IndexSearchQuery so unpermitted channels are never searched.
- */
-export function filterIndexQueryToScope<T extends { channelIds?: string[]; guildId?: string; [key: string]: any }>(
-  query: T,
-  context: CurrentScopeContext,
-): T {
-  const permittedChannelIds = getPermittedChannelIdsForScope(context);
-  const permittedSet = new Set(permittedChannelIds);
-
-  let scopedChannelIds: string[];
-  if (query.channelIds && query.channelIds.length > 0) {
-    scopedChannelIds = query.channelIds.filter((id) => permittedSet.has(id));
-    if (scopedChannelIds.length === 0) {
-      // Requested channel was explicitly unpermitted -> fail-closed with empty sentinel
-      scopedChannelIds = ['__FORBIDDEN_SCOPE_BLOCKED__'];
-    }
-  } else {
-    scopedChannelIds = permittedChannelIds;
-  }
-
-  return {
-    ...query,
-    channelIds: scopedChannelIds,
-    guildId: context.isGuild ? context.guildId : undefined,
-  };
 }
 
 /**
@@ -392,11 +362,7 @@ export function getCurrentScopeContext(): CurrentScopeContext | null {
   const parentChannelId = channel.parent_id || undefined;
   const parentChannel = parentChannelId ? getChannel(parentChannelId) : null;
   const parentChannelName = parentChannel?.name || undefined;
-  const isThread =
-    Boolean(channel.isThread?.()) ||
-    channel.type === ChannelType.PUBLIC_THREAD ||
-    channel.type === ChannelType.PRIVATE_THREAD ||
-    channel.type === ChannelType.ANNOUNCEMENT_THREAD;
+  const isThread = isThreadChannel(channel);
 
   let threadMetadata: CurrentScopeContext['threadMetadata'];
   if (isThread) {

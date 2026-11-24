@@ -6,8 +6,6 @@
 import { React } from '@webpack/common';
 import { PluginLogEntry } from '../types';
 
-export type { PluginLogEntry };
-
 interface ErrorBoundaryProps {
   children: React.ReactNode;
   logs: PluginLogEntry[];

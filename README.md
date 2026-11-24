@@ -19,7 +19,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 
 ## 🌟 Key Features
 
-- 🔍 **Server-Side Message Search (100k+ Messages)**: Uses Discord's native search API through agentic tool calling to locate past messages, filter by authors, date ranges, and attachment types without crashing your client. The repository also contains a local message index (`storage/index`, `storage/retrieval.ts`), but production code never populates it, so its search step never returns a hit in the shipped plugin.
+- 🔍 **Server-Side Message Search (100k+ Messages)**: Uses Discord's native search API through agentic tool calling to locate past messages, filter by authors, date ranges, and attachment types without crashing your client, with a bounded recent-message scan fallback.
 - 📜 **Context Reconstruction**: Search results include the conversation around the top 5 hits (3 messages either side by default, set with `context_messages`, 0 to turn it off), so a hit such as "same" is read as the reply it is. Hits and context reach the model in compact form; if a result is too large, context is trimmed before any hit.
 - 🧰 **Read-Only Discord Context Tools**: Retrieve message details/reply chains, channel pins, and active or archived threads/forum posts. No sending, reacting, editing, deleting, or pinning tools exist.
 - 🛡️ **Autonomous Scoping with Privacy Boundaries**:
@@ -33,7 +33,7 @@ Use the exact model ID listed by your omlx server at `/v1/models`, such as `Qwen
 - 🎙️ **Voice messages**: With the VoiceTranscribe plugin enabled, the assistant can transcribe voice messages (or translate them to English) on your computer through its `transcribe_voice_message` tool. Right-clicking a voice message and choosing **Ask AI about this message** transcribes it automatically. The tool takes only a channel and message ID; the audio URL always comes from Discord's copy of the message.
 - 🖼️ **Dynamic Multimodal / Vision**: On-demand image inspection tool allowing vision-capable models to read memes, diagrams, and screenshots. It is offered whenever **Image inspection** is on in settings, for any preset, local ones included. It is off by default; turn it on only if your model can read images (for example Qwen3-VL, Gemma 3 or GPT-4o).
 - 📌 **Clickable Discord Jump Citations**: Referenced messages appear as rich preview cards with one-click jump buttons directly into your Discord chat stream.
-- 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. Sending while no channel or DM is open shows the error "Open a channel or DM first." and sends no completion request (a local model preset may still load the model first). A chat deleted while it is generating stays deleted.
+- 💬 **Persistent Multi-Session History**: Conversations are saved per-channel in local storage / IndexedDB with session switching and new chat management. The sidebar always shows the viewed channel's chat: moving to another channel switches to that channel's latest chat (or a new one), so one channel's conversation is never sent to the model from another. Sending while no channel or DM is open shows the error "Open a channel or DM first." and fails closed before acquiring a model lease or issuing completion requests. A chat deleted while it is generating stays deleted.
 - 🎨 **Native Discord UI**: A right-hand panel that docks beside Discord like the member list (drag its left edge to resize), toggled via the sparkle button in Discord's header bar or `Ctrl+Shift+A` (`Cmd+Shift+A` on macOS). It uses Discord's theme colours and font.
 
 ---
@@ -118,35 +118,46 @@ vencord-ai/
 ├── declarations.d.ts      # Vencord module type declarations
 ├── discord/
 │   ├── stores.ts          # Discord Webpack store finders & token access
+│   ├── rest.ts            # Unified read-only Discord HTTP transport & 429 retries
 │   ├── scope.ts           # Privacy boundaries & mutual GDM filters
-│   ├── guardrails.ts      # Scope/permission checks & untrusted-content sanitizing
+│   ├── participants.ts    # Scoped participant & @mention discovery
+│   ├── guardrails.ts      # Read-only HTTP assertions & untrusted-content sanitizing
+│   ├── safeRegex.ts       # ReDoS-safe regex AST screening & compilation
+│   ├── media.ts           # Scoped Discord image detection & base64 normalization
+│   ├── messageFormat.ts   # Slimmed message records & UI citation builder
+│   ├── channelSnapshot.ts # Zero-latency recent MessageStore snapshot builder
+│   ├── voiceMessages.ts   # Local VoiceTranscribe plugin integration
 │   ├── search.ts          # Rate-limited server-side message search API
+│   ├── searchContext.ts   # Surrounding conversation windows for top search hits
 │   ├── searchPipeline.ts  # Normalize, vary, filter, dedupe, rerank, paginate
 │   ├── contextTools.ts    # Read-only message details, pins, threads/forums
-│   └── messages.ts        # Surrounding message context & attachment helpers
+│   └── messages.ts        # Surrounding message context & local message filtering
 ├── llm/
-│   ├── provider.ts        # Compatibility facade
-│   ├── transport.ts       # Shared OpenAI-compatible transport and SSE parser
-│   ├── capabilities.ts    # Conservative provider capability presets
+│   ├── provider.ts        # Unified OpenAI-compatible client, capabilities & SSE parser
 │   ├── toolRegistry.ts    # Typed read-only registry and executors
+│   ├── validation.ts      # Strict tool argument parsing & coercion
+│   ├── compression.ts     # Token estimation, tool compaction & run budget tracker
 │   ├── agent.ts           # Budgeted tool-calling agent loop
 │   ├── modelLifecycle.ts  # Local model load/reuse/idle unload
 │   ├── modelSettings.ts   # Base URL validation & omlx model ID resolution
-│   └── prompts.ts         # System instructions & function definitions
+│   └── prompts.ts         # System instructions & prompt builder
 ├── services/
 │   ├── chatService.ts     # Per-channel sessions & agent runs
 │   └── runtimeLifecycle.ts # Plugin start/stop & page-exit cleanup
 ├── storage/
-│   ├── chatHistory.ts     # Persistent IndexedDB multi-session store
-│   ├── retrieval.ts       # Local hybrid retrieval engine (not populated in production)
-│   └── index/             # Local inverted index & worker (not populated in production)
+│   └── chatHistory.ts     # Persistent IndexedDB multi-session store
 ├── components/
 │   ├── SidebarPanel.tsx   # Dockable assistant drawer
 │   ├── ChatMessage.tsx    # Message bubble with steps & citations
 │   ├── ToolCallBadge.tsx  # Tool execution accordion
 │   ├── MessagePreview.tsx # Message citation card with jump button
+│   ├── HistoryDrawer.tsx  # Per-channel session history drawer
+│   ├── DebugDrawer.tsx    # Diagnostics log & redacted config drawer
+│   ├── ScopeIndicator.tsx # Visual scope boundary badge & selector
+│   ├── quickPrompts.ts    # Context-aware empty-state quick prompts
 │   ├── chatLinks.ts       # Link scheme allowlist for chat markdown
-│   └── ScopeIndicator.tsx # Visual scope boundary badge
+│   ├── chatErrors.ts      # Structured provider error classification
+│   └── sidebar*.ts        # Layout, CSS, actions, icons, a11y, error boundary
 ├── test/                  # Test suites, run together by test/run.ts
 ├── package.json
 ├── tsconfig.dev.json
@@ -170,9 +181,7 @@ Execute all scope, search, agent, and provider contract fixtures through one run
 ```bash
 npm run test
 ```
-`npm test` runs every suite registered in `test/run.ts`, including the bug-hunt suites (`scopePermission`, `huntScope`, `huntLifecycle`, `huntIndex`, `huntAgent`, `huntSearch`, `huntUi`, `challenger_m2_review`). Suites use the throwing `assert` from `test/assert.ts`, so any failed assertion fails the run.
-
-`npm run test:benchmark` runs the 100k-message retrieval benchmark. It measures a test-only index class in `test/benchmark100k.ts`, not the plugin's `storage/index`, and the plugin does not use a local index at runtime, so its numbers say nothing about in-app search speed.
+`npm test` runs every suite registered in `test/run.ts`. Suites use the throwing `assert` from `test/assert.ts`, so any failed assertion fails the run.
 
 Use [SMOKE_TEST.md](SMOKE_TEST.md) for the interactive Discord and local/cloud provider checks.
 

@@ -11,7 +11,7 @@ import { AssistantChatMessage, AssistantLaunchRequest, ChatSession, CurrentScope
  * Switching or deleting sessions during a run detaches the streaming reply from what the panel shows
  * and lets a stale stored copy overwrite the finished answer, so history actions wait for the run to end.
  */
-export function canChangeSessions(service: Pick<ChatService, 'isGenerating'>): boolean {
+function canChangeSessions(service: Pick<ChatService, 'isGenerating'>): boolean {
   return !service.isGenerating();
 }
 
@@ -95,7 +95,7 @@ export function isImeComposing(e: { isComposing?: boolean; keyCode?: number }): 
 
 /** UI-04: an Escape that a popup, Discord, or an IME composition already used must not close anything else. */
 export function isUnhandledEscape(e: EscapeKeyLike): boolean {
-  return e.key === 'Escape' && !e.defaultPrevented && !e.isComposing && e.keyCode !== 229;
+  return e.key === 'Escape' && !e.defaultPrevented && !isImeComposing(e);
 }
 
 /** UI-04: Escape closes the sidebar only when focus is in it, or nowhere in particular (the page body). */

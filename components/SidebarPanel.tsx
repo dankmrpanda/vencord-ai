@@ -30,20 +30,14 @@ import {
   CloseIcon,
   HistoryIcon,
   ImageIcon,
-  LinkIcon,
-  MessagesIcon,
-  MicIcon,
   NewChatIcon,
-  PinIcon,
-  SearchIcon,
+  quickPromptIcon,
   SendIcon,
   SettingsIcon,
   SparkleIcon,
   StopIcon,
-  ThreadIcon,
-  UsersIcon,
 } from './icons';
-import { buildEmptyStateQuickPrompts, QuickPromptIconKind } from './quickPrompts';
+import { buildEmptyStateQuickPrompts } from './quickPrompts';
 import { ScopeIndicator, scopeChipLabel } from './ScopeIndicator';
 import {
   deleteHistorySession,
@@ -493,19 +487,6 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
     };
   }, []);
 
-  const renderQuickIcon = (kind: QuickPromptIconKind): React.ReactNode => {
-    switch (kind) {
-      case 'messages': return <MessagesIcon size={16} />;
-      case 'link': return <LinkIcon size={16} />;
-      case 'search': return <SearchIcon size={16} />;
-      case 'image': return <ImageIcon size={16} />;
-      case 'pin': return <PinIcon size={16} />;
-      case 'thread': return <ThreadIcon size={16} />;
-      case 'mic': return <MicIcon size={16} />;
-      case 'users': return <UsersIcon size={16} />;
-      default: return <SparkleIcon size={16} />;
-    }
-  };
   const scopeLabel = scopeChipLabel(currentScope);
   const loadedRecent = React.useMemo(
     () => (currentScope?.channelId ? getLoadedMessages(currentScope.channelId) : []),
@@ -623,7 +604,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                 <div className="vai-suggestion-heading">General</div>
                 {generalPrompts.map((s) => (
                   <button key={s.id} className="vai-suggestion" onClick={() => handleSend(s.prompt)}>
-                    {renderQuickIcon(s.icon)}
+                    {quickPromptIcon(s.icon)}
                     <span>{s.label}</span>
                   </button>
                 ))}
@@ -632,7 +613,7 @@ export const SidebarPanel: React.FC<SidebarPanelProps> = ({
                 <div className="vai-suggestion-heading">For {scopeLabel}</div>
                 {tailoredPrompts.map((s) => (
                   <button key={s.id} className="vai-suggestion" onClick={() => handleSend(s.prompt)}>
-                    {renderQuickIcon(s.icon)}
+                    {quickPromptIcon(s.icon)}
                     <span>{s.label}</span>
                   </button>
                 ))}

@@ -5,8 +5,6 @@
 
 import { PluginLogEntry } from './types';
 
-export type DiagnosticLogEntry = PluginLogEntry;
-
 function safeString(value: unknown): string {
   try {
     return String(value);
@@ -25,7 +23,7 @@ export function serializeLogArgument(value: unknown): string {
   }
 }
 
-export function escapeHtml(value: string): string {
+function escapeHtml(value: string): string {
   const entities: Record<string, string> = {
     '&': '&amp;',
     '<': '&lt;',
@@ -36,7 +34,7 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => entities[character]);
 }
 
-export function renderDiagnosticLogEntry(entry: DiagnosticLogEntry): string {
+export function renderDiagnosticLogEntry(entry: PluginLogEntry): string {
   const color = entry.level === 'error' ? '#f23f43' : entry.level === 'warn' ? '#f0b232' : '#949ba4';
   return `<div style="color: ${color}; margin-bottom: 3px;">[${escapeHtml(entry.time)}] ${escapeHtml(entry.message)}</div>`;
 }

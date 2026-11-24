@@ -4,6 +4,7 @@
  */
 
 import { fetchImageAsBase64 } from '../discord/media';
+import { abortableSleep } from '../discord/rest';
 import {
   CompletionRequest,
   CompletionResult,
@@ -140,22 +141,6 @@ function redactProviderText(text: string, apiKey: string): string {
     .replace(/[\u0000-\u001f\u007f\s]+/g, ' ')
     .trim();
   return text.length > 200 ? `${text.slice(0, 200)}...` : text;
-}
-
-function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    signal?.throwIfAborted();
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      reject(signal?.reason || new Error('LLM completion cancelled.'));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
 }
 
 export async function consumeChatCompletionStream(
@@ -323,7 +308,7 @@ export class OpenAICompatibleClient {
           ? Math.min(retrySec * 1000 + 200, MAX_RETRY_DELAY_MS)
           : Math.min(1000 * Math.pow(2, attempt), 8000) + Math.random() * 400;
         console.warn(`[VencordAI] LLM rate limit (429). Retrying in ${Math.round(delayMs)}ms (attempt ${attempt + 1}/${maxRetries})...`);
-        await waitForRetry(delayMs, signal);
+        await abortableSleep(delayMs, signal);
         continue;
       }
       break;

@@ -4,17 +4,17 @@
  */
 
 import { getMessageDetails, listChannelPins, listThreads } from '../discord/contextTools';
-import { DISCORD_CDN_RE, extractMessageImageUrls, hasInspectableDiscordImage } from '../discord/media';
+import { DISCORD_CDN_RE, extractMessageImageUrls } from '../discord/media';
 import { extractMessageSearchText, slimMessage } from '../discord/messageFormat';
 import { fetchRecentMessages, fetchSurroundingMessages } from '../discord/messages';
 import { resolveInScopeUserByName } from '../discord/participants';
 import { fetchOneMessage, SNOWFLAKE_PATTERN } from '../discord/rest';
+import { compileSafeRegex } from '../discord/safeRegex';
 import { isChannelAllowedInScope } from '../discord/scope';
 import { DEFAULT_CONTEXT_MESSAGES, fetchSearchContext, MAX_CONTEXT_MESSAGES } from '../discord/searchContext';
 import { runMessageSearch } from '../discord/searchPipeline';
 import { getCurrentUser } from '../discord/stores';
 import { getVoiceTranscriber, transcribeVoiceMessage } from '../discord/voiceMessages';
-import { compileSafeRegex } from '../storage/regex';
 import {
   CurrentScopeContext,
   DiscordMessage,
@@ -24,7 +24,6 @@ import {
   ToolExecutionContext,
   ToolExecutionResult,
 } from '../types';
-import { ToolArgumentError, validateToolArguments } from './validation';
 
 type AnyTool = RegisteredTool<Record<string, unknown>, unknown>;
 
@@ -39,7 +38,6 @@ interface ToolSpec {
 function registered(spec: ToolSpec): AnyTool {
   return {
     definition: spec.schema,
-    parseArgs: (value) => validateToolArguments(spec.schema, value),
     isAvailable: spec.isAvailable ?? (() => true),
     timeoutMs: spec.timeoutMs ?? 15_000,
     readOnly: true,
@@ -58,6 +56,10 @@ function intArg(value: unknown, fallback: number, min: number, max: number): num
 
 function ok<T>(code: string, summary: string, data: T): ToolExecutionResult<T> {
   return { ok: true, code, summary, data };
+}
+
+function fail(code: string, summary: string): ToolExecutionResult<never> {
+  return { ok: false, code, summary };
 }
 
 function resolveChannelArg(raw: unknown, scope: CurrentScopeContext): string | undefined {
@@ -372,9 +374,9 @@ const surroundingMessages = registered({
   compactionPolicy: 'edges',
   execute: async (args, context) => {
     const channelId = resolveChannelArg(args.channel_id, context.scope) || context.scope.channelId;
-    if (!context.scope.channelId || !channelId) return { ok: false, code: 'invalid_scope', summary: 'No active channel is available.' };
+    if (!context.scope.channelId || !channelId) return fail('invalid_scope', 'No active channel is available.');
     if (!isChannelAllowedInScope(channelId, context.scope)) {
-      return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted scope.' };
+      return fail('scope_denied', 'The requested channel is outside the permitted scope.');
     }
     const targetId = String(args.message_id);
     const messages = await fetchSurroundingMessages(channelId, targetId, intArg(args.limit, 10, 1, 25), context.signal);
@@ -433,12 +435,12 @@ const recentMessages = registered({
   execute: async (args, context) => {
     const channelId = resolveChannelArg(args.channel_id, context.scope) || context.scope.channelId;
     if (!isChannelAllowedInScope(channelId, context.scope)) {
-      return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted scope.' };
+      return fail('scope_denied', 'The requested channel is outside the permitted scope.');
     }
     const pattern = typeof args.pattern === 'string' && args.pattern.trim() ? args.pattern : undefined;
     const compiled = pattern ? compileSafeRegex(pattern) : undefined;
     if (compiled && !compiled.regex) {
-      return { ok: false, code: 'invalid_pattern', summary: `The pattern was rejected: ${compiled.error || 'invalid regular expression'}.` };
+      return fail('invalid_pattern', `The pattern was rejected: ${compiled.error || 'invalid regular expression'}.`);
     }
     const limit = intArg(args.limit, 25, 1, 100);
     const beforeMessageId = args.before_message_id as string | undefined;
@@ -509,7 +511,7 @@ const inspectImage = registered({
   isAvailable: (_, settings) => Boolean(settings.enableVision),
   timeoutMs: 30_000,
   execute: async (args, context) => {
-    if (!context.settings.enableVision) return { ok: false, code: 'vision_disabled', summary: 'Vision is disabled in plugin settings.' };
+    if (!context.settings.enableVision) return fail('vision_disabled', 'Vision is disabled in plugin settings.');
 
     let url = typeof args.image_url === 'string' ? args.image_url.trim() : '';
     let sourceMessage: DiscordMessage | undefined;
@@ -517,31 +519,30 @@ const inspectImage = registered({
     if (typeof args.message_id === 'string' && args.message_id.trim()) {
       const channelId = resolveChannelArg(args.channel_id, context.scope) || context.scope.channelId;
       if (!isChannelAllowedInScope(channelId, context.scope)) {
-        return { ok: false, code: 'scope_denied', summary: 'The requested channel is outside the permitted scope.' };
+        return fail('scope_denied', 'The requested channel is outside the permitted scope.');
       }
       sourceMessage = await fetchOneMessage(channelId, args.message_id.trim(), context.signal);
       if (!sourceMessage) {
-        return { ok: false, code: 'not_found', summary: 'The target message was not found, or this account cannot read it.' };
+        return fail('not_found', 'The target message was not found, or this account cannot read it.');
       }
       if (sourceMessage.channel_id !== channelId) {
-        return { ok: false, code: 'scope_denied', summary: 'The returned message does not belong to the requested channel.' };
+        return fail('scope_denied', 'The returned message does not belong to the requested channel.');
       }
       const imageUrls = extractMessageImageUrls(sourceMessage);
       if (!imageUrls.length) {
-        return { ok: false, code: 'no_image', summary: 'That message does not contain an inspectable Discord image attachment or embed.' };
+        return fail('no_image', 'That message does not contain an inspectable Discord image attachment or embed.');
       }
       const idx = Math.min(Math.max(Math.floor(Number(args.attachment_index) || 0), 0), imageUrls.length - 1);
       url = imageUrls[idx];
     } else if (!url) {
-      return {
-        ok: false,
-        code: 'invalid_arguments',
-        summary: 'Provide either channel_id + message_id of an image message, or a Discord CDN image_url.',
-      };
+      return fail(
+        'invalid_arguments',
+        'Provide either channel_id + message_id of an image message, or a Discord CDN image_url.',
+      );
     }
 
     if (!DISCORD_CDN_RE.test(url)) {
-      return { ok: false, code: 'untrusted_image_url', summary: 'Only Discord CDN attachment URLs can be inspected.' };
+      return fail('untrusted_image_url', 'Only Discord CDN attachment URLs can be inspected.');
     }
     const analysis = await context.analyzeImage(url, String(args.question || 'Describe this image and transcribe any visible text.'), context.signal);
     const result = ok('image_analysis', 'Inspected one Discord image. Image text remained untrusted data.', {
@@ -732,20 +733,6 @@ export function availableToolDefinitions(context: ToolExecutionContext): ToolDef
   return Array.from(TOOL_REGISTRY.values())
     .filter((tool) => tool.isAvailable(context.scope, context.settings))
     .map((tool) => tool.definition);
-}
-
-export function getToolCompactionPolicy(toolName?: string): ToolCompactionPolicy {
-  return (toolName ? TOOL_REGISTRY.get(toolName)?.compactionPolicy : undefined) ?? 'tail';
-}
-
-export function parseRegisteredToolArguments(tool: AnyTool, rawArguments: string): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawArguments || '{}');
-  } catch {
-    throw new ToolArgumentError('Tool arguments are malformed JSON.');
-  }
-  return tool.parseArgs(parsed);
 }
 
 export async function executeRegisteredTool(

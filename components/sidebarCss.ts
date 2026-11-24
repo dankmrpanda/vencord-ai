@@ -11,6 +11,68 @@
 export const SIDEBAR_CSS = `
 :root { --vai-sidebar-width: 400px; }
 
+@keyframes vencord-ai-tooltip-appear {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+#vencord-ai-header-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--interactive-normal, #b5bac1);
+  transition: color 0.15s ease;
+  flex-shrink: 0;
+}
+#vencord-ai-header-btn:focus-visible {
+  outline: 2px solid var(--focus-primary, var(--brand-experiment, #5865f2)) !important;
+  outline-offset: 1px;
+}
+#vencord-ai-header-btn:hover { color: var(--interactive-hover, #dbdee1); }
+#vencord-ai-header-btn[aria-pressed="true"] { color: var(--interactive-active, #ffffff); }
+
+/* Discord-style tooltip under the header button */
+#vencord-ai-header-btn[data-tooltip]:hover::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--background-floating, #111214);
+  color: var(--text-normal, #dbdee1);
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
+  white-space: nowrap;
+  box-shadow: var(--elevation-high, 0 8px 16px rgba(0, 0, 0, 0.4));
+  z-index: 100001;
+  pointer-events: none;
+  border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+  animation: vencord-ai-tooltip-appear 0.12s ease-out;
+}
+#vencord-ai-header-btn[data-tooltip]:hover::after {
+  content: '';
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 0 5px 5px 5px;
+  border-style: solid;
+  border-color: transparent transparent var(--background-floating, #111214) transparent;
+  z-index: 100001;
+  pointer-events: none;
+  animation: vencord-ai-tooltip-appear 0.12s ease-out;
+}
+
 body.vai-docked #app-mount {
   width: calc(100% - var(--vai-sidebar-width)) !important;
 }
@@ -134,7 +196,7 @@ body.vai-docked #app-mount {
 
 /* Hover actions under an answer */
 .vai-actions { display: flex; gap: 2px; margin: 2px 0 -4px -6px; opacity: 0; transition: opacity 0.1s ease; }
-.vai-msg:hover .vai-actions, .vai-msg:focus-within .vai-actions, .vai-actions.vai-visible { opacity: 1; }
+.vai-msg:hover .vai-actions, .vai-msg:focus-within .vai-actions { opacity: 1; }
 .vai-action { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: var(--vai-icon); font-size: 12px; cursor: pointer; }
 .vai-action:hover { background: var(--vai-bg-hover); color: var(--vai-icon-hover); }
 
@@ -207,7 +269,6 @@ body.vai-docked #app-mount {
 .vai-textarea { display: block; width: 100%; min-height: 44px; max-height: 200px; padding: 11px 12px 4px; border: 0; background: transparent; color: var(--vai-text); font: inherit; font-size: 14px; line-height: 1.375; resize: none; outline: none; }
 .vai-textarea::placeholder { color: var(--text-placeholder, var(--vai-text-muted)); }
 .vai-composer-foot { display: flex; align-items: center; gap: 8px; padding: 4px 6px 6px 8px; }
-.vai-composer-hint { margin-left: auto; font-size: 11px; color: var(--vai-text-muted); white-space: nowrap; }
 .vai-send { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--vai-brand); color: #fff; cursor: pointer; transition: background-color 0.1s ease, opacity 0.1s ease; }
 .vai-send:hover:not(:disabled) { background: var(--vai-brand-hover); }
 .vai-send:disabled { opacity: 0.35; cursor: not-allowed; }

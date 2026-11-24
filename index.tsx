@@ -15,7 +15,7 @@ import { isEscapeForPanel, isUnhandledEscape } from './components/sidebarActions
 import { SIDEBAR_CSS } from './components/sidebarCss';
 import { setSidebarDocked } from './components/sidebarLayout';
 import { renderDiagnosticLogEntry, serializeLogArgument } from './diagnostics';
-import { getCurrentScopeContext, isChannelAllowedInScope } from './discord/scope';
+import { getCurrentScopeContext, isChannelAllowedInScope, isThreadChannel } from './discord/scope';
 import { findByCode, findByProps } from './discord/stores';
 import { getChatService } from './services/chatService';
 import { startAssistantRuntime, stopAssistantRuntime } from './services/runtimeLifecycle';
@@ -39,77 +39,14 @@ function injectPluginStyles() {
   if (stylesheetInjected || document.getElementById('vencord-ai-styles')) return;
   const style = document.createElement('style');
   style.id = 'vencord-ai-styles';
-  style.textContent = `
-    @keyframes vencord-ai-tooltip-appear {
-      from { opacity: 0; transform: translate(-50%, -4px); }
-      to { opacity: 1; transform: translate(-50%, 0); }
-    }
-
-    #vencord-ai-header-btn {
-      position: relative;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      margin: 0 8px;
-      border-radius: 4px;
-      cursor: pointer;
-      user-select: none;
-      color: var(--interactive-normal, #b5bac1);
-      transition: color 0.15s ease;
-      flex-shrink: 0;
-    }
-    #vencord-ai-header-btn:focus-visible {
-      outline: 2px solid var(--focus-primary, var(--brand-experiment, #5865f2)) !important;
-      outline-offset: 1px;
-    }
-    #vencord-ai-header-btn:hover { color: var(--interactive-hover, #dbdee1); }
-    #vencord-ai-header-btn[aria-pressed="true"] { color: var(--interactive-active, #ffffff); }
-
-    /* Discord-style tooltip under the header button */
-    #vencord-ai-header-btn[data-tooltip]:hover::before {
-      content: attr(data-tooltip);
-      position: absolute;
-      top: calc(100% + 8px);
-      left: 50%;
-      transform: translateX(-50%);
-      background-color: var(--background-floating, #111214);
-      color: var(--text-normal, #dbdee1);
-      padding: 6px 10px;
-      border-radius: 5px;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: var(--font-primary, "gg sans", "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif);
-      white-space: nowrap;
-      box-shadow: var(--elevation-high, 0 8px 16px rgba(0, 0, 0, 0.4));
-      z-index: 100001;
-      pointer-events: none;
-      border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
-      animation: vencord-ai-tooltip-appear 0.12s ease-out;
-    }
-    #vencord-ai-header-btn[data-tooltip]:hover::after {
-      content: '';
-      position: absolute;
-      top: calc(100% + 3px);
-      left: 50%;
-      transform: translateX(-50%);
-      border-width: 0 5px 5px 5px;
-      border-style: solid;
-      border-color: transparent transparent var(--background-floating, #111214) transparent;
-      z-index: 100001;
-      pointer-events: none;
-      animation: vencord-ai-tooltip-appear 0.12s ease-out;
-    }
-    ${SIDEBAR_CSS}
-  `;
+  style.textContent = SIDEBAR_CSS;
   document.head.appendChild(style);
   stylesheetInjected = true;
 }
 
 const pluginLogs: PluginLogEntry[] = [];
 
-export function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...args: any[]) {
+function logPlugin(level: 'info' | 'warn' | 'error', message: string, ...args: any[]) {
   const time = new Date().toLocaleTimeString();
   const fullMsg = `${message} ${args.map(serializeLogArgument).join(' ')}`.trim();
   pluginLogs.push({ time, level, message: fullMsg });
@@ -279,18 +216,11 @@ function renderSidebar() {
 }
 
 // UI-Q02: Vencord exposes openPluginModal on its global; without it the settings buttons stay hidden.
-const openPluginSettings = () => {
-  const vencord = typeof window !== 'undefined' ? (window as any).Vencord : undefined;
-  const open = vencord?.Components?.openPluginModal;
-  const plugin = vencord?.Plugins?.plugins?.AIAssistant;
-  if (typeof open === 'function' && plugin) open(plugin);
-};
-
 function getPluginSettingsOpener(): (() => void) | undefined {
   const vencord = typeof window !== 'undefined' ? (window as any).Vencord : undefined;
   const open = vencord?.Components?.openPluginModal;
   const plugin = vencord?.Plugins?.plugins?.AIAssistant;
-  return typeof open === 'function' && plugin ? openPluginSettings : undefined;
+  return typeof open === 'function' && plugin ? () => open(plugin) : undefined;
 }
 
 // UI-13: an unsent launch request ends with the panel, so it cannot attach to a later, unrelated question.
@@ -340,12 +270,7 @@ const threadContextMenuPatch: NavContextMenuPatchCallback = (children, props: { 
   const channel = props.channel;
   const scope = getCurrentScopeContext();
   const isForum = channel?.type === ChannelType.GUILD_FORUM;
-  const supported = channel?.isThread?.()
-    || channel?.type === ChannelType.PUBLIC_THREAD
-    || channel?.type === ChannelType.PRIVATE_THREAD
-    || channel?.type === ChannelType.ANNOUNCEMENT_THREAD
-    || channel?.type === ChannelType.GUILD_FORUM;
-  if (!channel || !supported || !scope || !isChannelAllowedInScope(channel.id, scope)) return;
+  if (!channel || !(isThreadChannel(channel) || isForum) || !scope || !isChannelAllowedInScope(channel.id, scope)) return;
   children.push(
     <Menu.MenuItem
       id="vencord-ai-summarize-thread"
@@ -482,7 +407,7 @@ export function stopPlugin() {
 export default definePlugin({
   name: 'AIAssistant',
   description:
-    'Client-side AI assistant to query 100k+ messages and images across channels & DMs with local (omlx, Ollama) and cloud LLMs.',
+    'Client-side read-only AI assistant to search and analyze Discord channels, threads, DMs, images, and voice messages with local and cloud LLMs.',
   authors: [{ name: 'Raymond' }],
   settings,
   settingsAboutComponent: () => (

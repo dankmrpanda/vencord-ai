@@ -5,7 +5,7 @@
 
 import { CurrentScopeContext, DiscordMessage } from '../types';
 import { sanitizeUntrustedContent } from './guardrails';
-import { slimMessage } from './messageFormat';
+import { getUserDisplayName, slimMessage } from './messageFormat';
 import { getLoadedMessages } from './stores';
 
 export interface ChannelSnapshotResult {
@@ -128,7 +128,7 @@ export function buildRecentChannelSnapshot(
     for (const { msg } of items) {
       const id = msg.author?.id;
       if (!id) continue;
-      const name = cleanInline(msg.author?.globalName || (msg.author as any)?.global_name || msg.author?.username || 'unknown', 40);
+      const name = cleanInline(getUserDisplayName(msg.author), 40);
       if (!participants.has(id)) participants.set(id, `${name} (${id})`);
     }
     const firstTs = formatSnapshotTimestamp(items[0].msg.timestamp);

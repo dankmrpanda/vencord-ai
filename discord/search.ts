@@ -11,6 +11,7 @@ import {
   discordGetOnce,
   extractRetryAfterSeconds,
   MAX_RETRY_AFTER_SECONDS,
+  snowflakeToTimestampMs,
   throwIfAborted,
 } from './rest';
 import { getChannel } from './stores';
@@ -33,12 +34,8 @@ export function dateToSnowflake(date: Date | string | number): string {
  * Converts a Discord Snowflake ID into a JavaScript Date
  */
 export function snowflakeToDate(snowflake: string): Date {
-  try {
-    const ms = (BigInt(snowflake) >> 22n) + DISCORD_EPOCH;
-    return new Date(Number(ms));
-  } catch {
-    return new Date();
-  }
+  const ms = snowflakeToTimestampMs(snowflake);
+  return ms !== null ? new Date(ms) : new Date();
 }
 
 export interface SearchOptions {
@@ -253,10 +250,7 @@ export function detectPatternFromQuery(query?: string): DetectedPatternInfo {
   }
 
   // Clean remaining words from workQuery (strip stopwords, meta words, punctuation)
-  const cleaned = workQuery.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ');
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  const nonStopwords = words.filter((w) => !COMMON_CONVERSATIONAL_STOPWORDS.has(w));
-  const cleanedQuery = nonStopwords.join(' ').trim();
+  const cleanedQuery = tokenizeNonStopwords(workQuery).nonStopwords.join(' ').trim();
 
   return { pattern, cleanedQuery, patternDescription };
 }
@@ -274,17 +268,19 @@ const COMMON_CONVERSATIONAL_STOPWORDS = new Set([
   'numerical', 'text', 'string', 'strings', 'contain', 'contains', 'containing',
 ]);
 
+function tokenizeNonStopwords(text: string): { words: string[]; nonStopwords: string[] } {
+  const cleaned = text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ');
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const nonStopwords = words.filter((w) => !COMMON_CONVERSATIONAL_STOPWORDS.has(w));
+  return { words, nonStopwords };
+}
+
 /**
  * Strips conversational filler and extracts anchor keywords from a query
  */
 export function extractAnchorKeywords(query: string): string[] {
   if (!query || typeof query !== 'string') return [];
-
-  // Remove common punctuation except hyphens
-  const cleaned = query.toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\s-]/gu, ' ');
-  const words = cleaned.split(/\s+/).filter(Boolean);
-
-  const nonStopwords = words.filter((w) => !COMMON_CONVERSATIONAL_STOPWORDS.has(w));
+  const { words, nonStopwords } = tokenizeNonStopwords(query);
   return nonStopwords.length > 0 ? nonStopwords : words;
 }
 

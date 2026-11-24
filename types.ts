@@ -201,7 +201,6 @@ export type ToolCompactionPolicy = 'tail' | 'oldest' | 'edges';
 
 export interface RegisteredTool<TArgs extends Record<string, unknown>, TData = unknown> {
   definition: ToolDefinition;
-  parseArgs: (value: unknown) => TArgs;
   isAvailable: (context: CurrentScopeContext, settings: PluginSettings) => boolean;
   timeoutMs: number;
   readOnly: true;

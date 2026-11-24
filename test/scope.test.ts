@@ -4,15 +4,15 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { canReadChannel, isChannelAllowedInScope, restrictScopeForUserPrompt } from '../discord/scope';
+import { isChannelAllowedInScope, restrictScopeForUserPrompt, validateChannelPermission } from '../discord/scope';
 import { ChannelType, CurrentScopeContext, DiscordChannel, DiscordMessage } from '../types';
 import { assert } from './assert';
 
 function runTests() {
   console.log('--- Running Vencord AI Assistant Test Suite ---');
 
-  assert(!canReadChannel(null, { id: 'x', type: ChannelType.GUILD_TEXT }), 'Missing permission discovery must fail closed');
-  assert(!canReadChannel({ can: () => { throw new Error('unavailable'); } }, { id: 'x', type: ChannelType.GUILD_TEXT }), 'Permission errors must fail closed');
+  assert(!validateChannelPermission({ id: 'x', type: ChannelType.GUILD_TEXT }, null), 'Missing permission discovery must fail closed');
+  assert(!validateChannelPermission({ id: 'x', type: ChannelType.GUILD_TEXT }, { can: () => { throw new Error('unavailable'); } }), 'Permission errors must fail closed');
 
   // Test 1: Guild context boundary - Server-wide mode
   const guildContextServer: CurrentScopeContext = {

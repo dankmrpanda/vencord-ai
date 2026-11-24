@@ -5,8 +5,6 @@
 
 import { ChatErrorKind } from '../types';
 
-export type { ChatErrorKind };
-
 export interface ChatErrorHint {
   kind: ChatErrorKind;
   /** A fixed sentence: never built from the error text, so it cannot echo a key or a credentialed URL. */

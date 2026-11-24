@@ -76,11 +76,7 @@ export async function getSessionsForChannel(channelId: string): Promise<ChatSess
       const index = store.index('channelId');
       const req = index.getAll(channelId);
 
-      req.onsuccess = () => {
-        const results: ChatSession[] = req.result || [];
-        results.sort((a, b) => b.updatedAt - a.updatedAt);
-        resolve(results);
-      };
+      req.onsuccess = () => resolve(req.result || []);
 
       req.onerror = () => resolve([]);
     });
@@ -115,8 +111,9 @@ export async function deleteSession(sessionId: string): Promise<void> {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
       const req = store.delete(sessionId);
-      req.onsuccess = () => resolve();
       req.onerror = () => resolve();
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => resolve();
     });
   } catch {}
 

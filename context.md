@@ -37,6 +37,8 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - Unified read-only Discord HTTP read client (`discordGet`, `discordGetOnce`, `fetchOneMessage`, `isSnowflake`, `throwIfAborted`). Enforces live `assertReadOnlyOperation('GET', path)` before every request, honours 429 `Retry-After` up to 5 seconds while respecting abort signals, validates numeric snowflakes, and verifies returned messages match the requested channel.
 - **`discord/media.ts` & `discord/messageFormat.ts`**:
   - Scoped Discord attachment/embed image detection and blob/base64 fetching with `media.discordapp.net` fallback (`discord/media.ts`), plus unified slimmed record serialization and UI citation construction (`discord/messageFormat.ts`).
+- **`discord/safeRegex.ts`**:
+  - AST-level ReDoS safety screening (`isRegexSafe`, `compileSafeRegex`) and `escapeRegExp` for pattern-based searches and local message filtering.
 - **[`discord/scope.ts`](file:///Users/raymond/Documents/projects/vencord-ai/discord/scope.ts)**:
   - Evaluates security scoping, channel permission validation (`validateScopeBoundary`, `validateChannelPermission`, requiring literal `PermissionStore.can() === true`), and channel/thread/forum/DM/Group DM metadata enrichment.
   - Limits queries. For servers, restricts searching to channels the user has permission to view (`PermissionStore`). For DMs, restricts to the current DM unless the user names a specific mutual group DM for that run.
@@ -55,7 +57,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
   - The offset cursor follows the primary (first) Discord search variant only, so pages neither skip nor repeat its hits.
   - Unparseable `date`/`after_date`/`before_date` values return `invalid_date` instead of being ignored. `has: "sticker"` is filtered; unknown `has` values fail closed.
   - Implicit OTP/PIN/IP patterns are inferred only from descriptor phrases (for example "verification code", "pin code", "ip addresses"); bare words such as "ip" or "pin" stay keywords. Accented and non-Latin keywords survive query cleanup.
-  - After remote search it tries the `local_index` step and then a bounded scan of recent channel messages. **The local index is never populated in the shipped plugin** (see Storage below), so `local_index` never returns a hit; results come from Discord search and the recent-message scan.
+  - After remote search it falls back to a bounded scan of recent channel messages (`local_scan`).
 - **`discord/contextTools.ts`** implements the only expanded Discord tools: scoped message details, channel pins, and threads/forum posts.
   - Model-supplied message, reply-chain and thread IDs must be numeric snowflakes before any request, and a fetched message is rejected unless its `channel_id` matches the requested channel.
 - **[`discord/messages.ts`](file:///Users/raymond/Documents/projects/vencord-ai/discord/messages.ts)**:
@@ -104,10 +106,7 @@ Using a budgeted tool-calling agent loop, the plugin allows users to query Disco
 
 ### 5. Storage (`/storage`)
 - **[`storage/chatHistory.ts`](file:///Users/raymond/Documents/projects/vencord-ai/storage/chatHistory.ts)**:
-  - Manages chat history sessions, saving sessions per channel in local IndexedDB.
-- **`storage/retrieval.ts`, `storage/index/`, `storage/db.ts`** (local message index):
-  - A hybrid BM25/regex/semantic engine, Web Worker bridge and IndexedDB message store. **Not wired into production:** nothing outside `test/` calls `ingestBatch`, `loadSnapshot` or the message database, so the index stays empty and the `local_index` search step never returns a hit in the shipped plugin. Wiring it is out of scope for now.
-  - `npm run test:benchmark` (`test/retrievalBenchmark.ts`) measures the test-only `InMemoryBM25Index` class in `test/benchmark100k.ts`, not `storage/index`. Its numbers are not evidence about the plugin's search.
+  - Manages chat history sessions, saving sessions per channel in local IndexedDB (with `localStorage` fallback).
 
 ---
 
@@ -132,13 +131,9 @@ Privacy scoping is enforced at the code-level inside [`discord/scope.ts`](file:/
 - **Run Unit Tests**:
   ```bash
   npm run test
-  # Runs every suite registered in test/run.ts (including the 100k benchmark run)
+  # Runs every suite registered in test/run.ts
   ```
-  Suites use the throwing `assert` from `test/assert.ts`, so a failed assertion fails the run. The bug-hunt suites (`scopePermission`, `huntScope`, `huntLifecycle`, `huntIndex`, `huntAgent`, `huntSearch`, `huntUi`) and `challenger_m2_review` are registered in `test/run.ts` alongside the older suites.
-- **Retrieval benchmark** (test-only index, see Storage):
-  ```bash
-  npm run test:benchmark
-  ```
+  Suites use the throwing `assert` from `test/assert.ts`, so a failed assertion fails the run. The consolidated suites (`scopePermission`, `huntScope`, `huntLifecycle`, `chatHistory`, `compression`, `guardrails`, `huntAgent`, `huntSearch`, `huntUi`, etc.) are registered in `test/run.ts`.
 
 ## Provider behavior
 

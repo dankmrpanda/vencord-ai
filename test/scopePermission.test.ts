@@ -1,13 +1,12 @@
-/*
+/**
  * Guild permission-limiting and custom-scope boundary tests (DOC-07).
  * Exercises the production code that builds and enforces the guild channel allowlist:
  * getAccessibleGuildChannels / getCurrentScopeContext through a Discord stores mock,
- * and the custom-mode intersection in getPermittedChannelIdsForScope, filterIndexQueryToScope
+ * and the custom-mode intersection in getPermittedChannelIdsForScope
  * and isChannelAllowedInScope (validateScopeBoundary).
  */
 
 import {
-  filterIndexQueryToScope,
   getAccessibleGuildChannels,
   getCurrentScopeContext,
   getPermittedChannelIdsForScope,
@@ -92,7 +91,7 @@ function customScope(selected: string[]): CurrentScopeContext {
   };
 }
 
-// Mutant G (scope.ts canReadChannel filter ignored): a channel the PermissionStore denies must be excluded.
+// Mutant G (scope.ts validateChannelPermission filter ignored): a channel the PermissionStore denies must be excluded.
 function caseDeniedChannelExcluded(): boolean {
   installStores(denyOneStore);
   const result = ids(getAccessibleGuildChannels(GUILD_ID));
@@ -157,13 +156,6 @@ function caseCustomPermittedIdsIntersected(): boolean {
   return permitted.includes(ALLOWED) && !permitted.includes(DENIED);
 }
 
-function caseCustomIndexQueryIntersected(): boolean {
-  const scope = customScope([ACTIVE, ALLOWED, DENIED]);
-  const unscoped = filterIndexQueryToScope<{ query: string; channelIds?: string[] }>({ query: 'roadmap' }, scope).channelIds ?? [];
-  const requested = filterIndexQueryToScope({ query: 'roadmap', channelIds: [DENIED] }, scope).channelIds ?? [];
-  return unscoped.includes(ALLOWED) && !unscoped.includes(DENIED) && !requested.includes(DENIED);
-}
-
 const CASES: Array<[string, () => boolean]> = [
   ['getAccessibleGuildChannels excludes a channel the PermissionStore denies', caseDeniedChannelExcluded],
   ['getAccessibleGuildChannels excludes non-text channels', caseNonTextChannelExcluded],
@@ -175,7 +167,6 @@ const CASES: Array<[string, () => boolean]> = [
   ['getCurrentScopeContext has no guild channels without a PermissionStore', caseContextWithoutPermissionStoreHasNoGuildChannels],
   ['custom scope rejects a selected but inaccessible channel', caseCustomSelectedButInaccessibleRejected],
   ['custom scope permitted ids drop inaccessible selections', caseCustomPermittedIdsIntersected],
-  ['custom scope index queries never include inaccessible selections', caseCustomIndexQueryIntersected],
 ];
 
 export async function runScopePermissionTests(): Promise<void> {

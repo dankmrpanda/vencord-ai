@@ -25,126 +25,6 @@ export function validateBaseUrlInput(raw: string | undefined): { ok: true; url: 
   }
 }
 
-export const DEFAULT_SETTINGS: PluginSettings = {
-  providerPreset: 'omlx',
-  baseUrl: DEFAULT_BASE_URL,
-  apiKey: '',
-  model: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
-  // Low temperature keeps tool calls and argument JSON reliable.
-  temperature: 0.2,
-  maxTokens: 2048,
-  systemPrompt: '',
-  // Off by default: only a vision model (e.g. Qwen3-VL) can use the image tool.
-  enableVision: false,
-  maxContextMessages: 10,
-  searchLimitPerQuery: 10,
-  maxSearchIterations: 10,
-};
-
-export const settings = definePluginSettings({
-  providerPreset: {
-    type: OptionType.SELECT,
-    description: 'Provider Preset',
-    default: 'omlx',
-    options: [
-      { label: 'omlx (Local Apple Silicon / MLX)', value: 'omlx', default: true },
-      { label: 'Ollama (Local)', value: 'ollama' },
-      { label: 'LM Studio (Local)', value: 'lmstudio' },
-      { label: 'OpenAI', value: 'openai' },
-      { label: 'OpenRouter', value: 'openrouter' },
-      { label: 'Groq', value: 'groq' },
-      { label: 'Custom', value: 'custom' },
-    ],
-  },
-  baseUrl: {
-    type: OptionType.STRING,
-    description: 'API Base URL',
-    default: DEFAULT_BASE_URL,
-  },
-  apiKey: {
-    type: OptionType.STRING,
-    description: 'API Key (Leave empty if using local server)',
-    default: '',
-  },
-  model: {
-    type: OptionType.STRING,
-    description: 'Model Identifier',
-    default: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
-  },
-  temperature: {
-    type: OptionType.SLIDER,
-    description: 'Temperature (0.2 recommended for tool use)',
-    default: 0.2,
-    markers: [0.0, 0.2, 0.5, 0.7, 1.0, 1.5],
-  },
-  enableVision: {
-    type: OptionType.BOOLEAN,
-    description: 'Image inspection (turn on only if your model can read images, e.g. Qwen3-VL)',
-    default: false,
-  },
-  maxSearchIterations: {
-    type: OptionType.SLIDER,
-    description: 'Max Search Tool Iterations',
-    default: 10,
-    markers: [1, 3, 6, 10, 15],
-  },
-  systemPrompt: {
-    type: OptionType.STRING,
-    description: 'Custom System Prompt',
-    default: '',
-  },
-});
-
-const pluginSettings = settings;
-const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
-
-function applySettings(target: PluginSettings, source?: any): void {
-  if (!source || typeof source !== 'object') return;
-  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof PluginSettings)[]) {
-    if (source[key] !== undefined && source[key] !== null) {
-      (target as any)[key] = source[key];
-    }
-  }
-}
-
-export function loadSavedSettings(): PluginSettings {
-  const result: PluginSettings = { ...DEFAULT_SETTINGS };
-
-  if (pluginSettings?.store) {
-    applySettings(result, pluginSettings.store);
-  }
-
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) applySettings(result, JSON.parse(raw));
-    }
-  } catch {}
-
-  try {
-    const ds = (window as any)?.Vencord?.Api?.DataStore?.get?.(SETTINGS_KEY);
-    applySettings(result, ds);
-  } catch {}
-
-  return result;
-}
-
-export function persistSettings(newSettings: PluginSettings): void {
-  if (pluginSettings?.store) {
-    try {
-      Object.assign(pluginSettings.store, newSettings);
-    } catch {}
-  }
-
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
-  } catch {}
-
-  try {
-    (window as any).Vencord?.Api?.DataStore?.set?.(SETTINGS_KEY, newSettings);
-  } catch {}
-}
-
 const PRESET_CONFIGS: Record<
   ProviderPreset,
   { name: string; defaultBaseUrl: string; defaultModel: string; needsKey: boolean }
@@ -192,6 +72,112 @@ const PRESET_CONFIGS: Record<
     needsKey: false,
   },
 };
+
+export const DEFAULT_SETTINGS: PluginSettings = {
+  providerPreset: 'omlx',
+  baseUrl: DEFAULT_BASE_URL,
+  apiKey: '',
+  model: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
+  // Low temperature keeps tool calls and argument JSON reliable.
+  temperature: 0.2,
+  maxTokens: 2048,
+  systemPrompt: '',
+  // Off by default: only a vision model (e.g. Qwen3-VL) can use the image tool.
+  enableVision: false,
+  maxContextMessages: 10,
+  searchLimitPerQuery: 10,
+  maxSearchIterations: 10,
+};
+
+export const settings = definePluginSettings({
+  providerPreset: {
+    type: OptionType.SELECT,
+    description: 'Provider Preset',
+    default: 'omlx',
+    options: Object.entries(PRESET_CONFIGS).map(([value, conf]) => ({
+      label: conf.name,
+      value,
+      ...(value === 'omlx' ? { default: true } : {}),
+    })),
+  },
+  baseUrl: {
+    type: OptionType.STRING,
+    description: 'API Base URL',
+    default: DEFAULT_BASE_URL,
+  },
+  apiKey: {
+    type: OptionType.STRING,
+    description: 'API Key (Leave empty if using local server)',
+    default: '',
+  },
+  model: {
+    type: OptionType.STRING,
+    description: 'Model Identifier',
+    default: 'mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit',
+  },
+  temperature: {
+    type: OptionType.SLIDER,
+    description: 'Temperature (0.2 recommended for tool use)',
+    default: 0.2,
+    markers: [0.0, 0.2, 0.5, 0.7, 1.0, 1.5],
+  },
+  enableVision: {
+    type: OptionType.BOOLEAN,
+    description: 'Image inspection (turn on only if your model can read images, e.g. Qwen3-VL)',
+    default: false,
+  },
+  maxSearchIterations: {
+    type: OptionType.SLIDER,
+    description: 'Max Search Tool Iterations',
+    default: 10,
+    markers: [1, 3, 6, 10, 15],
+  },
+  systemPrompt: {
+    type: OptionType.STRING,
+    description: 'Custom System Prompt',
+    default: '',
+  },
+});
+
+const SETTINGS_KEY = 'VencordAI_Plugin_Settings';
+
+function applySettings(target: PluginSettings, source?: any): void {
+  if (!source || typeof source !== 'object') return;
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof PluginSettings)[]) {
+    if (source[key] !== undefined && source[key] !== null) {
+      (target as any)[key] = source[key];
+    }
+  }
+}
+
+export function loadSavedSettings(): PluginSettings {
+  const result: PluginSettings = { ...DEFAULT_SETTINGS };
+
+  if (settings?.store) {
+    applySettings(result, settings.store);
+  }
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) applySettings(result, JSON.parse(raw));
+    }
+  } catch {}
+
+  return result;
+}
+
+function persistSettings(newSettings: PluginSettings): void {
+  if (settings?.store) {
+    try {
+      Object.assign(settings.store, newSettings);
+    } catch {}
+  }
+
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
+  } catch {}
+}
 
 interface SettingsPanelProps {
   settings: PluginSettings;

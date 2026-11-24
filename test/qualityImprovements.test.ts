@@ -19,7 +19,7 @@ import { compactToolResult, estimateMessageTokens } from '../llm/compression';
 import { buildSystemPrompt } from '../llm/prompts';
 import { getProviderCapabilities, normalizeMessagesForModel } from '../llm/provider';
 import { AGENT_TOOLS, TOOL_REGISTRY } from '../llm/toolRegistry';
-import { parseToolArguments, ToolArgumentError } from '../llm/validation';
+import { parseToolArguments, ToolArgumentError, validateToolArguments } from '../llm/validation';
 import { ChannelType, CitationItem, CurrentScopeContext, DiscordMessage, PluginSettings, ToolExecutionContext } from '../types';
 import { assert } from './assert';
 
@@ -334,7 +334,7 @@ export async function runQualityImprovementTests(): Promise<void> {
   });
   let inspectedUrl = '';
   const imgToolRes = await withRestGet(() => [imgMsg], () => inspectTool.execute(
-    inspectTool.parseArgs({ message_id: imgMsg.id, question: 'What is in this?' }),
+    validateToolArguments(inspectTool.definition, { message_id: imgMsg.id, question: 'What is in this?' }),
     {
       scope: dmPartnerScope,
       settings: makeSettings({ enableVision: true }),
@@ -539,7 +539,7 @@ export async function runQualityImprovementTests(): Promise<void> {
       return { total_results: 0, messages: [] };
     }, async () => {
       await searchTool.execute(
-        searchTool.parseArgs({ query: '@NickFive deployment' }),
+        validateToolArguments(searchTool.definition, { query: '@NickFive deployment' }),
         {
           scope: mentionGuildScope,
           settings: makeSettings(),

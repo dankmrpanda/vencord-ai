@@ -4,10 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import {
-  extractPatternMatches,
-  filterMessagesLocally,
-} from '../discord/messages';
+import { filterMessagesLocally } from '../discord/messages';
 import {
   dateToSnowflake,
   buildSearchCacheKey,
@@ -300,17 +297,7 @@ function runSearchTests() {
   assert(matched6DigitMsgs.some((m) => m.id === '303'), 'Should match message 303');
   assert(!matched6DigitMsgs.some((m) => m.id === '302' || m.id === '304'), 'Should NOT match messages 302 or 304');
 
-  // Test 18: extractPatternMatches
-  const msg301Values = extractPatternMatches(dmMessages[0].content, '\\b\\d{6}\\b');
-  assert(msg301Values.length === 1 && msg301Values[0] === '582910', `Expected ["582910"], got ${JSON.stringify(msg301Values)}`);
-
-  const msg303Values = extractPatternMatches(dmMessages[2].content, '\\b\\d{6}\\b');
-  assert(
-    msg303Values.length === 2 && msg303Values.includes('491024') && msg303Values.includes('892301'),
-    `Expected ["491024", "892301"], got ${JSON.stringify(msg303Values)}`
-  );
-
-  // Test 19: Relaxation on pattern query "6-digit" produces []
+  // Test 18: Relaxation on pattern query "6-digit" produces []
   const relaxedPattern = generateRelaxedQueries('6-digit');
   assert(relaxedPattern.length === 0, `Relaxed queries for pattern "6-digit" should be empty, got ${JSON.stringify(relaxedPattern)}`);
 
@@ -350,11 +337,6 @@ function runSearchTests() {
 
   const complexMatches = filterMessagesLocally([complexMessage], { pattern: '\\b\\d{6}\\b' });
   assert(complexMatches.length === 1, 'Should match 6-digit number inside embed description');
-  const embedExtracted = extractPatternMatches(
-    `${complexMessage.content} ${complexMessage.embeds[0].title} ${complexMessage.embeds[0].description}`,
-    '\\b\\d{6}\\b'
-  );
-  assert(embedExtracted.includes('739102'), `Expected 739102 in embedExtracted, got ${JSON.stringify(embedExtracted)}`);
 
   console.log('✅ All Search & Local Filter Tests Passed Successfully!');
 }
